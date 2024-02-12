@@ -28,35 +28,56 @@ end
 
 base_Modelica_machine = let 
     type = re"Real"
-    name = re"'[ -~]+'"
-    value = re" ?(=? ?[0-9]+\.?[0-9]*)?"
-    description = re" ?(\"([ -~]|\n)*\")?;"
-    parameter = re"parameter" * ' ' * type * ' ' * name * value * description
-    #parameter Real '[ -~]+' ?(=? ?[\d]+.?[\d]*)? ?("([ -~]|\n)*")?;$
+    name = re"'[A-Za-z0-9._]+'"
+    value = re"(= ?[0-9]+\.?[0-9]*)"
+    description = re"(\"([A-Za-z0-9._ ]|\n)*\")"
+    parameter = re"parameter" * ' ' * type * ' ' * name * re" ?" * opt(value) * re" " * opt(description) * ';'
+    variable = type * name * description
+    #parameter Real '[A-Za-z0-9._]+' ?(=? ?[\d]+\.?[\d]*)? ?("([A-Za-z0-9._ ]|\n)*")?;
+
+    onenter!(type,:mark_pos)
+    onexit!(type,:get_type)
+    #precond!(name,:name_got, bool=false)
+    onenter!(name, :mark_pos)
+    onexit!(name,:get_name)
+
+    #precond!(value, :name_got)
+    onenter!(value,:mark_pos)
+    onexit!(value, :get_value)
+
+    #precond!(description,:name_got)
+    onenter!(description,:mark_pos)
+    onexit!(description,:get_description)
+
+    compile(parameter)
 end
 
 base_Modelica_actions = Dict(
-    :mark_name        => :(mark_name = p),
-    :get_identifier  => :(identifier = String(data[mark:p-1]); mark = 0),
-
+    :mark_pos => :(pos = p),
+    :get_type => :(type = String(data[pos:p-1]); pos = 0;)
+    :get_name => :(name = String(data[pos:p-1]); pos = 0; name_got = true), #get name, set name_got flag to true
+    :get_description => :(description = String(data[pos:p-1]); pos = 0),
+    :get_value => :(value = String(data[pos:p-1]); pos = 0; name_got = false) #get the value, reset the name_got flag
 )
 
 
-context = CodeGenContext(generator=:goto)
-@eval function parse_BaseModelica(data::AbstractVector{UInt8})
+context = CodeGenContext()
+@eval function parse_BaseModelica(data)
     # Initialize variables you use in the action code.
-    records = FASTARecord[]
-    mark = 0
-    seqlen = 0
-    record_seen = false
-    identifier = ""
-    description = nothing
-    buffer = UInt8[]
+    pos = 0
+    name_got = false
 
+
+
+    name = ""
+    description = ""
+    value = ""
+    
     # Generate code for initialization and main loop
-    $(generate_code(context, fasta_machine, fasta_actions))
-    record_seen && push!(records, FASTARecord(identifier, description, String(buffer[1:seqlen])))
+    $(generate_code(context, base_Modelica_machine, base_Modelica_actions))
 
     # Finally, return records accumulated in the action code.
-    return records
+    return name, description, value
 end
+
+parse_BaseModelica("parameter Real 'wagon.m' = 100000.0525 \"Mass of the sliding mass\";")
