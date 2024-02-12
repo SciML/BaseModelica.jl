@@ -3,6 +3,9 @@ uuid = "a17d5099-185d-4ff5-b5d3-51aa4569e56d"
 authors = ["jClugstor <jadonclugston@gmail.com> and contributors"]
 version = "1.0.0-DEV"
 
+[deps]
+Automa = "67c07d97-cdcb-5c2c-af73-a7f9c32a568b"
+
 [compat]
 julia = "1"
 
