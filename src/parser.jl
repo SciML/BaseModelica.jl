@@ -1,7 +1,10 @@
 using Automa
 
 struct BaseModelicaModel
-
+    parameters
+    variables
+    equations
+    initialequations
 end
 
 struct BaseModelicaParameter
@@ -23,7 +26,8 @@ struct BaseModelicaEquation
 end
 
 struct BaseModelicaInitialEquation
-
+    lhs
+    rhs
 end
 
 
@@ -34,70 +38,64 @@ base_Modelica_machine = let
     name = re"'[A-Za-z0-9._]+'"
     value = re"(= ?[0-9]+\.?[0-9]*)"
     description = re"(\"([A-Za-z0-9._ ]|\n)*\")"
-    parameter = re"parameter" * ' ' * type * ' ' * name * opt(endexpr) * opt(re" ?" * opt(value) * ' ' * opt(description))
-    variable = type * ' ' * name * ' ' * description
+    parameter = re"parameter" * ' ' * type * ' ' * name * opt(re" ?" * opt(value) * ' ' * opt(description)) * endexpr
+    variable = type * ' ' * name * ' ' * description * endexpr
     #parameter Real '[A-Za-z0-9._]+' ?(=? ?[\d]+\.?[\d]*)? ?("([A-Za-z0-9._ ]|\n)*")?;
-    equation = re"[^!=;\"]+ ?= ?[^!=;\"]+"
+    equation_expr = re"[^Ripe;\n][^!=;\"]+ ?= ?[^!=;\"]+" * endexpr
     equation_header = re"equation"
+    initial_header = re"initial equation"
 
   
-    precond!(equation_header, :done_flag)
-    precond!(equation_header, :equation_flag, bool = false)
-    onexit!(equation_header,:set_equation_flag )
+    onfinal!(equation_header,[:set_equation_flag, :clear_initial_flag])
+    onfinal!(initial_header,[:set_initial_flag, :clear_equation_flag])
     
-    precond!(type, :equation_flag, bool = false)
+    precond!(type, :equation_or_initial_flag, bool = false)
     onenter!(type,:mark_pos)
-    onexit!(type,:get_type)
+    onfinal!(type,:get_type)
 
-    precond!(name, :equation_flag, bool = false)
+    precond!(name, :equation_or_initial_flag, bool = false)
     onenter!(name, :mark_pos)
     onexit!(name,:get_name)
 
-    precond!(value, :equation_flag, bool = false)
-    onenter!(value,:mark_pos)
+    precond!(value, :equation_or_initial_flag, bool = false)
+    onenter!(value, :mark_pos)
     onexit!(value, :get_value)
 
-
-    precond!(description, :equation_flag, bool = false)
+    precond!(description, :equation_or_initial_flag, bool = false)
     onenter!(description,:mark_pos)
-    onexit!(description,:get_description)
+    onfinal!(description,:get_description)
 
-    onexit!(endexpr,:set_done_flag)
+    precond!(parameter, :equation_or_initial_flag, bool = false)
+    onfinal!(parameter, :create_parameter)
 
 
-    precond!(parameter, :equation_flag, bool = false)
-    onenter!(parameter,:unset_done_flag)
-    onexit!(parameter, :create_parameter)
+    precond!(variable, :equation_or_initial_flag, bool = false)
+    onfinal!(variable, :create_variable)
 
-    precond!(variable, :equation_flag, bool = false)
-    onenter!(variable,:unset_done_flag)
-    onexit!(variable, :create_variable)
+    precond!(equation_expr, :equation_or_initial_flag)
+    onenter!(equation_expr, :mark_pos)
+    onexit!(equation_expr, :create_equation)
 
-    precond!(equation, :equation_flag, bool = true)
-    precond!(equation, :done_flag)
-    onenter!(equation, [:mark_pos, :unset_done_flag])
-    onexit!(equation, :create_equation)
-
-    full_machine = rep(parameter * endexpr * opt(newline)) * rep(variable * endexpr * opt(newline)) * opt(equation_header * newline) * rep(equation * endexpr * opt(newline)) 
-    compile(full_machine,unambiguous = false)
+    full_machine = rep(rep(parameter * opt(newline)) * rep(variable * opt(newline))) * opt(initial_header * newline) * rep(equation_expr * opt(newline)) * opt(equation_header * newline) * rep(equation_expr  * opt(newline)) 
+    compile(full_machine)
 end
 
 display_machine(base_Modelica_machine)
 
 base_Modelica_actions = Dict(
     :mark_pos => :(pos = p),
-    :get_type => :(type = String(data[pos:p-1]); pos = 0;),
-    :get_name => :(name = String(data[pos:p-1]); pos = 0; name_got = true), #get name, set name_got flag to true
-    :get_description => :(description = String(data[pos:p-1]); pos = 0),
+    :get_type => :(type = String(data[pos:p]); pos = 0;),
+    :get_name => :(name = String(data[pos:p]); pos = 0; name_got = true), #get name, set name_got flag to true
+    :get_description => :(description = String(data[pos:p]); pos = 0),
     :get_value => :(value = String(data[pos:p-1]); pos = 0; name_got = false), #get the value, reset the name_got flag
-    :create_equation => :(equal_index = findfirst("=",data)[1]; lhs = String(data[pos:equal_index-1]); rhs = String(data[equal_index+1:p-1]); push!(equations,BaseModelicaEquation(lhs,rhs))),
+    :create_equation => :(equal_index = findfirst("=",data)[1]; lhs = String(data[pos:equal_index-1]); rhs = String(data[equal_index+1:p-1]); initial_flag ? push!(initial_equations,BaseModelicaInitialEquation(lhs,rhs)) : push!(equations,BaseModelicaEquation(lhs,rhs))),
     :create_parameter => :(push!(parameters,BaseModelicaParameter(type,name,value,description));type = ""; name = ""; value = ""; description = ""),
     :create_variable => :(push!(variables,BaseModelicaVariable(type,name,description)); type = ""; name = ""; description = ""),
-    :set_done_flag =>:(done_flag = true),
-    :unset_done_flag =>:(done_flag = false),
     :set_equation_flag => :(equation_flag = true),
-    :equation_flag => :(equation_flag == true),
-    :done_flag => :(done_flag == true)
+    :clear_equation_flag => :(equation_flag = false),
+    :set_initial_flag => :(initial_flag = true),
+    :clear_initial_flag => :(initial_flag = false),
+    :equation_or_initial_flag => :(equation_flag || initial_flag)
 )
 
 
@@ -107,6 +105,7 @@ context = CodeGenContext(generator = :goto)
     pos = 0
     name_got = false
     equation_flag = false
+    initial_flag = false
     done_flag = true # flag to mark whether it's done reading a parameter, variable or equation yet
 
     name = ""
@@ -118,11 +117,12 @@ context = CodeGenContext(generator = :goto)
     parameters = BaseModelicaParameter[]
     variables = BaseModelicaVariable[]
     equations = BaseModelicaEquation[]
+    initial_equations = BaseModelicaInitialEquation[]
     
     # Generate code for initialization and main loop
     $(generate_code(context, base_Modelica_machine, base_Modelica_actions))
     # Finally, return records accumulated in the action code.
-    return parameters, variables, equations
+    return parameters, variables, equations,initial_equations
 end
 
 parse_BaseModelica("parameter Real 'wagon.m' = 100000.0525 \"Mass of the sliding mass\";")
@@ -133,6 +133,16 @@ parse_BaseModelica("""parameter Real 'sloop.m';\nReal 'wagon.flange_b.f' \"Cut f
 parse_BaseModelica("""Real 'doop.f' "doopy doopy doo";\nReal 'deep.doop' "deepy doopy dah";""")
 parse_BaseModelica("equation\n 'wagon.flange_a.s'='doop';")
 parse_BaseModelica("equation\n 'locomotive.flange_b.f'+'wagon.flange_a.f' = 0.0;")
+parse_BaseModelica("equation\n 'locomotive.flange_b.f'+'wagon.flange_a.f' = 'jeepers_creepers' - 'doopers_deepers/2;")
+parse_BaseModelica("initial equation\n 'locomotive.flange' = 'doopy_doo';")
+parse_BaseModelica("""
+parameter Real 'wagon.m' = 100000.0525 \"Mass of the sliding mass\";
+parameter Real 'slop.m';
+Real 'wagon.flange_b.f' \"Cut force directed into flange\";
+equation
+'locomotive.flange_b.f'+'wagon.flange_a.f' = 'jeepers_creepers' - 'doopers_deepers/2;
+""")
+
 function display_machine(m::Automa.Machine)
     open("/tmp/machine.dot", "w") do io
         println(io, Automa.machine2dot(m))
@@ -140,3 +150,4 @@ function display_machine(m::Automa.Machine)
     run(pipeline(`dot -Tsvg /tmp/machine.dot`, stdout="/tmp/machine.svg"))
     run(`firefox /tmp/machine.svg`)
 end
+
