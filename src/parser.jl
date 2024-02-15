@@ -1,6 +1,10 @@
 using Automa
 
+struct BaseModelicaPackage
+
+end
 struct BaseModelicaModel
+    name
     parameters
     variables
     equations
@@ -34,6 +38,8 @@ end
 base_Modelica_machine = let 
     newline = re"\n"
     endexpr = re";"
+    model_header = re"model '[A-Za-z0-9._]+'"
+    end_marker = re"end '[A-Za-z0-9._]+'" * endexpr
     type = re"Real"
     name = re"'[A-Za-z0-9._]+'"
     value = re"(= ?[0-9]+\.?[0-9]*)"
@@ -41,11 +47,12 @@ base_Modelica_machine = let
     parameter = re"parameter" * ' ' * type * ' ' * name * opt(re" ?" * opt(value) * ' ' * opt(description)) * endexpr
     variable = type * ' ' * name * ' ' * description * endexpr
     #parameter Real '[A-Za-z0-9._]+' ?(=? ?[\d]+\.?[\d]*)? ?("([A-Za-z0-9._ ]|\n)*")?;
-    equation_expr = re"[^Ripe;\n][^!=;\"]+ ?= ?[^!=;\"]+" * endexpr
+    equation_expr = re"[^Ripem;\n][^!=;\"]+ ?= ?[^!=;\"]+" * endexpr
     equation_header = re"equation"
     initial_header = re"initial equation"
 
-  
+    onfinal!(model_header,:get_model_name)    
+
     onfinal!(equation_header,[:set_equation_flag, :clear_initial_flag])
     onfinal!(initial_header,[:set_initial_flag, :clear_equation_flag])
     
@@ -76,7 +83,7 @@ base_Modelica_machine = let
     onenter!(equation_expr, :mark_pos)
     onexit!(equation_expr, :create_equation)
 
-    full_machine = rep(rep(parameter * opt(newline)) * rep(variable * opt(newline))) * opt(initial_header * newline) * rep(equation_expr * opt(newline)) * opt(equation_header * newline) * rep(equation_expr  * opt(newline)) 
+    full_machine = opt(model_header * newline) * rep(rep(parameter * opt(newline)) * rep(variable * opt(newline))) * opt(initial_header * newline) * rep(equation_expr * opt(newline)) * opt(equation_header * newline) * rep(equation_expr  * opt(newline)) * opt(end_marker)
     compile(full_machine)
 end
 
@@ -85,7 +92,8 @@ display_machine(base_Modelica_machine)
 base_Modelica_actions = Dict(
     :mark_pos => :(pos = p),
     :get_type => :(type = String(data[pos:p]); pos = 0;),
-    :get_name => :(name = String(data[pos:p]); pos = 0; name_got = true), #get name, set name_got flag to true
+    :get_name => :(name = String(data[pos:p]); pos = 0), #get name, set name_got flag to true
+    :get_model_name => :(name_index = findfirst("'", data)[1]; model_name = String(data[name_index:p]); pos = 0),
     :get_description => :(description = String(data[pos:p]); pos = 0),
     :get_value => :(value = String(data[pos:p-1]); pos = 0; name_got = false), #get the value, reset the name_got flag
     :create_equation => :(equal_index = findfirst("=",data)[1]; lhs = String(data[pos:equal_index-1]); rhs = String(data[equal_index+1:p-1]); initial_flag ? push!(initial_equations,BaseModelicaInitialEquation(lhs,rhs)) : push!(equations,BaseModelicaEquation(lhs,rhs))),
@@ -108,6 +116,7 @@ context = CodeGenContext(generator = :goto)
     initial_flag = false
     done_flag = true # flag to mark whether it's done reading a parameter, variable or equation yet
 
+    model_name = ""
     name = ""
     description = ""
     value = ""
@@ -122,7 +131,8 @@ context = CodeGenContext(generator = :goto)
     # Generate code for initialization and main loop
     $(generate_code(context, base_Modelica_machine, base_Modelica_actions))
     # Finally, return records accumulated in the action code.
-    return parameters, variables, equations,initial_equations
+    return BaseModelicaModel(model_name, parameters,variables, equations, initial_equations)
+    parameters, variables, equations,initial_equations, model_name
 end
 
 parse_BaseModelica("parameter Real 'wagon.m' = 100000.0525 \"Mass of the sliding mass\";")
@@ -142,6 +152,19 @@ Real 'wagon.flange_b.f' \"Cut force directed into flange\";
 equation
 'locomotive.flange_b.f'+'wagon.flange_a.f' = 'jeepers_creepers' - 'doopers_deepers/2;
 """)
+parse_BaseModelica("""model 'dopper'
+end 'dopper';""")
+
+test_result = parse_BaseModelica("""model 'Test'
+parameter Real 'wagon.m' = 100000.0525 \"Mass of the sliding mass\";
+parameter Real 'slop.m';
+Real 'doop.f' "doopy doopy doo";
+initial equation
+'locamotive.mass.m' = 10000.0';
+equation
+'wagon.flange_a.s' = 'locomotive.m'/30 + 5;
+end 'Test';""")
+
 
 function display_machine(m::Automa.Machine)
     open("/tmp/machine.dot", "w") do io
