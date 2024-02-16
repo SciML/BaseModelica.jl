@@ -92,15 +92,14 @@ display_machine(base_Modelica_machine)
 base_Modelica_actions = Dict(
     :mark_pos => :(pos = p),
     :get_type => :(type = String(data[pos:p]); pos = 0;),
-    :get_name => :(name = String(data[pos:p]); pos = 0), 
+    :get_name => :(name = strip(String(data[pos:p]), ['\'', ' ', ';']); pos = 0), 
     :get_model_name => :(name_index = findfirst("'", data)[1]; model_name = String(data[name_index:p]); pos = 0),
-    :get_description => :(description = String(data[pos:p]); pos = 0),
-    :get_value => :(value = String(data[pos:p]); pos = 0; name_got = false), #get the value, reset the name_got flag
+    :get_description => :(description = strip(String(data[pos:p]), '"'); pos = 0),
+    :get_value => :(value = strip(String(data[pos:p]),['=',' ']); pos = 0; name_got = false), #get the value, reset the name_got flag
     :create_equation => quote
         equal_index = findfirst("=",data[pos:p])[1]
-        print(equal_index)
-        lhs = String(data[pos:p][1:equal_index-1]) #data[pos:p] is the whole equation expression
-        rhs = String(data[pos:p][equal_index:end-1]) #minus one to not include the semicolon
+        lhs = strip(String(data[pos:p][1:equal_index-1]),' ') #data[pos:p] is the whole equation expression
+        rhs = strip(String(data[pos:p][equal_index+1:end-1]),' ') #minus one to not include the semicolon
         initial_flag ? push!(initial_equations,BaseModelicaInitialEquation(lhs,rhs)) : push!(equations,BaseModelicaEquation(lhs,rhs))
         pos = 0
         rhs = ""
