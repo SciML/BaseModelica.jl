@@ -81,7 +81,7 @@ base_Modelica_machine = let
 
     precond!(equation_expr, :equation_or_initial_flag)
     onenter!(equation_expr, :mark_pos)
-    onexit!(equation_expr, :create_equation)
+    onfinal!(equation_expr, :create_equation)
 
     full_machine = opt(model_header * newline) * rep(rep(parameter * opt(newline)) * rep(variable * opt(newline))) * opt(initial_header * newline) * rep(equation_expr * opt(newline)) * opt(equation_header * newline) * rep(equation_expr  * opt(newline)) * opt(end_marker)
     compile(full_machine)
@@ -92,11 +92,20 @@ display_machine(base_Modelica_machine)
 base_Modelica_actions = Dict(
     :mark_pos => :(pos = p),
     :get_type => :(type = String(data[pos:p]); pos = 0;),
-    :get_name => :(name = String(data[pos:p]); pos = 0), #get name, set name_got flag to true
+    :get_name => :(name = String(data[pos:p]); pos = 0), 
     :get_model_name => :(name_index = findfirst("'", data)[1]; model_name = String(data[name_index:p]); pos = 0),
     :get_description => :(description = String(data[pos:p]); pos = 0),
-    :get_value => :(value = String(data[pos:p-1]); pos = 0; name_got = false), #get the value, reset the name_got flag
-    :create_equation => :(equal_index = findfirst("=",data)[1]; lhs = String(data[pos:equal_index-1]); rhs = String(data[equal_index+1:p-1]); initial_flag ? push!(initial_equations,BaseModelicaInitialEquation(lhs,rhs)) : push!(equations,BaseModelicaEquation(lhs,rhs))),
+    :get_value => :(value = String(data[pos:p]); pos = 0; name_got = false), #get the value, reset the name_got flag
+    :create_equation => quote
+        equal_index = findfirst("=",data[pos:p])[1]
+        print(equal_index)
+        lhs = String(data[pos:p][1:equal_index-1]) #data[pos:p] is the whole equation expression
+        rhs = String(data[pos:p][equal_index:end-1]) #minus one to not include the semicolon
+        initial_flag ? push!(initial_equations,BaseModelicaInitialEquation(lhs,rhs)) : push!(equations,BaseModelicaEquation(lhs,rhs))
+        pos = 0
+        rhs = ""
+        hs = ""
+    end,
     :create_parameter => :(push!(parameters,BaseModelicaParameter(type,name,value,description));type = ""; name = ""; value = ""; description = ""),
     :create_variable => :(push!(variables,BaseModelicaVariable(type,name,description)); type = ""; name = ""; description = ""),
     :set_equation_flag => :(equation_flag = true),
@@ -132,7 +141,8 @@ context = CodeGenContext(generator = :goto)
     $(generate_code(context, base_Modelica_machine, base_Modelica_actions))
     # Finally, return records accumulated in the action code.
     return BaseModelicaModel(model_name, parameters,variables, equations, initial_equations)
-    parameters, variables, equations,initial_equations, model_name
+    #parameters, variables, initial_equations, model_name
+    equations
 end
 
 parse_BaseModelica("parameter Real 'wagon.m' = 100000.0525 \"Mass of the sliding mass\";")
