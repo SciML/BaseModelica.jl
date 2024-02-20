@@ -29,18 +29,20 @@ end
 struct BaseModelicaEquation
     lhs
     rhs
+    description
 end
 
 struct BaseModelicaInitialEquation
     lhs
     rhs
+    description
 end
 
 
 base_Modelica_machine = let 
     newline = re"\n"
     endexpr = re";"
-    description = re"(\"([A-Za-z0-9._ ]|\n)*\")"
+    description = re"(\"([A-Za-z0-9._ ']|\n)*\")"
     model_header = re"model '[A-Za-z0-9._]+'" * opt(' ' * description)
     package_header = re"package '[A-Za-z0-9._]+'"
     end_marker = re"end '[A-Za-z0-9._]+'" * endexpr
@@ -48,10 +50,10 @@ base_Modelica_machine = let
     name = re"'[A-Za-z0-9._]+'"
     value = re"= ?[0-9]+\.?[0-9]*"
   
-    parameter = re"parameter" * ' ' * type * ' ' * name * re" ?" * opt(value) * opt(opt(' ') * opt(description)) * endexpr
+    parameter = re"parameter" * ' ' * type * ' ' * name * opt(' ') * opt(value) * opt(opt(' ') * opt(description)) * endexpr
     variable = type * ' ' * name * ' ' * description * endexpr
     #parameter Real '[A-Za-z0-9._]+' ?(=? ?[\d]+\.?[\d]*)? ?("([A-Za-z0-9._ ]|\n)*")?;
-    equation_expr = re"[^Ripem;\n\t ][^!=;\"\t]+ ?= ?[^!=;\"\t]+" * opt(description) * endexpr
+    equation_expr = re"[^Ripem;\n\t ][^!=;\"\t]+ ?= ?[^!=;\"\t]+" * opt(' ' * description) * endexpr
     equation_header = re"equation"
     initial_header = re"initial equation"
 
@@ -75,7 +77,7 @@ base_Modelica_machine = let
     onenter!(value, :mark_pos)
     onexit!(value, :get_value)
 
-    precond!(description, :equation_or_initial_flag, bool = false)
+    #precond!(description, :equation_or_initial_flag, bool = false)
     onenter!(description,:mark_pos)
     onfinal!(description,:get_description)
 
@@ -87,17 +89,11 @@ base_Modelica_machine = let
     onfinal!(variable, :create_variable)
 
     precond!(equation_expr, :equation_or_initial_flag)
-    onenter!(equation_expr, :mark_pos)
+    onenter!(equation_expr, :mark_equ_pos)
     onfinal!(equation_expr, :create_equation)
 
-    full_machine = package_header * newline * rep('\t') * rep(' ') * model_header * 
-    newline * rep(rep(rep('\t') * rep(' ') * parameter * opt(newline)) * 
-    rep(rep('\t') * rep(' ') * variable * opt(newline))) * opt(rep('\t') * 
-    rep(' ') * initial_header * newline) * rep(rep('\t') * rep(' ') * equation_expr * 
-    opt(newline)) * opt(rep('\t') * rep(' ') * equation_header * newline) * rep(rep('\t') * 
-    rep(' ') * equation_expr  * opt(newline)) * rep('\t') * rep(' ') * end_marker * 
-    newline * rep('\t') * rep(' ') * end_marker
-    
+    full_machine = package_header * newline * rep('\t') * rep(' ') * model_header * newline * rep(rep(rep('\t') * rep(' ') * parameter * opt(newline)) * rep(rep('\t') * rep(' ') * variable * opt(newline))) * opt(rep('\t') * rep(' ') * initial_header * newline) * rep(rep('\t') * rep(' ') * equation_expr * opt(newline)) * opt(rep('\t') * rep(' ') * equation_header * newline) * rep(rep('\t') * rep(' ') * equation_expr  * opt(newline)) * rep('\t') * rep(' ') * end_marker * newline * rep('\t') * rep(' ') * end_marker * opt(newline)
+
     compile(full_machine)
 end
 
@@ -105,8 +101,9 @@ display_machine(base_Modelica_machine)
 
 base_Modelica_actions = Dict(
     :mark_pos => :(pos = p),
+    :mark_equ_pos => :(equ_pos = p),
     :get_type => :(type = String(data[pos:p]); pos = 0;),
-    :get_name => :(name = strip(String(data[pos:p]), ['\'', ' ', ';']); pos = 0), 
+    :get_name => :(name = Symbol(strip(String(data[pos:p]), ['\'', ' ', ';'])); pos = 0), 
     :get_model_name => quote
            data_to_point = data[findfirst("model",data)[end]:p]
            ticks = findall("'",data_to_point)
@@ -122,15 +119,19 @@ base_Modelica_actions = Dict(
         package_name = strip(String(data_to_point[first_tick_index:last_tick_index]),'\'')
     end,
     :get_description => :(description = strip(String(data[pos:p]), '"'); pos = 0),
-    :get_value => :(value = strip(String(data[pos:p]),['=',' ',';']); pos = 0), #get the value
+    :get_value => :(value = Symbol(strip(String(data[pos:p]),['=',' ',';'])); pos = 0), #get the value
     :create_equation => quote
-        equal_index = findfirst("=",data[pos:p])[1]
-        lhs = strip(String(data[pos:p][1:equal_index-1]),' ') #data[pos:p] is the whole equation expression
-        rhs = strip(String(data[pos:p][equal_index+1:end-1]),' ') #minus one to not include the semicolon
-        initial_flag ? push!(initial_equations,BaseModelicaInitialEquation(lhs,rhs)) : push!(equations,BaseModelicaEquation(lhs,rhs))
+        equal_index = findfirst("=",data[equ_pos:p])[1]
+        description_start = findfirst("\"", data[equ_pos:p])
+        lhs = strip(String(data[equ_pos:p][1:equal_index-1]),' ') #data[pos:p] is the whole equation expression
+        rhs = strip(isnothing(description_start) ? String(data[equ_pos:p][equal_index+1:end]) : String(data[equ_pos:p][equal_index+1:description_start[1]]),[' ', ';', '"']) #minus one to not include the semicolon
+        equation_description = description
+        initial_flag ? push!(initial_equations,BaseModelicaInitialEquation(lhs,rhs,equation_description)) : push!(equations,BaseModelicaEquation(lhs,rhs,equation_description))
         pos = 0
+        equ_pos = 0
         rhs = ""
-        hs = ""
+        lhs = ""
+        description = ""
     end,
     :create_parameter => :(push!(parameters,BaseModelicaParameter(type,name,value,description));type = ""; name = ""; value = ""; description = ""),
     :create_variable => :(push!(variables,BaseModelicaVariable(type,name,description)); type = ""; name = ""; description = ""),
@@ -146,6 +147,8 @@ context = CodeGenContext(generator = :goto)
 @eval function parse_BaseModelica(data)
     # Initialize variables you use in the action code.
     pos = 0
+    equ_pos = 0
+    other_pos = 0 
     equation_flag = false
     initial_flag = false
 
@@ -211,3 +214,9 @@ function display_machine(m::Automa.Machine)
     run(pipeline(`dot -Tsvg /tmp/machine.dot`, stdout="/tmp/machine.svg"))
     run(`firefox /tmp/machine.svg`)
 end
+
+file = read("/home/jadonclugston/Documents/Work/dev/Modelica/BaseModelica.jl/test/testfiles/Test.mo",String)
+test_model = parse_BaseModelica(file)
+
+newton_cooling = read("/home/jadonclugston/Documents/Work/dev/Modelica/BaseModelica.jl/test/testfiles/NewtonCoolingBase.mo",String)
+newton_test = parse_BaseModelica(newton_cooling)
