@@ -1,44 +1,3 @@
-using Automa
-
-struct BaseModelicaPackage
-    name
-    models
-end
-struct BaseModelicaModel
-    name
-    description
-    parameters
-    variables
-    equations
-    initialequations
-end
-
-struct BaseModelicaParameter
-    type
-    name
-    value
-    description
-end
-
-struct BaseModelicaVariable
-    type
-    name
-    description
-end
-
-struct BaseModelicaEquation
-    lhs
-    rhs
-    description
-end
-
-struct BaseModelicaInitialEquation
-    lhs
-    rhs
-    description
-end
-
-
 base_Modelica_machine = let 
     newline = re"\n"
     endexpr = re";"
@@ -92,12 +51,17 @@ base_Modelica_machine = let
     onenter!(equation_expr, :mark_equ_pos)
     onfinal!(equation_expr, :create_equation)
 
-    full_machine = package_header * newline * rep('\t') * rep(' ') * model_header * newline * rep(rep(rep('\t') * rep(' ') * parameter * opt(newline)) * rep(rep('\t') * rep(' ') * variable * opt(newline))) * opt(rep('\t') * rep(' ') * initial_header * newline) * rep(rep('\t') * rep(' ') * equation_expr * opt(newline)) * opt(rep('\t') * rep(' ') * equation_header * newline) * rep(rep('\t') * rep(' ') * equation_expr  * opt(newline)) * rep('\t') * rep(' ') * end_marker * newline * rep('\t') * rep(' ') * end_marker * opt(newline)
+    full_machine = package_header * newline * rep('\t') * rep(' ') * 
+    model_header * newline * rep(rep(rep('\t') * rep(' ') * parameter * 
+    opt(newline)) * rep(rep('\t') * rep(' ') * variable * opt(newline))) * 
+    opt(rep('\t') * rep(' ') * initial_header * newline) * rep(rep('\t') * 
+    rep(' ') * equation_expr * opt(newline)) * opt(rep('\t') * rep(' ') * 
+    equation_header * newline) * rep(rep('\t') * rep(' ') * equation_expr  * 
+    opt(newline)) * rep('\t') * rep(' ') * end_marker * newline * rep('\t') * 
+    rep(' ') * end_marker * opt(newline)
 
     compile(full_machine)
 end
-
-display_machine(base_Modelica_machine)
 
 base_Modelica_actions = Dict(
     :mark_pos => :(pos = p),
@@ -119,12 +83,12 @@ base_Modelica_actions = Dict(
         package_name = strip(String(data_to_point[first_tick_index:last_tick_index]),'\'')
     end,
     :get_description => :(description = strip(String(data[pos:p]), '"'); pos = 0),
-    :get_value => :(value = Symbol(strip(String(data[pos:p]),['=',' ',';'])); pos = 0), #get the value
+    :get_value => :(value = strip(String(data[pos:p]),['=',' ',';']); pos = 0), #get the value
     :create_equation => quote
         equal_index = findfirst("=",data[equ_pos:p])[1]
         description_start = findfirst("\"", data[equ_pos:p])
         lhs = strip(String(data[equ_pos:p][1:equal_index-1]),' ') #data[pos:p] is the whole equation expression
-        rhs = strip(isnothing(description_start) ? String(data[equ_pos:p][equal_index+1:end]) : String(data[equ_pos:p][equal_index+1:description_start[1]]),[' ', ';', '"']) #minus one to not include the semicolon
+        rhs = strip(isnothing(description_start) ? String(data[equ_pos:p][equal_index+1:end]) : String(data[equ_pos:p][equal_index+1:description_start[1]]),[' ', ';', '"'])
         equation_description = description
         initial_flag ? push!(initial_equations,BaseModelicaInitialEquation(lhs,rhs,equation_description)) : push!(equations,BaseModelicaEquation(lhs,rhs,equation_description))
         pos = 0
@@ -144,7 +108,7 @@ base_Modelica_actions = Dict(
 
 
 context = CodeGenContext(generator = :goto)
-@eval function parse_BaseModelica(data)
+@eval function parse_package_str(data)
     # Initialize variables you use in the action code.
     pos = 0
     equ_pos = 0
@@ -173,39 +137,15 @@ context = CodeGenContext(generator = :goto)
     #parameters, variables, initial_equations, model_name, equations
 end
 
+"Parses a string in to a BaseModelicaPackage."
+function parse_str(data)
+    parse_package_str(data)
+end
 
-
-parse_BaseModelica("""package 'Test'
-  model 'Test'
-    parameter Real 'slop.m';
-    parameter Real 'doop.doo' \"sloopy sloopy slaw\";
-    parameter Real 'wagon.m' = 100000.0525 \"Mass of the sliding mass\";
-    parameter Real 'doody.doo' = 45;
-    parameter Real 'diedeydiey' = 456.463;
-    Real 'doop.f' "doopy doopy doo";
-  initial equation
-    'wagon.m' = 100000.0525;
-    'deedee' = 'feefee';
-  equation
-    'locomotive.flange_b.f'+'wagon.flange_a.f' = 'jeepers_creepers' - 'doopers_deepers/2 + 500.00;
-  end 'Test';
-end 'Test';""")
-
-parse_BaseModelica("""package 'Test'
-  model 'Test' "Test for Julia BaseModelica Parser"
-    parameter Real 'slop.m';
-    parameter Real 'doop.doo' \"sloopy sloopy slaw\";
-    parameter Real 'wagon.m' = 100000.0525 \"Mass of the sliding mass\";
-    parameter Real 'doody.doo' = 45;
-    parameter Real 'diedeydiey' = 456.463;
-    Real 'doop.f' "doopy doopy doo";
-  initial equation
-    'wagon.m' = 100000.0525;
-    'deedee' = 'feefee';
-  equation
-    'locomotive.flange_b.f'+'wagon.flange_a.f' = 'jeepers_creepers' - 'doopers_deepers/2 + 500.00;
-  end 'Test';
-end 'Test';""")
+"Takes a path to a file and parses the contents in to a BaseModelicaPackage."
+function parse_file(file)
+    parse_str(read(file,String))
+end
 
 function display_machine(m::Automa.Machine)
     open("/tmp/machine.dot", "w") do io
@@ -214,9 +154,3 @@ function display_machine(m::Automa.Machine)
     run(pipeline(`dot -Tsvg /tmp/machine.dot`, stdout="/tmp/machine.svg"))
     run(`firefox /tmp/machine.svg`)
 end
-
-file = read("/home/jadonclugston/Documents/Work/dev/Modelica/BaseModelica.jl/test/testfiles/Test.mo",String)
-test_model = parse_BaseModelica(file)
-
-newton_cooling = read("/home/jadonclugston/Documents/Work/dev/Modelica/BaseModelica.jl/test/testfiles/NewtonCoolingBase.mo",String)
-newton_test = parse_BaseModelica(newton_cooling)
