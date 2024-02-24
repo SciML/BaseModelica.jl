@@ -49,12 +49,28 @@ struct BaseModelicaInitialEquation
 end
 
 # needed to parse derivatives in equations correctly
-@parameters t
+@variables t
 der = Differential(t)
 
 #Includes
 include("parser.jl")
 include("conversion.jl")
+"""
+    parse_basemodelica(filename::String)::ODESystem
 
-export parse_str, parse_file, baseModelica_to_ModelingToolkit
+Parses a BaseModelica .mo file into a ModelingToolkit ODESystem.
+
+## Example
+
+```julia
+parse_basemodelica("testfiles/NewtonCoolingBase.mo")
+```
+"""
+function parse_basemodelica(filename::String)
+    model = parse_file(filename)
+    baseModelica_to_ModelingToolkit(model.model)
+end
+
+export parse_basemodelica
+
 end
