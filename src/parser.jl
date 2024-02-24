@@ -1,7 +1,7 @@
 base_Modelica_machine = let
-    newline = re"\n"
+    newline = re"\n" | re"\r" | re"\r\n"
     endexpr = re";"
-    description = re"(\"([A-Za-z0-9._ ']|\n)*\")"
+    description = re"(\"([A-Za-z0-9._ ']|(\n|\r|\r\n))*\")"
     model_header = re"model '[A-Za-z0-9._]+'" * opt(' ' * description)
     package_header = re"package '[A-Za-z0-9._]+'"
     end_marker = re"end '[A-Za-z0-9._]+'" * endexpr
@@ -13,7 +13,7 @@ base_Modelica_machine = let
                 opt(opt(' ') * opt(description)) * endexpr
     variable = type * ' ' * name * ' ' * description * endexpr
     #parameter Real '[A-Za-z0-9._]+' ?(=? ?[\d]+\.?[\d]*)? ?("([A-Za-z0-9._ ]|\n)*")?;
-    equation_expr = re"[^Ripem;\n\t ][^!=;\"\t]+ ?= ?[^!=;\"\t]+" * opt(' ' * description) *
+    equation_expr = re"[^Ripem;(\n|\r|\r\n)\t ][^!=;\"\t]+ ?= ?[^!=;\"\t]+" * opt(' ' * description) *
                     endexpr
     equation_header = re"equation"
     initial_header = re"initial equation"
