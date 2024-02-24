@@ -3,45 +3,49 @@ module BaseModelica
 using ModelingToolkit
 using Automa
 
-"Holds the name of the package, the models in the package, and eventually BaseModelica records."
+"""
+Holds the name of the package, the models in the package, and eventually BaseModelica records.
+"""
 struct BaseModelicaPackage
-    name
-    model
+    name::Any
+    model::Any
 end
 
-"Represents a BaseModelica model."
+"""
+Represents a BaseModelica model.
+"""
 struct BaseModelicaModel
-    name
-    description
-    parameters
-    variables
-    equations
-    initialequations
+    name::Any
+    description::Any
+    parameters::Any
+    variables::Any
+    equations::Any
+    initialequations::Any
 end
 
 struct BaseModelicaParameter
-    type
-    name
-    value
-    description
+    type::Any
+    name::Any
+    value::Any
+    description::Any
 end
 
 struct BaseModelicaVariable
-    type
-    name
-    description
+    type::Any
+    name::Any
+    description::Any
 end
 
 struct BaseModelicaEquation
-    lhs
-    rhs
-    description
+    lhs::Any
+    rhs::Any
+    description::Any
 end
 
 struct BaseModelicaInitialEquation
-    lhs
-    rhs
-    description
+    lhs::Any
+    rhs::Any
+    description::Any
 end
 
 # needed to parse derivatives in equations correctly
