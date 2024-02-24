@@ -13,6 +13,12 @@ using Pkg
 Pkg.add("BaseModelica")
 ```
 
+## API
+
+```@docs
+parse_basemodelica
+```
+
 ## Contributing
 
   - Please refer to the
