@@ -1,179 +1,256 @@
-base_Modelica_machine = let
-    newline = re"\n" | re"\r" | re"\r\n"
-    endexpr = re";"
-    description = re"(\"([A-Za-z0-9._ ']|(\n|\r|\r\n))*\")"
-    model_header = re"model '[A-Za-z0-9._]+'" * opt(' ' * description)
-    package_header = re"package '[A-Za-z0-9._]+'"
-    end_marker = re"end '[A-Za-z0-9._]+'" * endexpr
-    type = re"Real"
-    name = re"'[A-Za-z0-9._]+'"
-    value = re"= ?[0-9]+\.?[0-9]*"
+using ParserCombinator
 
-    parameter = re"parameter" * ' ' * type * ' ' * name * opt(' ') * opt(value) *
-                opt(opt(' ') * opt(description)) * endexpr
-    variable = type * ' ' * name * ' ' * description * endexpr
-    #parameter Real '[A-Za-z0-9._]+' ?(=? ?[\d]+\.?[\d]*)? ?("([A-Za-z0-9._ ]|\n)*")?;
-    equation_expr = re"[^Ripem;(\n|\r|\r\n)\t ][^!=;\"\t]+ ?= ?[^!=;\"\t]+" *
-                    opt(' ' * description) *
-                    endexpr
-    equation_header = re"equation"
-    initial_header = re"initial equation"
+list2string(x) = reduce(*,x)
+spc = Drop(Star(Space()))
 
-    onfinal!(model_header, :get_model_name)
+# Base Modelica grammar
+@with_names begin
+NL = p"\r\n" | p"\n" | p"\r";
+WS = p" " | p"\t" | NL;
+LINE_COMMENT = p"//[^\r\n]*" + NL;
+ML_COMMENT = p"/[*]([^*]|([*][^/]))*[*]/";
 
-    onfinal!(package_header, :get_package_name)
+#lexical units, not keywords
+NONDIGIT = p"_|[a-z]|[A-Z]";
+DIGIT = p"[0-9]";
+UNSIGNED_INTEGER = Plus(DIGIT);
+Q_CHAR = NONDIGIT | DIGIT | p"[-!#$%&()*>+,./:;<>=?>@[]{}|~ ^]";
+S_ESCAPE = p"\\['\"?\\abfnrtv]";
+S_CHAR = NL | p"[^\r\n\\\"]";
+Q_IDENT = E"'" + (Q_CHAR | S_ESCAPE ) + Star(Q_CHAR | S_ESCAPE | E"\"" ) + E"'";
+IDENT = ((NONDIGIT + Star( DIGIT | NONDIGIT )) | Q_IDENT) |> list2string;
+STRING = e"\"" + Star( S_CHAR | S_ESCAPE ) + e"\"" |> list2string;
+EXPONENT = ( e"e" | e"E" ) + ( e"+" | e"-" )[0:1] + DIGIT[1:end];
+UNSIGNED_NUMBER = DIGIT[1:end] + ( e"." + Star(DIGIT) )[0:1] + EXPONENT[0:1] |> (x -> parse(Float64, reduce(*,x)));
 
-    onfinal!(equation_header, [:set_equation_flag, :clear_initial_flag])
-    onfinal!(initial_header, [:set_initial_flag, :clear_equation_flag])
+#component clauses
+name = (IDENT + Star(e"." + IDENT)) |> list2string;
+type_specifier = E"."[0:1] + name;
+type_prefix = (( e"discrete" | e"parameter" | e"constant" )[0:1] + spc + ( e"input" | e"output" )[0:1]);
+array_subscripts = Delayed()
+modification = Delayed()
+declaration = IDENT + array_subscripts[0:1] + modification[0:1];
+comment = Delayed()
+component_declaration = declaration + spc + comment;
+global_constant = e"constant" + type_specifier + array_subscripts[0:1] + declaration + comment;
+component_list = (component_declaration & spc & Star(E"," + component_declaration));
+component_reference = E"."[0:1] + IDENT + array_subscripts[0:1] + Star(E"." + IDENT + array_subscripts[0:1]);
+component_clause = type_prefix[1:1,:&] + spc + type_specifier + spc + component_list[1:1,:&] > create_component;
+#equations
 
-    precond!(type, :equation_or_initial_flag, bool = false)
-    onenter!(type, :mark_pos)
-    onfinal!(type, :get_type)
+#modification
+string_comment = (STRING + Star(E"+" + STRING))[0:1];
+element_modification = name + modification[0:1] + string_comment;
+element_modification_or_replaceable = element_modification;
+decoration = E"@" + UNSIGNED_INTEGER;
+argument = decoration[0:1] + element_modification_or_replaceable;
+argument_list = argument + Star(E"," + argument);
+class_modification = E"(" + argument_list[0:1] + E")";
+expression = Delayed()
+modification.matcher = (class_modification + (spc + E"=" + spc + expression)[0:1]) | (spc + E"=" + spc + expression) | (E":=" + spc + expression);
 
-    precond!(name, :equation_or_initial_flag, bool = false)
-    onenter!(name, :mark_pos)
-    onexit!(name, :get_name)
+#expressions
+relational_operator = e"<" | e"<=" | e">" | e">=" | e"==" | e"<>";
+add_operator = e"+" | e"-" | e".+" | e".-";
+mul_operator = e"*" | e"/" | e".*" | e"./";
 
-    precond!(value, :equation_or_initial_flag, bool = false)
-    onenter!(value, :mark_pos)
-    onexit!(value, :get_value)
+for_index = IDENT + E"in" + expression;
 
-    #precond!(description, :equation_or_initial_flag, bool = false)
-    onenter!(description, :mark_pos)
-    onfinal!(description, :get_description)
+named_arguments = Delayed()
+function_partial_application = E"function" + type_specifier + E"(" + named_arguments + E")";
+function_argument = function_partial_application | expression;
+function_arguments_non_first = Delayed()
+function_arguments_non_first.matcher = (function_argument + (E"," + function_arguments_non_first)[0:1]) | named_arguments;
+named_argument = IDENT + E"=" + function_argument;
+named_arguments.matcher = named_argument + Star(E"," + named_argument);
+function_partial_applications = E"function" + type_specifier + E"(" + named_arguments[0:1] + E")";
+function_arguments = (expression + (E"," + function_arguments_non_first) | (E"for" + for_index)[0:1]) |
+    (function_partial_application + (E"," + function_arguments_non_first)[0:1]) |
+    named_arguments;
+function_call_args = E"(" + function_arguments[0:1] + E")";
+output_expression_list = Delayed()
+expression_list = Delayed()
+array_arguments = expression + (Star(E"," + expression) | E"for" + for_index);
+primary = UNSIGNED_NUMBER | STRING | e"false" | e"true" | 
+    ((e"der" | e"initial" | e"pure") + function_call_args) |
+    (component_reference + function_call_args[0:1]) |
+    (E"(" + output_expression_list + E")" + array_subscripts[0:1]) |
+    (E"[" + expression_list + Star(E";" + expression_list) + E"]") |
+    (E"{" + array_arguments + E"}") |
+    E"end";
+factor = primary + ((E"^" | E".^") + primary)[0:1];
+term = factor + spc + Star(mul_operator + spc + factor);
+arithmetic_expression = add_operator[0:1] + spc + term + spc + Star(add_operator + spc + term);
 
-    precond!(parameter, :equation_or_initial_flag, bool = false)
-    onfinal!(parameter, :create_parameter)
+subscript = E":" | expression;
+array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript);
+annotation_comment = E"annotation" + class_modification;
+comment.matcher = string_comment + annotation_comment[0:1];
 
-    precond!(variable, :equation_or_initial_flag, bool = false)
-    onfinal!(variable, :create_variable)
+enumeration_literal = IDENT + comment;
+enum_list = enumeration_literal + Star(E"," + enumeration_literal);
 
-    precond!(equation_expr, :equation_or_initial_flag)
-    onenter!(equation_expr, :mark_equ_pos)
-    onfinal!(equation_expr, :create_equation)
+guess_value = E"guess" + E"(" + component_reference + E")" ;
+prioritize_expression = Delayed()
+parameter_equation = E"parameter equation" + guess_value + E"=" + (expression | prioritize_expression) + comment;
 
-    full_machine = package_header * newline * rep('\t') * rep(' ') *
-                   model_header * newline *
-                   rep(rep(rep('\t') * rep(' ') * parameter *
-                           opt(newline)) *
-                       rep(rep('\t') * rep(' ') * variable * opt(newline))) *
-                   opt(rep('\t') * rep(' ') * initial_header * newline) *
-                   rep(rep('\t') *
-                       rep(' ') * equation_expr * opt(newline)) *
-                   opt(rep('\t') * rep(' ') *
-                       equation_header * newline) *
-                   rep(rep('\t') * rep(' ') * equation_expr *
-                       opt(newline)) * rep('\t') * rep(' ') * end_marker * newline *
-                   rep('\t') *
-                   rep(' ') * end_marker * opt(newline)
+normal_element = component_clause;
 
-    compile(full_machine)
-end
 
-base_Modelica_actions = Dict(
-    :mark_pos => :(pos = p),
-    :mark_equ_pos => :(equ_pos = p),
-    :get_type => :(type = String(data[pos:p]); pos = 0),
-    :get_name => :(name = Symbol(strip(String(data[pos:p]), ['\'', ' ', ';'])); pos = 0),
-    :get_model_name => quote
-        data_to_point = data[findfirst("model", data)[end]:p]
-        ticks = findall("'", data_to_point)
-        first_tick_index, last_tick_index = (only(ticks[1]), only(ticks[2]))
-        model_name = strip(String(data_to_point[first_tick_index:last_tick_index]), '\'')
-        model_description = description
-        description = ""
-    end,
-    :get_package_name => quote
-        data_to_point = data[findfirst("package", data)[end]:p]
-        ticks = findall("'", data_to_point)
-        first_tick_index, last_tick_index = (only(ticks[1]), only(ticks[2]))
-        package_name = strip(String(data_to_point[first_tick_index:last_tick_index]), '\'')
-    end,
-    :get_description => :(description = strip(String(data[pos:p]), '"'); pos = 0),
-    :get_value => :(value = strip(String(data[pos:p]), ['=', ' ', ';']); pos = 0), #get the value
-    :create_equation => quote
-        equal_index = findfirst("=", data[equ_pos:p])[1]
-        description_start = findfirst("\"", data[equ_pos:p])
-        lhs = strip(String(data[equ_pos:p][1:(equal_index - 1)]), ' ') #data[pos:p] is the whole equation expression
-        rhs = strip(
-            isnothing(description_start) ? String(data[equ_pos:p][(equal_index + 1):end]) :
-            String(data[equ_pos:p][(equal_index + 1):description_start[1]]),
-            [' ', ';', '"'])
-        equation_description = description
-        initial_flag ?
-        push!(initial_equations,
-            BaseModelicaInitialEquation(lhs, rhs, equation_description)) :
-        push!(equations, BaseModelicaEquation(lhs, rhs, equation_description))
-        pos = 0
-        equ_pos = 0
-        rhs = ""
-        lhs = ""
-        description = ""
-    end,
-    :create_parameter => :(push!(
-        parameters, BaseModelicaParameter(type, name, value, description));
-    type = "";
-    name = "";
-    value = "";
-    description = ""),
-    :create_variable => :(push!(variables, BaseModelicaVariable(type, name, description)); type = ""; name = ""; description = ""),
-    :set_equation_flag => :(equation_flag = true),
-    :clear_equation_flag => :(equation_flag = false),
-    :set_initial_flag => :(initial_flag = true),
-    :clear_initial_flag => :(initial_flag = false),
-    :equation_or_initial_flag => :(equation_flag || initial_flag)
-)
+generic_element = normal_element | parameter_equation;
 
-context = CodeGenContext(generator = :goto)
-@eval function parse_package_str(data)
-    # Initialize variables you use in the action code.
-    pos = 0
-    equ_pos = 0
-    other_pos = 0
-    equation_flag = false
-    initial_flag = false
+language_specification = STRING;
 
-    model_name = ""
-    model_description = ""
-    package_name = ""
-    name = ""
-    description = ""
-    value = ""
-    type = ""
-    lhs = ""
-    rhs = ""
-    parameters = BaseModelicaParameter[]
-    variables = BaseModelicaVariable[]
-    equations = BaseModelicaEquation[]
-    initial_equations = BaseModelicaInitialEquation[]
+external_function_call = (component_reference + E"=")[0:1] + IDENT + E"(" + expression_list[0:1] + E")";
 
-    # Generate code for initialization and main loop
-    $(generate_code(context, base_Modelica_machine, base_Modelica_actions))
-    # Finally, return records accumulated in the action code.
-    return BaseModelicaPackage(package_name,
-        BaseModelicaModel(model_name, model_description, parameters,
-            variables, equations, initial_equations))
-    #parameters, variables, initial_equations, model_name, equations
-end
+equation = Delayed()
+initial_equation = Delayed()
+statement = Delayed()
+base_partition = Delayed()
+composition = Star(decoration[0:1] + generic_element + E";") +
+              Star((e"equation" + Star(equation + E";")) |
+              (e"initial equation" + Star(initial_equation + E";")) |
+              (e"initial"[0:1] + e"algorithm" + Star(statement + E";"))) + (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";")[0:1] +
+              Star(base_partition) + (annotation_comment + E";")[0:1];
 
-"""
-Parses a string in to a BaseModelicaPackage.
-"""
-function parse_str(data)
-    parse_package_str(data)
-end
 
-"""
-Takes a path to a file and parses the contents in to a BaseModelicaPackage.
-"""
-function parse_file(file)
-    parse_str(read(file, String))
-end
+base_prefix = e"input" | e"output"
+long_class_specifier = IDENT + string_comment + composition + E"end";
+short_class_specifier = IDENT + E"=" + (base_prefix[0:1] + type_specifier + class_modification[0:1]) |
+    (e"enumeration" + E"(" + (enum_list[0:1] | E":" ) + E")") + comment;
+class_prefixes = e"type" | e"record" | ((e"pure constant")[0:1] | e"impure")[0:1] + e"function";
+der_class_specifier = IDENT + E"=" + E" "[0:1] + E"der" + E" " + E"(" + type_specifier + E"," + IDENT + Star(E"," + IDENT) + E")" + comment;
+class_specifier = long_class_specifier | short_class_specifier | der_class_specifier;
+class_definition = class_prefixes + class_specifier;
 
-function display_machine(m::Automa.Machine)
-    open("/tmp/machine.dot", "w") do io
-        println(io, Automa.machine2dot(m))
+clock_clause = decoration[0:1] + E"Clock" + IDENT + E"=" + expression + comment;
+sub_partition = E"subpartition" + E"(" + argument_list + E")" + string_comment + (annotation_comment + E";")[0:1] + (Star(E"equation" + ((equation + E";"))) | E"algorithm" + Star(statement + E";"));
+base_partition.matcher = E"partition" + string_comment + (annotation_comment + E";")[0:1] + (clock_clause + E";") + sub_partition;
+
+
+
+#equations 
+
+relation = arithmetic_expression + (relational_operator + arithmetic_expression)[0:1];
+logical_factor = E"not"[0:1] + relation;
+logical_term = logical_factor + Star(E"and" + logical_factor);
+logical_expression = logical_term + Star(E"or" + logical_term);
+simple_expression = logical_expression + (E":" + logical_expression + (E":"  + logical_expression)[0:1])[0:1];
+
+priority = expression;
+
+
+prioritize_equation = E"prioritize" + E"(" + component_reference + E"," + priority + E")";
+prioritize_expression.matcher = E"prioritize" + E"(" + expression + E"," + priority + E")";
+
+
+initial_equation.matcher = equation | prioritize_equation;
+
+output_expression_list.matcher = expression[0:1] + Star(E"," + expression[0:1]);
+expression_list.matcher = expression + Star(E"," + expression);
+
+if_expression = Delayed()
+expression_no_decoration = simple_expression | if_expression;
+if_expression.matcher = 
+    E"if" + expression_no_decoration +  E"then" + expression_no_decoration +
+    Star(E"elseif" + expression_no_decoration + E"then" + expression_no_decoration) +
+    E"else" + expression_no_decoration;
+
+expression.matcher = expression_no_decoration + decoration[0:1];
+
+if_equation = 
+    E"if" + expression + E"then" + NL +
+        Star(equation + E";") +
+        Star(E"elseif" + expression + E"then" + NL +
+            Star(equation + E";")
+        ) +
+        (E"else" + NL +
+            Star(equation + E";")
+        )[0:1] + NL +
+        E"end if";
+
+for_index = IDENT + E"in" + expression;
+
+for_equation = 
+    E"for" + for_index + E"loop" + NL +
+        Star(equation + E";") + NL +
+    E"end for";
+
+for_statement = 
+    E"for" + for_index + E"loop" + NL +
+        Star(statement + E";") + NL +
+    E"end for";
+
+while_statement = 
+    E"while" + expression + E"loop" + 
+        Star(statement + E";") + NL +
+    E"end while";
+
+when_equation =
+    E"when" + expression + E"then" + NL +
+        Star(statement + E";") + NL +
+    E"end when";
+
+when_statement = 
+    E"when" + expression + E"then" + NL +
+        Star(statement + E";") + NL +
+    Star(E"elsewhen" + expression + E"then" + NL +
+        Star(statement + E";")) + NL +
+    E"end when";
+
+if_statement = 
+    E"if" + expression + E"then" + NL +
+       Star(statement + E";") + NL +
+       Star(E"elseif" + expression + E"then" + NL +
+        Star(statement + E";")) +
+        (E"else" + NL +
+            Star(statement + E";"))[0:1] + NL +
+        E"end if";
+
+statement.matcher = decoration[0:1] + (component_reference + (E":=" + expression | function_call_args) |
+    E"(" + output_expression_list + E")" + E":=" + component_reference + function_call_args |
+    E"break" |
+    E"return" |
+    if_statement |
+    for_statement |
+    while_statement |
+    when_statement) + comment;
+
+equation.matcher = decoration[0:1] + (simple_expression + decoration[0:1] + (e"=" + expression)[0:1] |
+    if_equation |
+    for_equation |
+    when_equation) + comment;
+
+end;
+
+function create_component(prefix, type, components)
+    #only do parameters and Reals for now
+    #eventually will need to do arbitrary base modelica types
+    comp = components[1] #for now only supports one parameter/variable per statement, no "component-list"s
+    if isempty(prefix)
+        type = type
+        name = components[1]
+        value = components[2]
+        description = components[3]
+        return BaseModelicaVariable(type,name,nothing,description)
+    elseif prefix[1] == "parameter" # only do parameters and Reals for now 
+        type = type
+        name = comp[1]
+        value = comp[2]
+        length(comp) == 3 ? description = comp[3] : description = nothing 
+        return BaseModelicaParameter(type,name,value,description)
+    elseif prefix[1] == "input" || prefix[1] == "output"
+        type = type
+        name = comp[1]
+        length(comp) == 2 ? description = comp[2] : description = description = nothing
+        return BaseModelicaVariable(type,name,prefix[1],description)
     end
-    run(pipeline(`dot -Tsvg /tmp/machine.dot`, stdout = "/tmp/machine.svg"))
-    run(`firefox /tmp/machine.svg`)
+end
+
+function create_equation(equation_list)
+    equal_index = findfirst(x -> x == "=", equation_list)
+    if !isnothing(equal_index)
+        lhs = equation_list[begin:(equal_index -1)]
+        rhs = equation_list[(equal_index+1):(end - 1)] #
+    end
 end
