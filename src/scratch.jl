@@ -14,8 +14,8 @@ parse_one("parameter input", type_prefix)
 parse_one("parameter",type_prefix)
 parse_one("parameter Real 'juice' \"juice\";", component_clause)
 
-parse_one("output Real 'juice'",component_clause)
-parse_one("Real 'juice' \"the real juice\"",component_clause)
+parse_one("output Real 'juice' \"juicy\";",component_clause)
+parse_one("Real 'juice' \"the real juice\";",component_clause)
 parse_one("parameter Real 'juice' = 45,'juicier' = 56;",Trace(component_clause))
 parse_one("parameter output Real 'juice' = 49 \"description for juice 49\";",component_clause)
 parse_dbg("parameter output Real 'juice' = 5;",Trace(component_clause))
@@ -23,8 +23,10 @@ parse_dbg("parameter output Real 'juice' = 5;",Trace(component_clause))
 parse_one("'locomotive' + 'doopers' = 'jeepers' \"holy creepers\";", equation)
 parse_one("'locomotive' + 'loco'", equation)
 
-
-parse_dbg("Real 'juicier' ;", component_clause)
+parse_one("parameter Real 'juice' = 34;", generic_element)
+parse_one("Real 'juice' \"juicy\";",generic_element)
+parse_one("parameter Real 'dop' = 6; Real 'juice' \"juicy\"; \n Real 'fruit' \"fruity\"; \n parameter Real 'doop' = 60;",composition)
+parse_one("parameter Real 'juice' = 34;", component_clause)
 
 parse_one("x*y",term)
 

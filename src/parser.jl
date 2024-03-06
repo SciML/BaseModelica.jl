@@ -3,6 +3,58 @@ using ParserCombinator
 list2string(x) = reduce(*,x)
 spc = Drop(Star(Space()))
 
+function create_component(prefix, type, components)
+    #only do parameters and Reals for now
+    #eventually will need to do arbitrary base modelica types
+   
+    comp = components[1] #for now only supports one parameter/variable per statement, no "component-list"s
+    if isempty(prefix)
+        type = type
+        name = comp[1]
+        length(comp) == 2 ? description = comp[2] : description = description = nothing
+        return BaseModelicaVariable(type,name,nothing,description)
+    elseif prefix[1] == "parameter" # only do parameters and Reals for now 
+        type = type
+        name = comp[1]
+        value = comp[2]
+        length(comp) == 3 ? description = comp[3] : description = nothing 
+        return BaseModelicaParameter(type,name,value,description)
+    elseif prefix[1] == "input" || prefix[1] == "output"
+        type = type
+        name = comp[1]
+        length(comp) == 2 ? description = comp[2] : description = description = nothing
+        return BaseModelicaVariable(type,name,prefix[1],description)
+    end
+end
+
+function create_equation(equation_list)
+    #so far only handles normal equations, no if, whens, or anything like that 
+    eq = equation_list[1]
+    equal_index = findfirst(x -> x == "=", eq)
+    println(equal_index)
+    if !isnothing(equal_index)
+        lhs = eq[begin:(equal_index -1)]
+        rhs = eq[(equal_index+1):end] #
+    end
+    !isempty(equation_list[2]) ? description = only(equation_list[2]) : description = ""
+    BaseModelicaEquation(lhs,rhs,description)
+end
+
+function create_initial_equation(equation_list)
+    eq = equation_list[1]
+    equal_index = findfirst(x -> x == "=", eq)
+    println(equal_index)
+    if !isnothing(equal_index)
+        lhs = eq[begin:(equal_index -1)]
+        rhs = eq[(equal_index+1):end] #
+    end
+    !isempty(equation_list[2]) ? description = only(equation_list[2]) : description = ""
+    BaseModelicaInitialEquation(lhs,rhs,description)
+end
+
+
+spc = Drop(Star(Space()))
+
 # Base Modelica grammar
 @with_names begin
 NL = p"\r\n" | p"\n" | p"\r";
@@ -107,7 +159,7 @@ equation = Delayed()
 initial_equation = Delayed()
 statement = Delayed()
 base_partition = Delayed()
-composition = Star(decoration[0:1] + generic_element + E";") +
+composition = Star(decoration[0:1] + generic_element + E";" + spc) +
               Star((e"equation" + Star(equation + E";")) |
               (e"initial equation" + Star(initial_equation + E";")) |
               (e"initial"[0:1] + e"algorithm" + Star(statement + E";"))) + (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";")[0:1] +
@@ -115,7 +167,7 @@ composition = Star(decoration[0:1] + generic_element + E";") +
 
 
 base_prefix = e"input" | e"output"
-long_class_specifier = IDENT + string_comment + composition + E"end";
+long_class_specifier = IDENT + string_comment + composition + E"end" + IDENT;
 short_class_specifier = IDENT + E"=" + (base_prefix[0:1] + type_specifier + class_modification[0:1]) |
     (e"enumeration" + E"(" + (enum_list[0:1] | E":" ) + E")") + comment;
 class_prefixes = e"type" | e"record" | ((e"pure constant")[0:1] | e"impure")[0:1] + e"function";
@@ -216,41 +268,9 @@ statement.matcher = decoration[0:1] + (component_reference + (E":=" + expression
     while_statement |
     when_statement) + comment;
 
-equation.matcher = decoration[0:1] + (simple_expression + decoration[0:1] + (e"=" + expression)[0:1] |
+equation.matcher = ((decoration[0:1] + (simple_expression + decoration[0:1] + (e"=" + expression)[0:1]) |
     if_equation |
     for_equation |
-    when_equation) + comment;
+    when_equation) & comment) |> create_equation;
 
 end;
-
-function create_component(prefix, type, components)
-    #only do parameters and Reals for now
-    #eventually will need to do arbitrary base modelica types
-    comp = components[1] #for now only supports one parameter/variable per statement, no "component-list"s
-    if isempty(prefix)
-        type = type
-        name = components[1]
-        value = components[2]
-        description = components[3]
-        return BaseModelicaVariable(type,name,nothing,description)
-    elseif prefix[1] == "parameter" # only do parameters and Reals for now 
-        type = type
-        name = comp[1]
-        value = comp[2]
-        length(comp) == 3 ? description = comp[3] : description = nothing 
-        return BaseModelicaParameter(type,name,value,description)
-    elseif prefix[1] == "input" || prefix[1] == "output"
-        type = type
-        name = comp[1]
-        length(comp) == 2 ? description = comp[2] : description = description = nothing
-        return BaseModelicaVariable(type,name,prefix[1],description)
-    end
-end
-
-function create_equation(equation_list)
-    equal_index = findfirst(x -> x == "=", equation_list)
-    if !isnothing(equal_index)
-        lhs = equation_list[begin:(equal_index -1)]
-        rhs = equation_list[(equal_index+1):(end - 1)] #
-    end
-end
