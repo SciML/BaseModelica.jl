@@ -36,3 +36,66 @@ parse_one("3+ 5 -3/ 4*5+787 -10", arithmetic_expression)
 
 eeps = e"eeps" + e"peeps"
 parse_one("abeepspeepseepspeeps", e"a" + e"b" + eeps[1:end,:&])
+
+parse_one("3+ ( 4 - 32 ) / 2 = 3", equation)
+
+parse_one("""
+Real 'juice.juice' \"juicy\"; 
+Real 'fruit' \"fruity\";
+output Real 'output_fruit';
+parameter Real 'doop' = 60;
+equation
+('juice'+'fruit')*'blade' = 'puree';
+'juicy' * 'fruit' = 'juicyfruit';
+""", composition)
+
+parse_one("""JuiceModel
+Real 'juice.juice' \"juicy\"; 
+Real 'fruit' \"fruity\";
+output Real 'output_fruit';
+parameter Real 'doop' = 60;
+equation
+('juice'+'fruit')*'blade' = 'puree';
+'juicy' * 'fruit' = 'juicyfruit';
+end JuiceModel;
+""", long_class_specifier, debug = true)
+
+parse_one("""
+package JuiceModel
+    model JuiceModel
+    Real 'juice.juice' \"juicy\"; 
+    Real 'fruit' \"fruity\";
+    output Real 'output_fruit';
+    parameter Real 'doop' = 60;
+    equation
+    ('juice'+'fruit' + 100.0)*'blade' = 'puree';
+    'juicy' * 'fruit' = 'juicyfruit';
+    end JuiceModel;
+end JuiceModel;
+end JuiceModel;"""
+,base_modelica)
+
+parse_one("""
+package JuiceModel
+    model JuiceModel
+    end JuiceModel;
+end JuiceModel;""",base_modelica)
+
+
+parse_one("juice 
+end juice;", long_class_specifier)
+
+parse_one("('juice' + 'juice2')/2", relation)
+
+parse_one("'juice'= 4;",composition)
+
+parse_one("""initial equation
+'juice' = 4;""",composition)
+
+parse_lines("""equation
+'juice' = 'juice_right';
+'drink' = 'drink';""",composition)
+
+parse_one("'juice.juice'",name)
+
+parse_one(".",Q_CHAR)
