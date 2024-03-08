@@ -60,7 +60,7 @@ equation
 end JuiceModel;
 """, long_class_specifier, debug = true)
 
-parse_one("""
+parse_dbg("""
 package JuiceModel
     model JuiceModel
     Real 'juice.juice' \"juicy\"; 
@@ -70,10 +70,12 @@ package JuiceModel
     equation
     ('juice'+'fruit' + 100.0)*'blade' = 'puree';
     'juicy' * 'fruit' = 'juicyfruit';
+    initial equation
+    'juicy' = 1000;
     end JuiceModel;
 end JuiceModel;
 end JuiceModel;"""
-,base_modelica)
+,Trace(base_modelica))
 
 parse_one("""
 package JuiceModel

@@ -24,7 +24,7 @@ function create_component(prefix, type, components)
     elseif prefix[1] == "input" || prefix[1] == "output"
         type = type
         name = comp[1]
-        length(comp) == 2 ? description = comp[2] : description = description = nothing
+        length(comp) == 2 ? description = comp[2] : description = nothing
         return BaseModelicaVariable(type,name,prefix[1],description)
     end
 end
@@ -45,31 +45,30 @@ function create_equation(equation_list)
     BaseModelicaEquation(lhs,rhs,description)
 end
 
-function create_initial_equation(equation_list)
+function create_initial_equation(equation)
     #so far only handles normal equations, no if, whens, or anything like that 
-    eq = equation_list[1]
-    equal_index = findfirst(x -> x == "=", eq)
-    if !isnothing(equal_index)
-        lhs = eq[begin:(equal_index-1)]
-        rhs = eq[(equal_index+1):end] #
-    else 
-        lhs = eq # hack because equations don't need to be equations in base modelica
-        rhs = ""
-    end
-    !isempty(equation_list[2]) ? description = only(equation_list[2]) : description = ""
-    BaseModelicaInitialEquation(lhs,rhs,description)
+    eq = equation[1]
+    lhs = eq.lhs
+    rhs = eq.rhs
+    BaseModelicaInitialEquation(lhs,rhs,nothing)
 end
 
 function construct_package(input)
-    variable = []
+    variables = []
     parameters = []
     equations = []
+    initial_equations = []
     for thing in input
-        typeof(thing) == BaseModelicaVariable ? push!(variables, thing):
-        typeof(thing) == BaseModelicaParameter ? push!(parameters, thing):
-        typeof(thing) == BaseModelicaEquation ? push!(equations, thing):
+        typeof(thing) == BaseModelicaVariable ? push!(variables, thing) :
+        typeof(thing) == BaseModelicaParameter ? push!(parameters, thing) :
+        typeof(thing) == BaseModelicaEquation ? push!(equations, thing) :
+        typeof(thing) == BaseModelicaInitialEquation ? push!(initial_equations,thing) :
         nothing
     end
+    
+    BaseModelicaModel(nothing,nothing,parameters,variables,equations,initial_equations)
+
+    
 end
 
 
