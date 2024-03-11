@@ -1,7 +1,7 @@
 module BaseModelica
 
 using ModelingToolkit
-using Automa
+using ParserCombinator
 
 """
 Holds the name of the package, the models in the package, and eventually BaseModelica records.
@@ -33,6 +33,7 @@ end
 struct BaseModelicaVariable
     type::Any
     name::Any
+    input_or_output::Any
     description::Any
 end
 
@@ -67,8 +68,8 @@ parse_basemodelica("testfiles/NewtonCoolingBase.mo")
 ```
 """
 function parse_basemodelica(filename::String)
-    model = parse_file(filename)
-    baseModelica_to_ModelingToolkit(model.model)
+    package = parse_file(filename)
+    baseModelica_to_ModelingToolkit(package.model)
 end
 
 export parse_basemodelica
