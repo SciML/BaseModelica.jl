@@ -68,8 +68,8 @@ parse_basemodelica("testfiles/NewtonCoolingBase.mo")
 ```
 """
 function parse_basemodelica(filename::String)
-    model = parse_file(filename)
-    baseModelica_to_ModelingToolkit(model.model)
+    package = parse_file(filename)
+    baseModelica_to_ModelingToolkit(package.model)
 end
 
 export parse_basemodelica

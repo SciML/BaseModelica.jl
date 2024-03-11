@@ -1,5 +1,3 @@
-using ParserCombinator
-
 list2string(x) = isempty(x) ? x : reduce(*,x)
 spc = Drop(Star(Space()))
 
@@ -51,6 +49,8 @@ function create_initial_equation(equation)
 end
 
 function construct_package(input)
+    name = input[1]
+    input[4] isa String ? description = input[4] : description = nothing
     variables = []
     parameters = []
     equations = []
@@ -63,9 +63,8 @@ function construct_package(input)
         nothing
     end
     
-    BaseModelicaModel(nothing,nothing,parameters,variables,equations,initial_equations)
-
-    
+    model = BaseModelicaModel(name,description,parameters,variables,equations,initial_equations)
+    BaseModelicaPackage(name, model)
 end
 
 
@@ -85,7 +84,7 @@ S_ESCAPE = p"\\['\"?\\abfnrtv]";
 S_CHAR = NL | p"[^\r\n\\\"]";
 Q_IDENT = (E"'" + (Q_CHAR | S_ESCAPE ) + Star(Q_CHAR | S_ESCAPE | E"\"" ) + E"'") |> list2string;
 IDENT = (((NONDIGIT + Star( DIGIT | NONDIGIT )) |> list2string) | Q_IDENT);
-STRING = e"\"" + Star( S_CHAR | S_ESCAPE ) + e"\"" |> list2string;
+STRING = E"\"" + Star( S_CHAR | S_ESCAPE ) + E"\"" |> list2string;
 EXPONENT = ( e"e" | e"E" ) + ( e"+" | e"-" )[0:1] + DIGIT[1:end];
 UNSIGNED_NUMBER = DIGIT[1:end] + ( e"." + Star(DIGIT) )[0:1] + EXPONENT[0:1] |> list2string;
 
@@ -294,5 +293,18 @@ base_modelica =
      spc + decoration[0:1] + spc + e"model" + spc + long_class_specifier + E";" + 
     spc + (annotation_comment + E";")[0:1] + spc +
     e"end" + spc + IDENT + spc + E";" + spc) |> construct_package
-
 end;
+
+"""
+Parses a String in to a BaseModelicaPackage.
+"""
+function parse_str(data)
+    only(parse_one(data,base_modelica))
+end
+
+"""
+Takes a path to a file and parses the contents in to a BaseModelicaPackage
+"""
+function parse_file(file)
+    parse_str(read(file,String))
+end
