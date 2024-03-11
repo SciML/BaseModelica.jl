@@ -6,9 +6,6 @@ spc = Drop(Star(Space()))
 function create_component(prefix, type, components)
     #only do parameters and Reals for now
     #eventually will need to do arbitrary base modelica types
-    #println("prefix: $prefix")
-    #rintln("type: $type")
-    #println("components: $components")
     comp = components[1] #for now only supports one parameter/variable per statement, no "component-list"s
     if isempty(prefix)
         type = type
@@ -31,12 +28,12 @@ end
 
 function create_equation(equation_list)
     #so far only handles normal equations, no if, whens, or anything like that 
-   #println(equation_list)
+    #println(equation_list)
     eq = equation_list[1]
     equal_index = findfirst(x -> x == "=", eq)
     if !isnothing(equal_index)
-        lhs = eq[begin:(equal_index-1)]
-        rhs = eq[(equal_index+1):end] #
+        lhs = only(eq[begin:(equal_index-1)])
+        rhs = only(eq[(equal_index+1):end]) #
     else 
         lhs = eq # hack because equations don't need to be equations in base modelica for some reason
         rhs = ""
@@ -133,21 +130,21 @@ function_arguments_non_first.matcher = (function_argument + (E"," + function_arg
 named_argument = IDENT + E"=" + function_argument;
 named_arguments.matcher = named_argument + Star(E"," + named_argument);
 function_partial_applications = E"function" + type_specifier + E"(" + named_arguments[0:1] + E")";
-function_arguments = (expression + (E"," + function_arguments_non_first) | (E"for" + for_index)[0:1]) |
+function_arguments = (expression + ((E"," + function_arguments_non_first) | (E"for" + for_index))[0:1]) |
     (function_partial_application + (E"," + function_arguments_non_first)[0:1]) |
     named_arguments;
-function_call_args = E"(" + function_arguments[0:1] + E")";
+function_call_args = e"(" + function_arguments[0:1] + e")";
 output_expression_list = Delayed()
 expression_list = Delayed()
 array_arguments = expression + (Star(E"," + expression) | E"for" + for_index);
 primary = UNSIGNED_NUMBER | STRING | e"false" | e"true" | 
     ((e"der" | e"initial" | e"pure") + function_call_args) |
     (component_reference + function_call_args[0:1]) |
-    (e"(" + output_expression_list + e")" + array_subscripts[0:1]) |
-    (e"[" + expression_list + Star(E";" + expression_list) + e"]") |
-    (e"{" + array_arguments + e"}") |
+    (e"(" + spc + output_expression_list + spc + e")" + array_subscripts[0:1]) |
+    (e"[" + spc + expression_list + spc +Star(E";" + spc + expression_list) + spc + e"]") |
+    (e"{" + spc + array_arguments + spc + e"}") |
     E"end";
-factor = primary + ((E"^" | E".^") + primary)[0:1];
+factor = primary + spc + ((E"^" | E".^") + spc + primary)[0:1];
 term = factor + spc + Star(mul_operator + spc + factor);
 arithmetic_expression = add_operator[0:1] + spc + term + spc + Star(add_operator + spc + term);
 
@@ -200,11 +197,11 @@ base_partition.matcher = E"partition" + string_comment + (annotation_comment + E
 
 #equations 
 
-relation = arithmetic_expression + (relational_operator + arithmetic_expression)[0:1] |> list2string;
-logical_factor = E"not"[0:1] + relation;
-logical_term = logical_factor + Star(E"and" + logical_factor);
-logical_expression = logical_term + Star(E"or" + logical_term);
-simple_expression = logical_expression + (E":" + logical_expression + (E":"  + logical_expression)[0:1])[0:1];
+relation = arithmetic_expression + spc + (relational_operator + arithmetic_expression)[0:1] |> list2string;
+logical_factor = E"not"[0:1] + spc + relation;
+logical_term = logical_factor + spc + Star(E"and" + spc + logical_factor);
+logical_expression = logical_term + spc + Star(E"or" + spc + logical_term);
+simple_expression = logical_expression + spc + (E":" + spc +logical_expression + spc + (E":" + spc + logical_expression)[0:1])[0:1];
 
 priority = expression;
 
