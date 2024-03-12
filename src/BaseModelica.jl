@@ -2,6 +2,30 @@ module BaseModelica
 
 using ModelingToolkit
 using ParserCombinator
+using MLStyle
+
+
+@data BaseModelicaExpr <: BaseModelicaPart begin
+    BaseModelicaNumber(::Number)
+    BaseModelicaAdd(BaseModelicaExpr,BaseModelicaExpr)
+    BaseModelicaMinus(BaseModelicaExpr,BaseModelicaExpr)
+    BaseModelicaMult(BaseModelicaExpr,BaseModelicaExpr)
+    BaseModelicaDivide(BaseModelicaExpr,BaseModelicaExpr)
+    BaseModelicaAnd(BaseModelicaExpr,BaseModelicaExpr)
+    BaseModelicaOr(BaseModelicaExpr,BaseModelicaExpr)
+    BaseModelicaParens(BaseModelicaExpr)
+end
+
+@data BaseModelicaPart begin
+    BaseModelicaRecord(name)
+    BaseModelicaType(name)
+    BaseModelicaPackage(name,model)
+    BaseModelicaModel(name,description,parameters,variables,equations,initial_equations)
+    BaseModelicaParameter(type,name,value,description)
+    BaseModelicaVariable(type,name,input_or_output,description)
+    BaseModelicaEquation(lhs,rhs,description)
+    BaseModelicaInitialEquation(lhs,rhs,description)
+end
 
 """
 Holds the name of the package, the models in the package, and eventually BaseModelica records.
@@ -20,7 +44,7 @@ struct BaseModelicaModel
     parameters::Any
     variables::Any
     equations::Any
-    initialequations::Any
+    initial_equations::Any
 end
 
 struct BaseModelicaParameter
