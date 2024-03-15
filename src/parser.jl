@@ -1,5 +1,52 @@
-list2string(x) = isempty(x) ? x : reduce(*,x)
-spc = Drop(Star(Space()))
+@data BaseModelicaPart begin
+    BaseModelicaRecord(name)
+    BaseModelicaType(name)
+    BaseModelicaPackage(name,model)
+    BaseModelicaModel(name,description,parameters,variables,equations,initial_equations)
+    BaseModelicaParameter(type,name,value,description)
+    BaseModelicaVariable(type,name,input_or_output,description)
+    BaseModelicaEquation(lhs,rhs,description)
+    BaseModelicaInitialEquation(lhs,rhs,description)
+    BaseModelicaFunction(name)
+end
+
+@data BaseModelicaExpr <: BaseModelicaPart begin
+    BaseModelicaNumber(val)
+    BaseModelicaIdentifier(name)
+    BaseModelicaSum(summands)
+    BaseModelicaMinus(top,bottom)
+    BaseModelicaProd(factors)
+    BaseModelicaFactor(base,exp)
+    BaseModelicaDivide(top,bottom)
+    BaseModelicaAnd(ands)
+    BaseModelicaOr(ors)
+    BaseModelicaParens(BaseModelicaExpr)
+    BaseModelicaFunctionCall(BaseModelicaExpr)
+end
+
+#constructors 
+function BaseModelicaFactor(input_list)
+    op_index = findfirst(x -> x == ".^" || x == "^", input_list)
+    if !isnothing(op_index)
+        base = only(input_list[begin:op_index-1])
+        exp = only(input_list[op_index + 1 : end])
+    else
+        base = only(input_list)
+        exp = 1
+    end
+    BaseModelicaFactor(base,exp)
+end
+
+eval_BaseModelicaExprs(expr::BaseModelicaExpr) =
+    let ! = eval_BaseModelicaExprs
+        @match expr begin
+            
+        end
+    end
+
+
+
+
 
 function create_component(prefix, type, components)
     #only do parameters and Reals for now
@@ -67,7 +114,8 @@ function construct_package(input)
     BaseModelicaPackage(name, model)
 end
 
-
+list2string(x) = isempty(x) ? x : reduce(*,x)
+spc = Drop(Star(Space()))
 # Base Modelica grammar
 @with_names begin
 NL = p"\r\n" | p"\n" | p"\r";
@@ -83,10 +131,10 @@ Q_CHAR = NONDIGIT | DIGIT | p"[-!#$%&()*>+,./:;<>=?>@\[\]{}|~ ^]";
 S_ESCAPE = p"\\['\"?\\abfnrtv]";
 S_CHAR = NL | p"[^\r\n\\\"]";
 Q_IDENT = (E"'" + (Q_CHAR | S_ESCAPE ) + Star(Q_CHAR | S_ESCAPE | E"\"" ) + E"'") |> list2string;
-IDENT = (((NONDIGIT + Star( DIGIT | NONDIGIT )) |> list2string) | Q_IDENT);
+IDENT = (((NONDIGIT + Star( DIGIT | NONDIGIT )) |> list2string) | Q_IDENT) > BaseModelicaIdentifier;
 STRING = E"\"" + Star( S_CHAR | S_ESCAPE ) + E"\"" |> list2string;
 EXPONENT = ( e"e" | e"E" ) + ( e"+" | e"-" )[0:1] + DIGIT[1:end];
-UNSIGNED_NUMBER = DIGIT[1:end] + ( e"." + Star(DIGIT) )[0:1] + EXPONENT[0:1] |> list2string;
+UNSIGNED_NUMBER = (DIGIT[1:end] + ( e"." + Star(DIGIT) )[0:1] + EXPONENT[0:1] |> list2string) |> (x -> BaseModelicaNumber(only(x)));
 
 #component clauses
 name = (IDENT + Star(e"." + IDENT)) |> list2string;
@@ -100,7 +148,7 @@ component_declaration = declaration + spc + comment;
 global_constant = e"constant" + type_specifier + array_subscripts[0:1] + declaration + comment;
 component_list = (component_declaration & spc & Star(E"," + component_declaration));
 component_reference = E"."[0:1] + IDENT + array_subscripts[0:1] + Star(E"." + IDENT + array_subscripts[0:1]);
-component_clause = type_prefix[1:1,:&] + spc + type_specifier + spc + component_list[1:1,:&] > create_component;
+component_clause = type_prefix[1:1,:&] + spc + type_specifier + spc + component_list[1:1,:&];
 #equations
 
 #modification
@@ -140,11 +188,11 @@ primary = UNSIGNED_NUMBER | STRING | e"false" | e"true" |
     ((e"der" | e"initial" | e"pure") + function_call_args) |
     (component_reference + function_call_args[0:1]) |
     (e"(" + spc + output_expression_list + spc + e")" + array_subscripts[0:1]) |
-    (e"[" + spc + expression_list + spc +Star(E";" + spc + expression_list) + spc + e"]") |
+    (e"[" + spc + expression_list + spc + Star(E";" + spc + expression_list) + spc + e"]") |
     (e"{" + spc + array_arguments + spc + e"}") |
     E"end";
-factor = primary + spc + ((E"^" | E".^") + spc + primary)[0:1];
-term = factor + spc + Star(mul_operator + spc + factor);
+factor = primary + spc + ((e"^" | e".^") + spc + primary)[0:1] |> BaseModelicaFactor;
+term = factor + spc + Star(mul_operator + spc + factor) |> BaseModelicaProd; 
 arithmetic_expression = add_operator[0:1] + spc + term + spc + Star(add_operator + spc + term);
 
 subscript = E":" | expression;
@@ -196,11 +244,11 @@ base_partition.matcher = E"partition" + string_comment + (annotation_comment + E
 
 #equations 
 
-relation = arithmetic_expression + spc + (relational_operator + arithmetic_expression)[0:1] |> list2string;
+relation = arithmetic_expression + spc + (relational_operator + arithmetic_expression)[0:1];
 logical_factor = E"not"[0:1] + spc + relation;
 logical_term = logical_factor + spc + Star(E"and" + spc + logical_factor);
 logical_expression = logical_term + spc + Star(E"or" + spc + logical_term);
-simple_expression = logical_expression + spc + (E":" + spc +logical_expression + spc + (E":" + spc + logical_expression)[0:1])[0:1];
+simple_expression = logical_expression + spc + (E":" + spc + logical_expression + spc + (E":" + spc + logical_expression)[0:1])[0:1];
 
 priority = expression;
 
@@ -209,7 +257,7 @@ prioritize_equation = E"prioritize" + E"(" + component_reference + E"," + priori
 prioritize_expression.matcher = E"prioritize" + E"(" + expression + E"," + priority + E")";
 
 
-initial_equation.matcher = (equation | prioritize_equation) |> create_initial_equation;
+initial_equation.matcher = (equation | prioritize_equation);
 
 output_expression_list.matcher = expression[0:1] + Star(E"," + expression[0:1]);
 expression_list.matcher = expression + Star(E"," + expression);
@@ -284,7 +332,7 @@ statement.matcher = decoration[0:1] + (component_reference + (E":=" + expression
 equation.matcher = ((decoration[0:1] + (simple_expression + decoration[0:1] + (spc + e"=" + spc + expression)[0:1]) |
     if_equation |
     for_equation |
-    when_equation) & comment) |> create_equation;
+    when_equation) & comment);
 
 base_modelica = 
      (spc + E"package" + spc + IDENT + spc +
@@ -292,7 +340,7 @@ base_modelica =
      (decoration[0:1] + global_constant + E";")) +
      spc + decoration[0:1] + spc + e"model" + spc + long_class_specifier + E";" + 
     spc + (annotation_comment + E";")[0:1] + spc +
-    e"end" + spc + IDENT + spc + E";" + spc) |> construct_package
+    e"end" + spc + IDENT + spc + E";" + spc)
 end;
 
 """
