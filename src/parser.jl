@@ -23,11 +23,24 @@ end
     BMDivide()
     BMElementWiseDivide()
 
+    # relational tokens
+    BMLessThan()
+    BMGreaterThan()
+    BMLEQ()
+    BMGEQ()
+    BMNEQ()
+    BMEQ()
+    BMNEQ()
+
+    BMAND()
+    BMOR()
+    BMNOT()
+
     # nodes in the AST 
     BaseModelicaNumber(val)
     BaseModelicaIdentifier(name)
     BaseModelicaSum(left,right)
-    BaseModelicaMinus(top,bottom)
+    BaseModelicaMinus(left,right)
     BaseModelicaProd(left,right)
     BaseModelicaFactor(base,exp)
     BaseModelicaElementWiseFactor(base,exp)
@@ -36,10 +49,20 @@ end
     BaseModelicaElementWiseMinus(top,bottom)
     BaseModelicaDivide(top,bottom)
     BaseModelicaElementWiseDivide(left,right)
-    BaseModelicaAnd(left,right)
-    BaseModelicaOr(left,right)
     BaseModelicaParens(BaseModelicaExpr)
     BaseModelicaFunctionCall(BaseModelicaExpr)
+    BaseModelicaRange(start,step,stop)
+
+    # relational nodes
+    BaseModelicaNot(relation)
+    BaseModelicaAnd(left,right)
+    BaseModelicaOr(left,right)
+    BaseModelicaLessThan(left,right)
+    BaseModelicaGreaterThan(left,right)
+    BaseModelicaLEQ(left,right)
+    BaseModelicaGEQ(left,right)
+    BaseModelicaEQ(left,right)
+    BaseModelicaNEQ(left,right)
 end
 
 #constructors 
@@ -57,8 +80,7 @@ function create_factor(input_list)
         return BaseModelicaFactor(base,exp)
     elseif isnothing(elementwise_index) && isnothing(power_index)
         base = only(input_list)
-        exp = BaseModelicaNumber(1)
-        return BaseModelicaFactor(base,exp)
+        return base # return a BaseModelicaNumber or BaseModelicaIdentifier if no exp
     end
 end
 
@@ -80,7 +102,7 @@ function create_arithmetic_expression(input_list)
     left_el = input_list[1]
     for (i, element) in enumerate(input_list)
         left_el = @match element begin
-            ::BMAdd => BaseModelicaSum(left_el, input_list[i + 1]) #make a product between the previous item and next item
+            ::BMAdd => BaseModelicaSum(left_el, input_list[i + 1]) #make a sum between the previous item and next item
             ::BMElementWiseAdd => BaseModelicaElementWiseSum(left_el, input_list[i + 1])
             ::BMSubtract => BaseModelicaMinus(left_el, input_list[i + 1])
             ::BMElementWiseSubtract =>  BaseModelicaElementWiseMinus(left_el, input_list[i + 1])
@@ -90,7 +112,59 @@ function create_arithmetic_expression(input_list)
     left_el
 end
 
+function create_relation(input_list)
+    not_flag = typeof(input_list[1]) == BMNOT
+    left_el = input_list[2]
+    for (i, element) in enumerate(input_list)
+        left_el = @match element begin
+            ::BMLessThan => BaseModelicaLessThan(left_el, input_list[i+1])
+            ::BMGreaterThan => BaseModelicaGreaterThan(left_el, input_list[i+1])
+            ::BMLEQ => BaseModelicaLEQ(left_el,input_list[i+1])
+            ::BMGEQ => BaseModelicaGEQ(left_el,input_list[i+1])
+            ::BMEQ => BaseModelicaEQ(left_el,input_list[i+1])
+            ::BMNEQ => BaseModelicaNEQ(left_el,input_list[i+1])
+            _ => left_el
+        end
+    end
+    if not_flag
+        return BaseModelicaNot(left_el)
+    else
+        return left_el
+    end
+end
 
+function create_logical_term(input_list)
+    left_el = input_list[1]
+    for (i, element) in enumerate(input_list)
+        left_el = @match element begin
+            ::BMAND => BaseModelicaAnd(left_el, input_list[i + 1]) #make a sum between the previous item and next item
+            _ => left_el
+        end
+    end
+    left_el
+end
+
+function create_logical_expression(input_list)
+    left_el = input_list[1]
+    for (i, element) in enumerate(input_list)
+        left_el = @match element begin
+            ::BMOR => BaseModelicaOr(left_el, input_list[i + 1]) #make a sum between the previous item and next item
+            _ => left_el
+        end
+    end
+    left_el
+end
+
+function create_simple_expression(input_list)
+    @match input_list begin
+        [start,":",stop] => BaseModelicaRange(start, BaseModelicaNumber(1), stop)
+        [start,":",step,":",stop] => BaseModelicaRange(start, step, stop)
+        _ => only(input_list)
+    end
+end
+
+
+# function to convert "AST" to ModelingToolkit
 eval_BaseModelicaArith(expr::BaseModelicaExpr) = 
     let ! = eval_BaseModelicaArith
         @match expr begin
@@ -222,7 +296,7 @@ expression = Delayed()
 modification.matcher = (class_modification + (spc + E"=" + spc + expression)[0:1]) | (spc + E"=" + spc + expression) | (E":=" + spc + expression);
 
 #expressions
-relational_operator = e"<" | e"<=" | e">" | e">=" | e"==" | e"<>";
+relational_operator = (E"<" > BMLessThan) | (E"<=" > BMLEQ) | (E">" > BMGreaterThan)| (E">=" > BMGEQ)| (E"==" > BMEQ)| (E"<>" > BMNEQ);
 add_operator = (E"+" > BMAdd)| (E"-" > BMSubtract) | (E".+" > BMElementWiseAdd) | (E".-" > BMElementWiseSubtract);
 mul_operator = (E"*" > BMMult) | (E"/" > BMDivide) | (E".*" > BMElementWiseMult) | (E"./" > BMElementWiseDivide);
 
@@ -304,10 +378,12 @@ base_partition.matcher = E"partition" + string_comment + (annotation_comment + E
 #equations 
 
 relation = arithmetic_expression + spc + (relational_operator + arithmetic_expression)[0:1];
-logical_factor = E"not"[0:1] + spc + relation;
-logical_term = logical_factor + spc + Star(E"and" + spc + logical_factor);
-logical_expression = logical_term + spc + Star(E"or" + spc + logical_term);
-simple_expression = logical_expression + spc + (E":" + spc + logical_expression + spc + (E":" + spc + logical_expression)[0:1])[0:1];
+logical_factor = (e"not"[0:1] |> (x -> !isempty(x) ? BMNOT() : nothing)) + spc + relation |> create_relation;
+logical_term = logical_factor + spc + Star((E"and" > BMAND)  + spc + logical_factor) |> create_logical_term;
+logical_expression = logical_term + spc + Star((E"or"> BMOR) + spc + logical_term) |> create_logical_expression;
+
+# can be expression or a range, the : : are for ranges
+simple_expression = logical_expression + spc + (e":" + spc + logical_expression + spc + (e":" + spc + logical_expression)[0:1])[0:1] |> create_simple_expression;
 
 priority = expression;
 
