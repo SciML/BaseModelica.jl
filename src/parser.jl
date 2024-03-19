@@ -8,42 +8,101 @@
     BaseModelicaEquation(lhs,rhs,description)
     BaseModelicaInitialEquation(lhs,rhs,description)
     BaseModelicaFunction(name)
+    BaseModelicaArray(type,length)
 end
 
 @data BaseModelicaExpr <: BaseModelicaPart begin
+
+    # these are basically just tokens...
+    BMAdd() 
+    BMElementWiseAdd()
+    BMSubtract()
+    BMElementWiseSubtract()
+    BMMult()
+    BMElementWiseMult()
+    BMDivide()
+    BMElementWiseDivide()
+
+    # nodes in the AST 
     BaseModelicaNumber(val)
     BaseModelicaIdentifier(name)
-    BaseModelicaSum(summands)
+    BaseModelicaSum(left,right)
     BaseModelicaMinus(top,bottom)
-    BaseModelicaProd(factors)
+    BaseModelicaProd(left,right)
     BaseModelicaFactor(base,exp)
+    BaseModelicaElementWiseFactor(base,exp)
+    BaseModelicaElementWiseProd(left,right) 
+    BaseModelicaElementWiseSum(left,right) 
+    BaseModelicaElementWiseMinus(top,bottom)
     BaseModelicaDivide(top,bottom)
-    BaseModelicaAnd(ands)
-    BaseModelicaOr(ors)
+    BaseModelicaElementWiseDivide(left,right)
+    BaseModelicaAnd(left,right)
+    BaseModelicaOr(left,right)
     BaseModelicaParens(BaseModelicaExpr)
     BaseModelicaFunctionCall(BaseModelicaExpr)
 end
 
 #constructors 
-function BaseModelicaFactor(input_list)
-    op_index = findfirst(x -> x == ".^" || x == "^", input_list)
-    if !isnothing(op_index)
-        base = only(input_list[begin:op_index-1])
-        exp = only(input_list[op_index + 1 : end])
-    else
+function create_factor(input_list)
+    elementwise_index = findfirst(x->  x == ".^", input_list)
+    power_index = findfirst(x -> x == "^", input_list)
+
+    if !isnothing(elementwise_index)
+        base = only(input_list[begin:elementwise_index-1])
+        exp = only(input_list[elementwise_index + 1 : end])
+        return BaseModelicaElementWiseFactor(base,exp)
+    elseif !isnothing(power_index)
+        base = only(input_list[begin:power_index-1])
+        exp = only(input_list[power_index + 1 : end])
+        return BaseModelicaFactor(base,exp)
+    elseif isnothing(elementwise_index) && isnothing(power_index)
         base = only(input_list)
-        exp = 1
+        exp = BaseModelicaNumber(1)
+        return BaseModelicaFactor(base,exp)
     end
-    BaseModelicaFactor(base,exp)
 end
 
-eval_BaseModelicaExprs(expr::BaseModelicaExpr) =
-    let ! = eval_BaseModelicaExprs
-        @match expr begin
-            
+function create_term(input_list)
+    left_el = input_list[1]
+    for (i, element) in enumerate(input_list)
+        left_el = @match element begin
+            ::BMMult => BaseModelicaProd(left_el, input_list[i + 1]) #make a product between the previous item and next item
+            ::BMElementWiseMult => BaseModelicaElementWiseProd(left_el, input_list[i + 1])
+            ::BMDivide => BaseModelicaDivide(left_el, input_list[i + 1])
+            ::BMElementWiseDivide =>  BaseModelicaElementWiseDivide(left_el, input_list[i + 1])
+            _ => left_el
         end
     end
+    left_el
+end
 
+function create_arithmetic_expression(input_list)
+    left_el = input_list[1]
+    for (i, element) in enumerate(input_list)
+        left_el = @match element begin
+            ::BMAdd => BaseModelicaSum(left_el, input_list[i + 1]) #make a product between the previous item and next item
+            ::BMElementWiseAdd => BaseModelicaElementWiseSum(left_el, input_list[i + 1])
+            ::BMSubtract => BaseModelicaMinus(left_el, input_list[i + 1])
+            ::BMElementWiseSubtract =>  BaseModelicaElementWiseMinus(left_el, input_list[i + 1])
+            _ => left_el
+        end
+    end
+    left_el
+end
+
+
+eval_BaseModelicaArith(expr::BaseModelicaExpr) = 
+    let ! = eval_BaseModelicaArith
+        @match expr begin
+            BaseModelicaNumber(val) => val
+            BaseModelicaFactor(base,exp) => (!base) ^ (!exp)
+            BaseModelicaSum(left,right) => !left + !right
+            BaseModelicaMinus(left,right) => !left - !right
+            BaseModelicaProd(left,right) => !left * !right
+            BaseModelicaDivide(left,right) => !left / !right
+            _ => nothing
+        end
+    end
 
 
 
@@ -134,7 +193,7 @@ Q_IDENT = (E"'" + (Q_CHAR | S_ESCAPE ) + Star(Q_CHAR | S_ESCAPE | E"\"" ) + E"'"
 IDENT = (((NONDIGIT + Star( DIGIT | NONDIGIT )) |> list2string) | Q_IDENT) > BaseModelicaIdentifier;
 STRING = E"\"" + Star( S_CHAR | S_ESCAPE ) + E"\"" |> list2string;
 EXPONENT = ( e"e" | e"E" ) + ( e"+" | e"-" )[0:1] + DIGIT[1:end];
-UNSIGNED_NUMBER = (DIGIT[1:end] + ( e"." + Star(DIGIT) )[0:1] + EXPONENT[0:1] |> list2string) |> (x -> BaseModelicaNumber(only(x)));
+UNSIGNED_NUMBER = (DIGIT[1:end] + ( e"." + Star(DIGIT) )[0:1] + EXPONENT[0:1] |> list2string) |> (x -> BaseModelicaNumber(parse(Float64,only(x))));
 
 #component clauses
 name = (IDENT + Star(e"." + IDENT)) |> list2string;
@@ -164,8 +223,8 @@ modification.matcher = (class_modification + (spc + E"=" + spc + expression)[0:1
 
 #expressions
 relational_operator = e"<" | e"<=" | e">" | e">=" | e"==" | e"<>";
-add_operator = e"+" | e"-" | e".+" | e".-";
-mul_operator = e"*" | e"/" | e".*" | e"./";
+add_operator = (E"+" > BMAdd)| (E"-" > BMSubtract) | (E".+" > BMElementWiseAdd) | (E".-" > BMElementWiseSubtract);
+mul_operator = (E"*" > BMMult) | (E"/" > BMDivide) | (E".*" > BMElementWiseMult) | (E"./" > BMElementWiseDivide);
 
 for_index = IDENT + E"in" + expression;
 
@@ -187,15 +246,15 @@ array_arguments = expression + (Star(E"," + expression) | E"for" + for_index);
 primary = UNSIGNED_NUMBER | STRING | e"false" | e"true" | 
     ((e"der" | e"initial" | e"pure") + function_call_args) |
     (component_reference + function_call_args[0:1]) |
-    (e"(" + spc + output_expression_list + spc + e")" + array_subscripts[0:1]) |
+    (E"(" + spc + output_expression_list + spc + E")" + array_subscripts[0:1]) |
     (e"[" + spc + expression_list + spc + Star(E";" + spc + expression_list) + spc + e"]") |
     (e"{" + spc + array_arguments + spc + e"}") |
     E"end";
-factor = primary + spc + ((e"^" | e".^") + spc + primary)[0:1] |> BaseModelicaFactor;
-term = factor + spc + Star(mul_operator + spc + factor) |> BaseModelicaProd; 
-arithmetic_expression = add_operator[0:1] + spc + term + spc + Star(add_operator + spc + term);
+factor = primary + spc + ((e"^" | e".^") + spc + primary)[0:1] |> create_factor;
+term = factor + spc + Star(mul_operator + spc + factor) |> create_term; 
+arithmetic_expression = add_operator[0:1] + spc + term + spc + Star(add_operator + spc + term) |> create_arithmetic_expression;
 
-subscript = E":" | expression;
+subscript = e":" | expression;
 array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript);
 annotation_comment = E"annotation" + class_modification;
 comment.matcher = string_comment + annotation_comment[0:1];
