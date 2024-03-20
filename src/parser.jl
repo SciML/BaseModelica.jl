@@ -63,6 +63,7 @@ end
     BaseModelicaGEQ(left,right)
     BaseModelicaEQ(left,right)
     BaseModelicaNEQ(left,right)
+    BaseModelicaIfExpression(conditions, expressions)
 end
 
 #constructors 
@@ -163,6 +164,22 @@ function create_simple_expression(input_list)
     end
 end
 
+function BaseModelicaIfExpression(input_list)
+    condition_list = []
+    expression_list = []
+
+    for (i,el) in enumerate(input_list)
+        @match el begin
+            "if" => push!(condition_list,input_list[i+1])
+            "then" => push!(expression_list, input_list[i+1])
+            "elseif" => push!(condition_list,input_list[i+1])
+            "else" => push!(expression_list,input_list[i+1])
+            _ => nothing
+        end
+    end
+    BaseModelicaIfExpression(condition_list,expression_list)
+end
+
 
 # function to convert "AST" to ModelingToolkit
 eval_BaseModelicaArith(expr::BaseModelicaExpr) = 
@@ -177,9 +194,6 @@ eval_BaseModelicaArith(expr::BaseModelicaExpr) =
             _ => nothing
         end
     end
-
-
-
 
 function create_component(prefix, type, components)
     #only do parameters and Reals for now
@@ -246,6 +260,7 @@ function construct_package(input)
     model = BaseModelicaModel(name,description,parameters,variables,equations,initial_equations)
     BaseModelicaPackage(name, model)
 end
+
 
 list2string(x) = isempty(x) ? x : reduce(*,x)
 spc = Drop(Star(Space()))
@@ -400,9 +415,9 @@ expression_list.matcher = expression + Star(E"," + expression);
 if_expression = Delayed()
 expression_no_decoration = simple_expression | if_expression;
 if_expression.matcher = 
-    E"if" + expression_no_decoration +  E"then" + expression_no_decoration +
-    Star(E"elseif" + expression_no_decoration + E"then" + expression_no_decoration) +
-    E"else" + expression_no_decoration;
+    e"if" + expression_no_decoration +  e"then" + expression_no_decoration +
+    Star(e"elseif" + expression_no_decoration + e"then" + expression_no_decoration) +
+    e"else" + expression_no_decoration |> BaseModelicaIfExpression;
 
 expression.matcher = expression_no_decoration + decoration[0:1];
 
