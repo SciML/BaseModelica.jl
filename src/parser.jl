@@ -353,7 +353,7 @@ enum_list = enumeration_literal + Star(E"," + enumeration_literal);
 
 guess_value = E"guess" + E"(" + component_reference + E")" ;
 prioritize_expression = Delayed()
-parameter_equation = E"parameter equation" + guess_value + E"=" + (expression | prioritize_expression) + comment;
+parameter_equation = E"parameter equation" + spc + guess_value + E"=" + (expression | prioritize_expression) + comment;
 
 normal_element = component_clause;
 
