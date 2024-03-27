@@ -1,14 +1,20 @@
 @data BaseModelicaPart begin
-    BaseModelicaRecord(name)
-    BaseModelicaType(name)
+    BaseModelicaRecord(name, fields)
+    BaseModelicaType(name, fields)
+
     BaseModelicaPackage(name,model)
     BaseModelicaModel(name,description,parameters,variables,equations,initial_equations)
-    BaseModelicaParameter(type,name,value,description)
-    BaseModelicaVariable(type,name,input_or_output,description)
+    BaseModelicaConstant(type, name, value, description, modification)
+    BaseModelicaParameter(type,name,value,description,modification)
+    BaseModelicaVariable(type,name,input_or_output,description, modification)
     BaseModelicaEquation(lhs,rhs,description)
     BaseModelicaInitialEquation(lhs,rhs,description)
     BaseModelicaFunction(name)
     BaseModelicaArray(type,length)
+    BaseModelicaString(string)
+    BaseModelicaComponentDeclaration(type, array_subs, modification)
+    #predefined Base Modelica Types 
+
 end
 
 @data BaseModelicaExpr <: BaseModelicaPart begin
@@ -64,6 +70,9 @@ end
     BaseModelicaEQ(left,right)
     BaseModelicaNEQ(left,right)
     BaseModelicaIfExpression(conditions, expressions)
+
+
+    BaseModelicaArrayReference(term, indexes)
 end
 
 #constructors 
@@ -81,7 +90,7 @@ function create_factor(input_list)
         return BaseModelicaFactor(base,exp)
     elseif isnothing(elementwise_index) && isnothing(power_index)
         base = only(input_list)
-        return base # return a BaseModelicaNumber or BaseModelicaIdentifier if no exp
+        return base # return input if no exponent operator
     end
 end
 
@@ -180,6 +189,10 @@ function BaseModelicaIfExpression(input_list)
     BaseModelicaIfExpression(condition_list,expression_list)
 end
 
+function create_component(input_list)
+    
+    
+end
 
 # function to convert "AST" to ModelingToolkit
 eval_BaseModelicaArith(expr::BaseModelicaExpr) = 
@@ -194,29 +207,6 @@ eval_BaseModelicaArith(expr::BaseModelicaExpr) =
             _ => nothing
         end
     end
-
-function create_component(prefix, type, components)
-    #only do parameters and Reals for now
-    #eventually will need to do arbitrary base modelica types
-    comp = components[1] #for now only supports one parameter/variable per statement, no "component-list"s
-    if isempty(prefix)
-        type = type
-        name = comp[1]
-        length(comp) == 2 ? description = comp[2] : description = nothing
-        return BaseModelicaVariable(type,name,nothing,description)
-    elseif prefix[1] == "parameter" # only do parameters and Reals for now 
-        type = type
-        name = comp[1]
-        length(comp) > 1 ? value = comp[2] : value = nothing
-        length(comp) == 3 ? description = comp[3] : description = nothing 
-        return BaseModelicaParameter(type,name,value,description)
-    elseif prefix[1] == "input" || prefix[1] == "output"
-        type = type
-        name = comp[1]
-        length(comp) == 2 ? description = comp[2] : description = nothing
-        return BaseModelicaVariable(type,name,prefix[1],description)
-    end
-end
 
 function create_equation(equation_list)
     #so far only handles normal equations, no if, whens, or anything like that 
@@ -294,13 +284,13 @@ declaration = IDENT + array_subscripts[0:1] + modification[0:1];
 comment = Delayed()
 component_declaration = declaration + spc + comment;
 global_constant = e"constant" + type_specifier + array_subscripts[0:1] + declaration + comment;
-component_list = (component_declaration & spc & Star(E"," + component_declaration));
+component_list = (component_declaration + spc + Star(E"," + component_declaration));
 component_reference = E"."[0:1] + IDENT + array_subscripts[0:1] + Star(E"." + IDENT + array_subscripts[0:1]);
-component_clause = type_prefix[1:1,:&] + spc + type_specifier + spc + component_list[1:1,:&];
+component_clause = type_prefix + spc + type_specifier + spc + component_list;
 #equations
 
 #modification
-string_comment = (STRING + Star(E"+" + STRING))[0:1];
+string_comment = (STRING + Star(E"+" + STRING))[0:1] |> BaseModelicaString;
 element_modification = name + modification[0:1] + string_comment;
 element_modification_or_replaceable = element_modification;
 decoration = E"@" + UNSIGNED_INTEGER;
@@ -344,7 +334,7 @@ term = factor + spc + Star(mul_operator + spc + factor) |> create_term;
 arithmetic_expression = add_operator[0:1] + spc + term + spc + Star(add_operator + spc + term) |> create_arithmetic_expression;
 
 subscript = e":" | expression;
-array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript);
+array_subscripts.matcher = e"[" + subscript + Star(e"," + subscript) + e"]";
 annotation_comment = E"annotation" + class_modification;
 comment.matcher = string_comment + annotation_comment[0:1];
 
@@ -377,12 +367,12 @@ composition = Star(decoration[0:1] + generic_element + E";" + spc) +
 
 base_prefix = e"input" | e"output"
 long_class_specifier = IDENT + spc + string_comment + spc + composition + spc + e"end" + spc + IDENT;
-short_class_specifier = IDENT + E"=" + (base_prefix[0:1] + type_specifier + class_modification[0:1]) |
+short_class_specifier = IDENT + E"=" + (base_prefix[0:1] + type_specifier + class_modification[0:1]) 
     (e"enumeration" + E"(" + (enum_list[0:1] | E":" ) + E")") + comment;
 class_prefixes = e"type" | e"record" | ((e"pure constant")[0:1] | (e"impure")[0:1]) + e"function";
 der_class_specifier = IDENT + E"=" + E" "[0:1] + E"der" + E" " + E"(" + type_specifier + E"," + IDENT + Star(E"," + IDENT) + E")" + comment;
 class_specifier = long_class_specifier | short_class_specifier | der_class_specifier;
-class_definition = class_prefixes + class_specifier;
+class_definition = class_prefixes + spc + class_specifier; #|> create_class;
 
 clock_clause = decoration[0:1] + E"Clock" + IDENT + E"=" + expression + comment;
 sub_partition = E"subpartition" + E"(" + argument_list + E")" + string_comment + (annotation_comment + E";")[0:1] + (Star(E"equation" + ((equation + E";"))) | E"algorithm" + Star(statement + E";"));
@@ -506,3 +496,5 @@ Takes a path to a file and parses the contents in to a BaseModelicaPackage
 function parse_file(file)
     parse_str(read(file,String))
 end
+
+
