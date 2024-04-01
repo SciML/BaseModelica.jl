@@ -12,8 +12,12 @@
     BaseModelicaFunction(name)
     BaseModelicaArray(type,length)
     BaseModelicaString(string)
-    BaseModelicaComponentDeclaration(type, array_subs, modification)
-    #predefined Base Modelica Types 
+    BaseModelicaTypeSpecifier(type)
+    BaseModelicaTypePrefix(dpc, io)
+    BaseModelicaComponentDeclaration(type, array_subs, comment)
+    BaseModelicaComponentClause(type_prefix,type_specifier, component_list)
+
+    #predefined Base Modelica Types
 
 end
 
@@ -28,6 +32,7 @@ end
     BMElementWiseMult()
     BMDivide()
     BMElementWiseDivide()
+    BMColon()
 
     # relational tokens
     BMLessThan()
@@ -58,6 +63,7 @@ end
     BaseModelicaParens(BaseModelicaExpr)
     BaseModelicaFunctionCall(BaseModelicaExpr)
     BaseModelicaRange(start,step,stop)
+    BaseModelicaArraySubscripts(subscripts)
 
     # relational nodes
     BaseModelicaNot(relation)
@@ -189,10 +195,37 @@ function BaseModelicaIfExpression(input_list)
     BaseModelicaIfExpression(condition_list,expression_list)
 end
 
-function create_component(input_list)
-    
-    
+function create_component_clause(input_list)
+
 end
+
+function BaseModelicaArraySubscripts(input::Vector{Any})
+    BaseModelicaArraySubscripts(Tuple(input))
+end
+
+function BaseModelicaComponentDeclaration(input_list)
+    ident = nothing
+    subs = nothing
+    comment = nothing
+    for thing in input_list
+        if typeof(thing) == BaseModelicaString
+            comment = thing
+        elseif typeof(thing) == BaseModelicaIdentifier
+            ident = thing
+        elseif typeof(thing) == BaseModelicaArraySubscripts
+            subs = thing
+        end
+    end
+    BaseModelicaComponentDeclaration(ident, subs, comment)
+end
+
+function BaseModelicaTypePrefix(input_list)
+    @match input_list begin
+        [io] => BaseModelicaTypePrefix(nothing,io)
+        [dpc,io] => BaseModelicaTypePrefix(dpc,io)
+    end
+end
+
 
 # function to convert "AST" to ModelingToolkit
 eval_BaseModelicaArith(expr::BaseModelicaExpr) = 
@@ -207,50 +240,6 @@ eval_BaseModelicaArith(expr::BaseModelicaExpr) =
             _ => nothing
         end
     end
-
-function create_equation(equation_list)
-    #so far only handles normal equations, no if, whens, or anything like that 
-    #println(equation_list)
-    eq = equation_list[1]
-    equal_index = findfirst(x -> x == "=", eq)
-    if !isnothing(equal_index)
-        lhs = only(eq[begin:(equal_index-1)])
-        rhs = only(eq[(equal_index+1):end]) #
-    else 
-        lhs = eq # hack because equations don't need to be equations in base modelica for some reason
-        rhs = ""
-    end
-    !isempty(equation_list[2]) ? description = only(equation_list[2]) : description = ""
-    BaseModelicaEquation(lhs,rhs,description)
-end
-
-function create_initial_equation(equation)
-    #so far only handles normal equations, no if, whens, or anything like that 
-    eq = equation[1]
-    lhs = eq.lhs
-    rhs = eq.rhs
-    BaseModelicaInitialEquation(lhs,rhs,nothing)
-end
-
-function construct_package(input)
-    name = input[1]
-    input[4] isa String ? description = input[4] : description = nothing
-    variables = []
-    parameters = []
-    equations = []
-    initial_equations = []
-    for thing in input
-        typeof(thing) == BaseModelicaVariable ? push!(variables, thing) :
-        typeof(thing) == BaseModelicaParameter ? push!(parameters, thing) :
-        typeof(thing) == BaseModelicaEquation ? push!(equations, thing) :
-        typeof(thing) == BaseModelicaInitialEquation ? push!(initial_equations,thing) :
-        nothing
-    end
-    
-    model = BaseModelicaModel(name,description,parameters,variables,equations,initial_equations)
-    BaseModelicaPackage(name, model)
-end
-
 
 list2string(x) = isempty(x) ? x : reduce(*,x)
 spc = Drop(Star(Space()))
@@ -276,17 +265,17 @@ UNSIGNED_NUMBER = (DIGIT[1:end] + ( e"." + Star(DIGIT) )[0:1] + EXPONENT[0:1] |>
 
 #component clauses
 name = (IDENT + Star(e"." + IDENT)) |> list2string;
-type_specifier = E"."[0:1] + name;
-type_prefix = (( e"discrete" | e"parameter" | e"constant" )[0:1] + spc + ( e"input" | e"output" )[0:1]);
+type_specifier = E"."[0:1] + name > BaseModelicaTypeSpecifier;
+type_prefix = (( e"discrete" | e"parameter" | e"constant" )[0:1] + spc + ( e"input" | e"output" )[0:1]) |> BaseModelicaTypePrefix;
 array_subscripts = Delayed()
 modification = Delayed()
 declaration = IDENT + array_subscripts[0:1] + modification[0:1];
 comment = Delayed()
-component_declaration = declaration + spc + comment;
+component_declaration = declaration + spc + comment |> BaseModelicaComponentDeclaration;
 global_constant = e"constant" + type_specifier + array_subscripts[0:1] + declaration + comment;
-component_list = (component_declaration + spc + Star(E"," + component_declaration));
+component_list = (component_declaration + spc + Star(E"," + spc + component_declaration));
 component_reference = E"."[0:1] + IDENT + array_subscripts[0:1] + Star(E"." + IDENT + array_subscripts[0:1]);
-component_clause = type_prefix + spc + type_specifier + spc + component_list;
+component_clause = type_prefix + spc + type_specifier + spc + component_list[1:1,:&] > BaseModelicaComponentClause; 
 #equations
 
 #modification
@@ -333,8 +322,8 @@ factor = primary + spc + ((e"^" | e".^") + spc + primary)[0:1] |> create_factor;
 term = factor + spc + Star(mul_operator + spc + factor) |> create_term; 
 arithmetic_expression = add_operator[0:1] + spc + term + spc + Star(add_operator + spc + term) |> create_arithmetic_expression;
 
-subscript = e":" | expression;
-array_subscripts.matcher = e"[" + subscript + Star(e"," + subscript) + e"]";
+subscript = (E":" > BMColon) | expression;
+array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript) + E"]" |> BaseModelicaArraySubscripts;
 annotation_comment = E"annotation" + class_modification;
 comment.matcher = string_comment + annotation_comment[0:1];
 
@@ -496,5 +485,3 @@ Takes a path to a file and parses the contents in to a BaseModelicaPackage
 function parse_file(file)
     parse_str(read(file,String))
 end
-
-
