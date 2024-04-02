@@ -7,7 +7,7 @@
     BaseModelicaConstant(type, name, value, description, modification)
     BaseModelicaParameter(type,name,value,description,modification)
     BaseModelicaVariable(type,name,input_or_output,description, modification)
-    BaseModelicaEquation(lhs,rhs,description)
+    BaseModelicaSimpleEquation(lhs,rhs)
     BaseModelicaInitialEquation(lhs,rhs,description)
     BaseModelicaFunction(name)
     BaseModelicaArray(type,length)
@@ -16,6 +16,11 @@
     BaseModelicaTypePrefix(dpc, io)
     BaseModelicaComponentDeclaration(type, array_subs, comment)
     BaseModelicaComponentClause(type_prefix,type_specifier, component_list)
+    BaseModelicaComponentReference(ref_list)
+    BaseModelicaParameterEquation(component_reference, expression, comment)
+    BaseModelicaWhenEquation
+    BaseModelicaForEquation
+    BaseModelicaIfEquation
 
     #predefined Base Modelica Types
 
@@ -95,7 +100,7 @@ function create_factor(input_list)
         exp = only(input_list[power_index + 1 : end])
         return BaseModelicaFactor(base,exp)
     elseif isnothing(elementwise_index) && isnothing(power_index)
-        base = only(input_list)
+        base = input_list
         return base # return input if no exponent operator
     end
 end
@@ -129,7 +134,7 @@ function create_arithmetic_expression(input_list)
 end
 
 function create_relation(input_list)
-    not_flag = typeof(input_list[1]) == BMNOT
+    not_flag = input_list[1] isa BMNOT
     left_el = input_list[2]
     for (i, element) in enumerate(input_list)
         left_el = @match element begin
@@ -208,11 +213,11 @@ function BaseModelicaComponentDeclaration(input_list)
     subs = nothing
     comment = nothing
     for thing in input_list
-        if typeof(thing) == BaseModelicaString
+        if thing isa BaseModelicaString
             comment = thing
-        elseif typeof(thing) == BaseModelicaIdentifier
+        elseif thing isa BaseModelicaIdentifier
             ident = thing
-        elseif typeof(thing) == BaseModelicaArraySubscripts
+        elseif thing isa BaseModelicaArraySubscripts
             subs = thing
         end
     end
@@ -226,6 +231,12 @@ function BaseModelicaTypePrefix(input_list)
     end
 end
 
+function BaseModelicaSimpleEquation(input_list)
+    @match input_list begin
+        [lhs] => BaseModelicaSimpleEquation(lhs, nothing)
+        [lhs,rhs] => BaseModelicaSimpleEquation(lhs,rhs)
+    end
+end
 
 # function to convert "AST" to ModelingToolkit
 eval_BaseModelicaArith(expr::BaseModelicaExpr) = 
@@ -274,7 +285,7 @@ comment = Delayed()
 component_declaration = declaration + spc + comment |> BaseModelicaComponentDeclaration;
 global_constant = e"constant" + type_specifier + array_subscripts[0:1] + declaration + comment;
 component_list = (component_declaration + spc + Star(E"," + spc + component_declaration));
-component_reference = E"."[0:1] + IDENT + array_subscripts[0:1] + Star(E"." + IDENT + array_subscripts[0:1]);
+component_reference = E"."[0:1] + IDENT + array_subscripts[0:1] + Star(E"." + IDENT + array_subscripts[0:1]) |> BaseModelicaComponentReference;
 component_clause = type_prefix + spc + type_specifier + spc + component_list[1:1,:&] > BaseModelicaComponentClause; 
 #equations
 
@@ -330,9 +341,9 @@ comment.matcher = string_comment + annotation_comment[0:1];
 enumeration_literal = IDENT + comment;
 enum_list = enumeration_literal + Star(E"," + enumeration_literal);
 
-guess_value = E"guess" + E"(" + component_reference + E")" ;
+guess_value = E"guess" + E"(" + component_reference + E")";
 prioritize_expression = Delayed()
-parameter_equation = E"parameter equation" + spc + guess_value + E"=" + (expression | prioritize_expression) + comment;
+parameter_equation = E"parameter equation" + spc + guess_value + spc + E"=" + spc + (expression | prioritize_expression) + comment > BaseModelicaParameterEquation;
 
 normal_element = component_clause;
 
@@ -376,7 +387,7 @@ logical_factor = (e"not"[0:1] |> (x -> !isempty(x) ? BMNOT() : nothing)) + spc +
 logical_term = logical_factor + spc + Star((E"and" > BMAND)  + spc + logical_factor) |> create_logical_term;
 logical_expression = logical_term + spc + Star((E"or"> BMOR) + spc + logical_term) |> create_logical_expression;
 
-# can be expression or a range, the : : are for ranges
+# can be expression or a range, the : are for ranges
 simple_expression = logical_expression + spc + (e":" + spc + logical_expression + spc + (e":" + spc + logical_expression)[0:1])[0:1] |> create_simple_expression;
 
 priority = expression;
@@ -429,13 +440,15 @@ while_statement =
     E"end while";
 
 when_equation =
-    E"when" + expression + E"then" + NL +
-        Star(statement + E";") + NL +
+    E"when" + spc + expression + spc + E"then" + spc +
+        Star(equation + E";" + spc) + spc +
+        Star(E"elsewhen" + spc + expression + spc + E"then" + spc +
+            Star(equation + E";")) + spc +
     E"end when";
 
 when_statement = 
-    E"when" + expression + E"then" + NL +
-        Star(statement + E";") + NL +
+    E"when" + expression + E"then" + spc +
+        Star(statement + E";") + spc + 
     Star(E"elsewhen" + expression + E"then" + NL +
         Star(statement + E";")) + NL +
     E"end when";
@@ -458,7 +471,7 @@ statement.matcher = decoration[0:1] + (component_reference + (E":=" + expression
     while_statement |
     when_statement) + comment;
 
-equation.matcher = ((decoration[0:1] + (simple_expression + decoration[0:1] + (spc + e"=" + spc + expression)[0:1]) |
+equation.matcher = ((decoration[0:1] + ((simple_expression + decoration[0:1] + (spc + E"=" + spc + expression)[0:1]) |> BaseModelicaSimpleEquation) |
     if_equation |
     for_equation |
     when_equation) & comment);
