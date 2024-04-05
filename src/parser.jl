@@ -23,6 +23,7 @@
     BaseModelicaIfEquation(ifs, thens)
     BaseModelicaAnyEquation(equation, description)
     BaseModelicaForIndex(ident, expression)
+    BaseModelicaComposition(components, equations, initial_equations)
     #predefined Base Modelica Types
 end
 
@@ -44,6 +45,7 @@ end
     BMWhen()
     BMThen()
     BMLoop()
+    BMequation()
 
     # relational tokens
     BMLessThan()
@@ -234,6 +236,7 @@ function BaseModelicaTypePrefix(input_list)
     @match input_list begin
         [io] => BaseModelicaTypePrefix(nothing,io)
         [dpc,io] => BaseModelicaTypePrefix(dpc,io)
+        _ => nothing
     end
 end
 
@@ -322,7 +325,7 @@ EXPONENT = ( e"e" | e"E" ) + ( e"+" | e"-" )[0:1] + DIGIT[1:end];
 UNSIGNED_NUMBER = (DIGIT[1:end] + ( e"." + Star(DIGIT) )[0:1] + EXPONENT[0:1] |> list2string) |> (x -> BaseModelicaNumber(parse(Float64,only(x))));
 
 #component clauses
-name = (IDENT + Star(e"." + IDENT)) |> list2string;
+name = Not(Lookahead(e"end")) + Not(Lookahead(e"equation")) + Not(Lookahead(e"initial equation")) + (IDENT + Star(e"." + IDENT)) |> list2string; # Not(Lookahead(foo)) tells it that names can't be foo
 type_specifier = E"."[0:1] + name > BaseModelicaTypeSpecifier;
 type_prefix = (( e"discrete" | e"parameter" | e"constant" )[0:1] + spc + ( e"input" | e"output" )[0:1]) |> BaseModelicaTypePrefix;
 array_subscripts = Delayed()
@@ -359,13 +362,13 @@ function_arguments_non_first.matcher = (function_argument + (E"," + function_arg
 named_argument = IDENT + E"=" + function_argument;
 named_arguments.matcher = named_argument + Star(E"," + named_argument);
 function_partial_applications = E"function" + type_specifier + E"(" + named_arguments[0:1] + E")";
+for_index = Delayed()
 function_arguments = (expression + ((E"," + function_arguments_non_first) | (E"for" + for_index))[0:1]) |
     (function_partial_application + (E"," + function_arguments_non_first)[0:1]) |
     named_arguments;
 function_call_args = e"(" + function_arguments[0:1] + e")";
 output_expression_list = Delayed()
 expression_list = Delayed()
-for_index = Delayed()
 array_arguments = expression + (Star(E"," + expression) | E"for" + for_index);
 primary = UNSIGNED_NUMBER | STRING | e"false" | e"true" | 
     ((e"der" | e"initial" | e"pure") + function_call_args) |
@@ -403,10 +406,11 @@ equation = Delayed()
 initial_equation = Delayed()
 statement = Delayed()
 base_partition = Delayed()
-composition = Star(decoration[0:1] + generic_element + E";" + spc) + 
-              Star((spc + e"equation" + spc + Star(spc + equation + E";" + spc)) |
+composition = Star(decoration[0:1] + generic_element + E";" + spc) + spc +
+              Star((spc + (E"equation" > BMequation) + spc + Star(spc + equation + E";" + spc)) |
               (e"initial equation" + spc + Star(spc + initial_equation + E";" + spc)) |
-              (e"initial"[0:1] + e"algorithm" + Star(statement + E";"))) + (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";")[0:1] +
+              (e"initial"[0:1] + e"algorithm" + Star(statement + E";"))) +
+              (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";")[0:1] +
               Star(base_partition) + (annotation_comment + E";")[0:1];
 
 

@@ -67,3 +67,51 @@ parse_one("'z'[4,5,6] \"z3\"", component_declaration)
 parse_one("'z', 'x'", component_list)
 
 parse_one("parameter Real 'x','y','z'", component_clause)
+
+parse_one("parameter Real 'x' = 43 \"the worst parameter\"",component_clause)
+parse_one("parameter Real 'x'[3]", component_clause)
+
+parse_one("'x'[1].'y'[4]", component_reference)
+
+parse_one("parameter equation guess('x') = 4", parameter_equation,debug = true)
+
+parse_one("1 + 4*3 = 100/2", equation)
+parse_one("'y' = 5", equation,debug = true)
+
+parse_one("""when 'x' == 5 then
+'y' = 5;
+elsewhen 'y' == 20 then
+'x' = 30;
+end when""",when_equation, debug = true)
+
+parse_one("""if 'x' == 5 then
+'y' = 4;
+elseif 'x' == 21 then
+'y' = 6;
+end if""",if_equation, debug = true)
+
+parse_one("\"string\" + \"otherstring\"",comment, debug = true)
+
+parse_one("x in 1:3", for_index)
+
+parse_one("""for x in 1:3 loop
+ 'y' = 21;
+ 'x' = 31 + x;
+end for""", for_equation)
+
+parse_one("""parameter Real 'wagon' = 1000 \"Mass\";
+ Real 'other_wagon' \"other wagon\";
+equation 
+ 'wagon' = 5;
+ 'y' = 6;
+initial equation 
+ 'x' = 'wagon';
+""",composition, debug = true)
+
+
+type_specifier = E"."[0:1] + name > BaseModelicaTypeSpecifier;
+
+name = Not(Lookahead(e"initial equation")) + Not(Lookahead(e"equation")) + (IDENT + Star(e"." + IDENT))
+parse_one("'x'", name)
+parse_one("equation", name)
+parse_one("initial equation", name )
