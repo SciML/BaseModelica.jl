@@ -99,14 +99,18 @@ parse_one("""for x in 1:3 loop
  'x' = 31 + x;
 end for""", for_equation)
 
-parse_one("""parameter Real 'wagon' = 1000 \"Mass\";
+x = only(parse_one("""parameter Real 'wagon' = 1000 \"Mass\";
  Real 'other_wagon' \"other wagon\";
 equation 
  'wagon' = 5;
  'y' = 6;
 initial equation 
  'x' = 'wagon';
-""",composition, debug = true)
+""",composition, debug = true))
+
+parse_one("""equation
+ 'wagon' = 5;
+""", composition)
 
 parse_one("'x'", name)
 
@@ -169,3 +173,4 @@ equation
 'y' = 6;
 end 'Train'
 """, long_class_specifier)
+

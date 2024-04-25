@@ -1,7 +1,7 @@
 @data BaseModelicaASTNode begin
     BaseModelicaType(name, fields)
-    BaseModelicaPackage(name, model)
-    BaseModelicaModel(name, description, composition)
+    BaseModelicaPackage(name, classes, model)
+    BaseModelicaModel(long_class_specifier)
     BaseModelicaConstant(type, name, value, description, modification)
     BaseModelicaParameter(type, name, value, description, modification)
     BaseModelicaVariable(type, name, input_or_output, description, modification)
@@ -22,10 +22,9 @@
     BaseModelicaForIndex(ident, expression)
     BaseModelicaComposition(components, equations, initial_equations)
 
+    BaseModelicaLongClass(name, description, composition)
     #Class types
-    BaseModelicaFunctionDefinition(name)
-    BaseModelicaTypeDefinition(name)
-    BaseModelicaRecord(name, fields)
+    BaseModelicaClassDefinition(class_type, class)
 end
 
 @data BaseModelicaExpr<:BaseModelicaASTNode begin
@@ -296,10 +295,10 @@ function BaseModelicaComposition(input_list)
     components = []
 
     for input in input_list
-        initial_or_equation_flag = @match input begin
-            "equation" => false
-            "initial_equation" => true
-            _ => nothing
+        if input == "equation"
+            initial_or_equation_flag = false
+        elseif input == "initial_equation"
+            initial_or_equation_flag = true
         end
 
         if input isa BaseModelicaComponentClause
@@ -459,7 +458,7 @@ spc = Drop(Star(Space()))
 
     base_prefix = e"input" | e"output";
     long_class_specifier = IDENT + spc + string_comment + spc + composition + spc + E"end" +
-                           spc + Drop(IDENT);
+                           spc + Drop(IDENT) > BaseModelicaLongClass;
     short_class_specifier = IDENT + spc + E"=" + spc +
                             (base_prefix[0:1] + type_specifier + class_modification[0:1])
     (e"enumeration" + E"(" + (enum_list[0:1] | E":") + E")") + comment;
@@ -468,7 +467,7 @@ spc = Drop(Star(Space()))
     der_class_specifier = IDENT + E"=" + E" "[0:1] + E"der" + E" " + E"(" + type_specifier +
                           E"," + IDENT + Star(E"," + IDENT) + E")" + comment;
     class_specifier = long_class_specifier | short_class_specifier | der_class_specifier
-    class_definition = class_prefixes + spc + class_specifier; # |> create_class;
+    class_definition = class_prefixes + spc + class_specifier > BaseModelicaClassDefinition;
 
     clock_clause = decoration[0:1] + E"Clock" + IDENT + E"=" + expression + comment
     sub_partition = E"subpartition" + E"(" + argument_list + E")" + string_comment +
