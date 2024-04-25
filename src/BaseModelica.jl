@@ -4,57 +4,6 @@ using ModelingToolkit
 using ParserCombinator
 using MLStyle
 
-
-"""
-Holds the name of the package, the models in the package, and eventually BaseModelica records.
-"""
-struct BaseModelicaPackage
-    name::Any
-    model::Any
-end
-
-"""
-Represents a BaseModelica model.
-"""
-struct BaseModelicaModel
-    name::Any
-    description::Any
-    parameters::Any
-    variables::Any
-    equations::Any
-    initial_equations::Any
-end
-
-struct BaseModelicaParameter
-    type::Any
-    name::Any
-    value::Any
-    description::Any
-end
-
-struct BaseModelicaVariable
-    type::Any
-    name::Any
-    input_or_output::Any
-    description::Any
-end
-
-struct BaseModelicaEquation
-    lhs::Any
-    rhs::Any
-    description::Any
-end
-
-struct BaseModelicaInitialEquation
-    lhs::Any
-    rhs::Any
-    description::Any
-end
-
-# needed to parse derivatives in equations correctly
-@variables t
-der = Differential(t)
-
 #Includes
 include("parser.jl")
 include("conversion.jl")
