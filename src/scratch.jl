@@ -2,6 +2,7 @@ parse_one("'x'.^2",factor, debug = true)
 parse_one("('stone'+'rock').^(5 + 5)",factor)
 parse_one("2",UNSIGNED_NUMBER,debug = true)
 
+parse_one("'x'",IDENT)[1].name
 parse_one("4*2*4 .*2",term)
 
 parse_one("4.9",factor)
@@ -16,7 +17,7 @@ parse_one("'x'*('z' + 'y')",expression)
 
 parse_one("20.89", UNSIGNED_NUMBER)
 
-eval_BaseModelicaArith(only(parse_one("1^5", arithmetic_expression)))
+eval_AST(only(parse_one("1^5", arithmetic_expression)))
 
 parse_one("5^5",arithmetic_expression)[1]
 
@@ -132,7 +133,7 @@ eval_AST(only(parse_one("(4 + 5) < (6 + 6)",logical_factor, debug = true)))
 
 parse_one("5 < 5", logical_factor)
 eval_AST(only(parse_one("(5 + 9) > (7-2)", logical_factor)))
-eval_AST(only(parse_one("not (5*1) < (4+3)", logical_factor)))
+eval_AST(only(parse_one("not (5*1) > (4+3) and 5 > 3", logical_term)))
 eval_AST(only(parse_one("4 == 4", logical_factor)))
 eval_AST(only(parse_one("4 <> 4", logical_factor)))
 eval_AST(only(parse_one("4 == 6", logical_factor)))
@@ -174,3 +175,10 @@ equation
 end 'Train'
 """, long_class_specifier)
 
+y = eval_AST(only(parse_one("'x' = 21 + 'y' * 'z'", equation)))
+
+@variables x y
+
+eval_AST(only(parse_one("x + y*z", arithmetic_expression)))
+
+eval(eval_AST(only(parse_one("1 + 1",arithmetic_expression))))

@@ -1,6 +1,6 @@
 @data BaseModelicaASTNode begin
     BaseModelicaType(name, fields)
-    BaseModelicaPackage(name, classes, model)
+    BaseModelicaPackage(name, class_defs, model)
     BaseModelicaModel(long_class_specifier)
     BaseModelicaConstant(type, name, value, description, modification)
     BaseModelicaParameter(type, name, value, description, modification)
@@ -27,7 +27,7 @@
     BaseModelicaClassDefinition(class_type, class)
 end
 
-@data BaseModelicaExpr<:BaseModelicaASTNode begin
+@data BaseModelicaExpr <: BaseModelicaASTNode begin
 
     # these are basically just tokens...
     BMAdd()
@@ -317,6 +317,20 @@ function create_class(input)
     
 end
 
+function BaseModelicaPackage(input_list)
+    name = input_list[1]
+    model = nothing
+    class_defs = []
+    for input in input_list[2:end]
+        if input isa BaseModelicaClassDefinition
+            push!(class_defs, input)
+        elseif input isa BaseModelicaModel
+            model = input
+        end
+    end
+    BaseModelicaPackage(name, class_defs, model)
+end
+
 list2string(x) = isempty(x) ? x : reduce(*, x)
 spc = Drop(Star(Space()))
 # Base Modelica grammar
@@ -587,7 +601,7 @@ spc = Drop(Star(Space()))
                      spc + decoration[0:1] + spc +
                      ((E"model" + spc + long_class_specifier + E";") > BaseModelicaModel) +
                      spc + (annotation_comment + E";")[0:1] + spc +
-                     E"end" + spc + Drop(IDENT) + spc + E";" + spc);
+                     E"end" + spc + Drop(IDENT) + spc + E";" + spc) |> BaseModelicaPackage;
 end;
 
 """
