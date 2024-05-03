@@ -54,5 +54,22 @@ function eval_AST(ref::BaseModelicaComponentReference)
 end
 
 function eval_AST(component::BaseModelicaComponentClause)
-    
+    #place holder to get simple equations working
+    list = component.component_list
+    type_prefix = component.type_prefix.dpc
+    name = Symbol(list[1].name)
+    if type_prefix == "parameter"
+        return only(@parameters($name))
+    elseif isnothing(type_prefix)
+        return only(@variables($name))
+    end
+end
+
+
+function eval_AST(model::BaseModelicaModel)
+
+end
+
+function eval_AST(package::BaseModelicaPackage)
+
 end

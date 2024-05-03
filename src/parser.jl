@@ -11,7 +11,7 @@
     BaseModelicaString(string)
     BaseModelicaTypeSpecifier(type)
     BaseModelicaTypePrefix(dpc, io)
-    BaseModelicaComponentDeclaration(type, array_subs, comment)
+    BaseModelicaComponentDeclaration(name, array_subs, comment)
     BaseModelicaComponentClause(type_prefix, type_specifier, component_list)
     BaseModelicaComponentReference(ref_list)
     BaseModelicaParameterEquation(component_reference, expression, comment)
@@ -233,11 +233,16 @@ function BaseModelicaComponentDeclaration(input_list)
 end
 
 function BaseModelicaTypePrefix(input_list)
-    @match input_list begin
-        [io] => BaseModelicaTypePrefix(nothing, io)
-        [dpc, io] => BaseModelicaTypePrefix(dpc, io)
-        _ => nothing
-    end
+    dpc = nothing
+    io = nothing
+    for input in input_list
+        if input == "parameter" || input == "discrete" || input == "constant"
+            dpc = input
+        elseif input == ("input") || input == ("output")
+            io = input
+        end
+    end 
+    BaseModelicaTypePrefix(dpc,io)
 end
 
 function BaseModelicaSimpleEquation(input_list)
