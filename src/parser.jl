@@ -21,14 +21,12 @@
     BaseModelicaAnyEquation(equation, description)
     BaseModelicaForIndex(ident, expression)
     BaseModelicaComposition(components, equations, initial_equations)
-
     BaseModelicaLongClass(name, description, composition)
     #Class types
     BaseModelicaClassDefinition(class_type, class)
 end
 
 @data BaseModelicaExpr <: BaseModelicaASTNode begin
-
     # these are basically just tokens...
     BMAdd()
     BMElementWiseAdd()
@@ -294,23 +292,16 @@ function BaseModelicaForEquation(input_list)
 end
 
 function BaseModelicaComposition(input_list)
-    initial_or_equation_flag = false
     equations = []
     initial_equations = []
     components = []
 
     for input in input_list
-        if input == "equation"
-            initial_or_equation_flag = false
-        elseif input == "initial_equation"
-            initial_or_equation_flag = true
-        end
-
         if input isa BaseModelicaComponentClause
             push!(components, input)
-        elseif input isa BaseModelicaAnyEquation && initial_or_equation_flag == true
+        elseif input isa BaseModelicaInitialEquation 
             push!(initial_equations, input)
-        elseif input isa BaseModelicaAnyEquation && initial_or_equation_flag == false
+        elseif input isa BaseModelicaAnyEquation 
             push!(equations, input)
         end
     end

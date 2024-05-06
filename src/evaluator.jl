@@ -34,6 +34,11 @@ eval_AST(expr::BaseModelicaExpr) =
         end
     end
 
+function eval_AST(eq::BaseModelicaInitialEquation)
+    inner_eq = eq.equation
+    
+end
+
 function eval_AST(eq::BaseModelicaAnyEquation)
     equation = eval_AST(eq.equation)
     description = eq.description
@@ -65,11 +70,23 @@ function eval_AST(component::BaseModelicaComponentClause)
     end
 end
 
-
 function eval_AST(model::BaseModelicaModel)
+    class_specifier = model.long_class_specifier
+    model_name = class_specifier.name
+    description = class_specifier.description
 
+    composition = class_specifier.composition
+
+    components = composition.components
+    equations = composition.equations
+    initial_equations = composition.initial_equations
+
+    comps = [eval_AST(comp) for comp in components]
+    eqs = [eval_AST(eq) for eq in equations]
+    init_eqs = [eval_AST(eq) for eq in initial_equations]
 end
 
 function eval_AST(package::BaseModelicaPackage)
-
+    model = package.model
+    eval_AST(model)
 end
