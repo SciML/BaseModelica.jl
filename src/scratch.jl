@@ -23,8 +23,6 @@ parse_one("5^5",arithmetic_expression)[1]
 
 parse_one("4.0",arithmetic_expression)[1]
 
-eval_BaseModelicaArith(BaseModelicaNumber(45))
-
 eval_AST(only(parse_one("5 + 6*(45 + 9^2)^2", arithmetic_expression)))
 
 eval_AST(only(parse_one("5 + 6*(32 + 100)", arithmetic_expression)))
@@ -84,6 +82,8 @@ parse_one("""when 'x' == 5 then
 elsewhen 'y' == 20 then
 'x' = 30;
 end when""",when_equation, debug = true)
+
+parse_one("parameter",type_prefix)
 
 parse_one("""if 'x' == 5 then
 'y' = 4;
@@ -151,7 +151,7 @@ parse_one("""record 'R' "a record that is a record"
 end 'R';
 """, class_definition)
 
-parse_one("""package 'Train'
+x = parse_one("""package 'Train'
 record 'R'
     Real 'x';
 end 'R';
@@ -164,7 +164,7 @@ equation
 initial equation 
 'x' = 'wagon';
 end 'Train';
-end 'Train';""",base_modelica)
+end 'Train';""",base_modelica)[1]
 
 parse_one("""'Train' 
 parameter Real 'wagon' = 1000 \"Mass\";
@@ -182,3 +182,57 @@ y = eval_AST(only(parse_one("'x' = 21 + 'y' * 'z'", equation)))
 eval_AST(only(parse_one("x + y*z", arithmetic_expression)))
 
 eval(eval_AST(only(parse_one("1 + 1",arithmetic_expression))))
+
+parse_one("parameter Real 'x' = 43 \"the worst parameter\"",component_clause)
+parse_one("Real 'x'", component_clause)
+
+
+eval_AST(only(parse_one("""package 'Train'
+model 'Train' 
+parameter Real 'wagon' = 1000 \"Mass\";
+Real 'other_wagon' \"other wagon\";
+equation 
+'wagon' = 5;
+'y' = 6;
+initial equation 
+'x' = 'wagon';
+end 'Train';
+end 'Train';""",base_modelica)))
+
+only(parse_one("""package 'Train'
+model 'Train' "poop"
+parameter Real 'wagon' = 1000 \"Mass\";
+Real 'other_wagon' \"other wagon\";
+initial equation 
+'x' = 'wagon';
+equation 
+'wagon' = 5;
+'y' = 6;
+end 'Train';
+end 'Train';""",base_modelica))
+
+parse_one("'y' = 6", initial_equation)
+
+parse_one("""package 'NewtonCoolingWithDefaults'
+model 'NewtonCoolingWithDefaults' "Cooling example with default parameter values"
+  parameter Real 'T_inf' = 25.0 "Ambient temperature";
+  parameter Real 'T0' = 90.0 "Initial temperature";
+  parameter Real 'h' = 0.7 "Convective cooling coefficient";
+  parameter Real 'A' = 1.0 "Surface area";
+  parameter Real 'm' = 0.1 "Mass of thermal capacitance";
+  parameter Real 'c_p' = 1.2 "Specific heat";
+  Real 'T' "Temperature";
+initial equation
+  'T' = 'T0' "Specify initial value for T";
+equation
+  'm' * 'c_p' * der('T') = 'h' * 'A' * ('T_inf' - 'T') "Newton's law of cooling";
+end 'NewtonCoolingWithDefaults';
+end 'NewtonCoolingWithDefaults';""", base_modelica)
+
+parse_one("'m' * 'c_p' * der('T') = 'h' * 'A' * ('T_inf' - 'T')",equation)
+parse_one("sin(x)", primary, debug = true)
+
+parse_one("x,y,z", function_arguments)
+parse_one("x",simple_expression)
+
+parse_one("f(x,y,z)",primary)

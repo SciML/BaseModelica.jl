@@ -72,7 +72,8 @@ end
     BaseModelicaDivide(top, bottom)
     BaseModelicaElementWiseDivide(left, right)
     BaseModelicaParens(BaseModelicaExpr)
-    BaseModelicaFunctionCall(BaseModelicaExpr)
+    BaseModelicaFunctionArgs(args)
+    BaseModelicaFunctionCall(func_name, args)
     BaseModelicaRange(start, step, stop)
     BaseModelicaArraySubscripts(subscripts)
 
@@ -93,6 +94,7 @@ end
 
 #constructors 
 function create_factor(input_list)
+    println(input_list)
     elementwise_index = findfirst(x -> x == ".^", input_list)
     power_index = findfirst(x -> x == "^", input_list)
 
@@ -230,6 +232,10 @@ function BaseModelicaComponentDeclaration(input_list)
     BaseModelicaComponentDeclaration(ident, subs, comment)
 end
 
+function BaseModelicaFunctionCall(input)
+    BaseModelicaFunctionCall(input[1], input[2:end])
+end
+
 function BaseModelicaTypePrefix(input_list)
     dpc = nothing
     io = nothing
@@ -308,10 +314,6 @@ function BaseModelicaComposition(input_list)
     BaseModelicaComposition(components, equations, initial_equations)
 end
 
-"Creates a `type`, a 'record', or a 'function'."
-function create_class(input)
-    
-end
 
 function BaseModelicaPackage(input_list)
     name = input_list[1]
@@ -326,6 +328,17 @@ function BaseModelicaPackage(input_list)
     end
     BaseModelicaPackage(name, class_defs, model)
 end
+
+function component_reference_or_function_call(input_list)
+    println(input_list)
+    if length(input_list) >= 2 && input_list[2] isa BaseModelicaFunctionArgs
+        return BaseModelicaFunctionCall(input_list[1], input_list[2])
+    else
+        return input_list[1]
+    end
+end
+
+
 
 list2string(x) = isempty(x) ? x : reduce(*, x)
 spc = Drop(Star(Space()))
@@ -411,14 +424,14 @@ spc = Drop(Star(Space()))
                           ((E"," + function_arguments_non_first) | (E"for" + for_index))[0:1]) |
                          (function_partial_application +
                           (E"," + function_arguments_non_first)[0:1]) |
-                         named_arguments;
-    function_call_args = e"(" + function_arguments[0:1] + e")";
+                         named_arguments |> BaseModelicaFunctionArgs;
+    function_call_args = E"(" + function_arguments[0:1] + E")";
     output_expression_list = Delayed();
     expression_list = Delayed();
     array_arguments = expression + (Star(E"," + expression) | E"for" + for_index);
     primary = UNSIGNED_NUMBER | STRING | e"false" | e"true" |
               ((e"der" | e"initial" | e"pure") + function_call_args) |
-              (component_reference + function_call_args[0:1]) |
+              ((component_reference + function_call_args[0:1]) |> component_reference_or_function_call) |
               (E"(" + spc + output_expression_list + spc + E")" + array_subscripts[0:1]) |
               (e"[" + spc + expression_list + spc + Star(E";" + spc + expression_list) +
                spc + e"]") |
