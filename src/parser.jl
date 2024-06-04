@@ -94,7 +94,6 @@ end
 
 #constructors 
 function create_factor(input_list)
-    println(input_list)
     elementwise_index = findfirst(x -> x == ".^", input_list)
     power_index = findfirst(x -> x == "^", input_list)
 
@@ -330,7 +329,6 @@ function BaseModelicaPackage(input_list)
 end
 
 function component_reference_or_function_call(input_list)
-    println(input_list)
     if length(input_list) >= 2 && input_list[2] isa BaseModelicaFunctionArgs
         return BaseModelicaFunctionCall(input_list[1], input_list[2])
     else
@@ -430,7 +428,7 @@ spc = Drop(Star(Space()))
     expression_list = Delayed();
     array_arguments = expression + (Star(E"," + expression) | E"for" + for_index);
     primary = UNSIGNED_NUMBER | STRING | e"false" | e"true" |
-              ((e"der" | e"initial" | e"pure") + function_call_args) |
+              ((e"der" | e"initial" | e"pure") + function_call_args |> component_reference_or_function_call) |
               ((component_reference + function_call_args[0:1]) |> component_reference_or_function_call) |
               (E"(" + spc + output_expression_list + spc + E")" + array_subscripts[0:1]) |
               (e"[" + spc + expression_list + spc + Star(E";" + spc + expression_list) +
