@@ -11,7 +11,8 @@
     BaseModelicaString(string)
     BaseModelicaTypeSpecifier(type)
     BaseModelicaTypePrefix(dpc, io)
-    BaseModelicaComponentDeclaration(name, array_subs, comment)
+    BaseModelicaDeclaration(ident, array_subs, modification)
+    BaseModelicaComponentDeclaration(declaration, comment)
     BaseModelicaComponentClause(type_prefix, type_specifier, component_list)
     BaseModelicaComponentReference(ref_list)
     BaseModelicaParameterEquation(component_reference, expression, comment)
@@ -22,6 +23,7 @@
     BaseModelicaForIndex(ident, expression)
     BaseModelicaComposition(components, equations, initial_equations)
     BaseModelicaLongClass(name, description, composition)
+    BaseModelicaModification(expr)
     #Class types
     BaseModelicaClassDefinition(class_type, class)
 end
@@ -215,21 +217,6 @@ function BaseModelicaArraySubscripts(input::Vector{Any})
     BaseModelicaArraySubscripts(Tuple(input))
 end
 
-function BaseModelicaComponentDeclaration(input_list)
-    ident = nothing
-    subs = nothing
-    comment = nothing
-    for thing in input_list
-        if thing isa BaseModelicaString
-            comment = thing
-        elseif thing isa BaseModelicaIdentifier
-            ident = thing
-        elseif thing isa BaseModelicaArraySubscripts
-            subs = thing
-        end
-    end
-    BaseModelicaComponentDeclaration(ident, subs, comment)
-end
 
 function BaseModelicaFunctionCall(input)
     BaseModelicaFunctionCall(input[1], input[2:end])
@@ -371,9 +358,9 @@ spc = Drop(Star(Space()))
                    (e"input" | e"output")[0:1]) |> BaseModelicaTypePrefix;
     array_subscripts = Delayed();
     modification = Delayed();
-    declaration = IDENT + array_subscripts[0:1] + modification[0:1];
+    declaration = IDENT & array_subscripts[0:1] & modification[0:1] > BaseModelicaDeclaration;
     comment = Delayed();
-    component_declaration = declaration + spc + comment |> BaseModelicaComponentDeclaration;
+    component_declaration = declaration + spc + comment > BaseModelicaComponentDeclaration;
     global_constant = e"constant" + type_specifier + array_subscripts[0:1] + declaration +
                       comment;
     component_list = (component_declaration + spc +
@@ -386,8 +373,7 @@ spc = Drop(Star(Space()))
     #equations
 
     #modification
-    string_comment = (STRING + spc + Star(spc + E"+" + spc + STRING))[0:1] |>
-                     BaseModelicaString;
+    string_comment = (STRING + spc + Star(spc + E"+" + spc + STRING))[0:1] |> BaseModelicaString;
     element_modification = name + modification[0:1] + string_comment;
     element_modification_or_replaceable = element_modification;
     decoration = E"@" + UNSIGNED_INTEGER;
@@ -396,7 +382,7 @@ spc = Drop(Star(Space()))
     class_modification = E"(" + argument_list[0:1] + E")";
     expression = Delayed();
     modification.matcher = (class_modification + (spc + E"=" + spc + expression)[0:1]) |
-                           (spc + E"=" + spc + expression) | (E":=" + spc + expression);
+                           (spc + E"=" + spc + expression) | (E":=" + spc + expression) |> BaseModelicaModification;
 
     #expressions
     relational_operator = (E"<" > BMLessThan) | (E"<=" > BMLEQ) | (E">" > BMGreaterThan) |

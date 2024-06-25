@@ -213,7 +213,43 @@ end 'Train';""",base_modelica))
 
 parse_one("'y' = 6", initial_equation)
 
-parse_one("""package 'NewtonCoolingWithDefaults'
+parse_one("'m' * 'c_p' * der('T') = 'h' * 'A' * ('T_inf' - 'T')",equation)
+parse_one("sin(x)", primary, debug = true)
+parse_one("der(x)",primary)
+
+parse_one("x,y,z", function_arguments)
+parse_one("x",simple_expression)
+
+parse_one("f(x,y,z)",primary)
+
+parse_one("4^4", factor)
+
+eval_AST(only(parse_one("'m' * 'c_p' * der('T') = 'h' * 'A' * ('T_inf' - 'T')",equation)))
+
+
+eval_AST(only(parse_one("sin(x)", primary)))
+
+only(parse_one("sin(x)", primary)).args
+
+eval_AST(only(parse_one("parameter Real 'T_inf' = 25.0 \"Ambient temperature\";",component_clause)))
+
+eval_AST(only(parse_one("Real x;", component_clause)))
+
+
+eval_AST(parse_one("x", component_reference)[1])
+
+eval_AST(only(parse_one("Real 'm' = 25.0;",component_clause)))
+eval_AST(only(parse_one("Real c_p;",component_clause)))
+eval_AST(only(parse_one("Real T;",component_clause)))
+eval_AST(only(parse_one("Real h;",component_clause)))
+eval_AST(only(parse_one("Real A;",component_clause)))
+eval_AST(only(parse_one("Real T_inf;",component_clause)))
+
+eval_AST(parse_one("'m' * 'c_p' * der('T') = 'h' * 'A' * ('T_inf' - 'T')",equation)[1])
+
+eval_AST(only(parse_one("der('T')", primary)))
+
+model = parse_one("""package 'NewtonCoolingWithDefaults'
 model 'NewtonCoolingWithDefaults' "Cooling example with default parameter values"
   parameter Real 'T_inf' = 25.0 "Ambient temperature";
   parameter Real 'T0' = 90.0 "Initial temperature";
@@ -227,12 +263,17 @@ initial equation
 equation
   'm' * 'c_p' * der('T') = 'h' * 'A' * ('T_inf' - 'T') "Newton's law of cooling";
 end 'NewtonCoolingWithDefaults';
-end 'NewtonCoolingWithDefaults';""", base_modelica)
+end 'NewtonCoolingWithDefaults';""", base_modelica)[1].model
 
-parse_one("'m' * 'c_p' * der('T') = 'h' * 'A' * ('T_inf' - 'T')",equation)
-parse_one("sin(x)", primary, debug = true)
+x = eval_AST(model)
 
-parse_one("x,y,z", function_arguments)
-parse_one("x",simple_expression)
+parse_one("'m' = 25.0;",declaration)
+parse_one("'m' = 25.0;",component_declaration)
 
-parse_one("f(x,y,z)",primary)
+
+parse_one("= x", modification)
+
+x = only(parse_one("Real 'm' = 25.0;",component_clause))
+x.component_list[1].declaration.modification[1].expr[1].val
+
+x = only(parse_one("Real 'm';",component_clause))
