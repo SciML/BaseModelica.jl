@@ -6,7 +6,7 @@ using MLStyle
 
 #Includes
 include("parser.jl")
-include("conversion.jl")
+include("evaluator.jl")
 """
     parse_basemodelica(filename::String)::ODESystem
 
@@ -20,7 +20,7 @@ parse_basemodelica("testfiles/NewtonCoolingBase.mo")
 """
 function parse_basemodelica(filename::String)
     package = parse_file(filename)
-    baseModelica_to_ModelingToolkit(package.model)
+    baseModelica_to_ModelingToolkit(package)
 end
 
 export parse_basemodelica

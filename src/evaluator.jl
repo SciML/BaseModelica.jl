@@ -159,3 +159,6 @@ function eval_AST(comp_reference::BaseModelicaComponentReference)
     return variable_map[Symbol(comp_reference.ref_list[1].name)]
 end
 
+function baseModelica_to_ModelingToolkit(package::BaseModelicaPackage)
+    eval_AST(package)
+end
