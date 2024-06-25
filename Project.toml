@@ -10,9 +10,9 @@ ParserCombinator = "fae87a5f-d1ad-5cf0-8f61-c941e1580b46"
 
 [compat]
 Aqua = "0.8"
-ModelingToolkit = "8.75, 9"
+ModelingToolkit = "9"
 ParserCombinator = "2"
-MLStyle = "0.4"
+MLStyle = "0.4.17"
 SafeTestsets = "0.1"
 Test = "1.10"
 julia = "1.10"
