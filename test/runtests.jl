@@ -15,7 +15,7 @@ using Test, SafeTestsets
 
 
         newton_path = joinpath(
-            pathof(BM), "test", "testfiles", "NewtonCoolingBase.mo")
+            dirname(dirname(pathof(BM))),"test", "testfiles", "NewtonCoolingBase.mo")
         newton_cooling = BM.parse_file(newton_path)
         @test newton_cooling isa BM.BaseModelicaPackage
         newton_system = BM.baseModelica_to_ModelingToolkit(newton_cooling)
