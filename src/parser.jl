@@ -51,7 +51,6 @@ end
     BMGreaterThan()
     BMLEQ()
     BMGEQ()
-    BMNEQ()
     BMEQ()
     BMNEQ()
 
