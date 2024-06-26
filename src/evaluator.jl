@@ -56,13 +56,6 @@ function eval_AST(eq::BaseModelicaSimpleEquation)
     lhs ~ rhs
 end
 
-function eval_AST(ref::BaseModelicaComponentReference)
-    ref_list = ref.ref_list
-    if length(ref_list) == 1 
-        return variable_map[Symbol(ref_list[1].name)]
-    end
-end
-
 function eval_AST(component::BaseModelicaComponentClause)
     #this mutates a dict
     #place holder to get simple equations working
