@@ -13,29 +13,28 @@ using ModelingToolkit: t_nounits as t, D_nounits as D
     RTString()
 end
 
-
-eval_AST(expr::BaseModelicaExpr) = 
+function eval_AST(expr::BaseModelicaExpr)
     let f = eval_AST
         @match expr begin
             BaseModelicaNumber(val) => val
-            BaseModelicaFactor(base,exp) => (f(base)) ^ f(exp)
-            BaseModelicaSum(left,right) => (f(left)) + (f(right))
-            BaseModelicaMinus(left,right) => f(left) - f(right)
-            BaseModelicaProd(left,right) => f(left) * f(right)
-            BaseModelicaDivide(left,right) => f(left) / f(right)
+            BaseModelicaFactor(base, exp) => (f(base))^f(exp)
+            BaseModelicaSum(left, right) => (f(left)) + (f(right))
+            BaseModelicaMinus(left, right) => f(left) - f(right)
+            BaseModelicaProd(left, right) => f(left) * f(right)
+            BaseModelicaDivide(left, right) => f(left) / f(right)
             BaseModelicaNot(relation) => !(f(relation))
-            BaseModelicaAnd(left,right) => f(left) && f(right)
-            BaseModelicaOr(left,right) => f(left) || f(right)
-            BaseModelicaLEQ(left,right) => f(left) <= f(right)
-            BaseModelicaGEQ(left,right) => f(left) >= f(right)
-            BaseModelicaLessThan(left,right) => f(left) < f(right)
-            BaseModelicaGreaterThan(left,right) => f(left) > f(right)
-            BaseModelicaEQ(left,right) => f(left) == f(right)
-            BaseModelicaNEQ(left,right) => f(left) != f(right)
+            BaseModelicaAnd(left, right) => f(left) && f(right)
+            BaseModelicaOr(left, right) => f(left) || f(right)
+            BaseModelicaLEQ(left, right) => f(left) <= f(right)
+            BaseModelicaGEQ(left, right) => f(left) >= f(right)
+            BaseModelicaLessThan(left, right) => f(left) < f(right)
+            BaseModelicaGreaterThan(left, right) => f(left) > f(right)
+            BaseModelicaEQ(left, right) => f(left) == f(right)
+            BaseModelicaNEQ(left, right) => f(left) != f(right)
             _ => nothing
         end
     end
-
+end
 
 include("maps.jl")
 
@@ -95,13 +94,12 @@ function eval_AST(model::BaseModelicaModel)
         name = Symbol(comp.component_list[1].declaration.ident[1].name)
 
         eval_AST(comp)
-        
+
         if comp.type_prefix.dpc == "parameter" || comp.type_prefix.dpc == "constant"
             push!(pars, variable_map[name])
         else
             push!(vars, variable_map[name])
         end
-
     end
 
     eqs = [eval_AST(eq) for eq in equations]
@@ -115,14 +113,14 @@ function eval_AST(model::BaseModelicaModel)
 
     # quick and dumb kind of
     for dictionary in init_eqs
-        for (key,value) in dictionary
+        for (key, value) in dictionary
             init_eqs_dict[key] = value
         end
     end
-    for (key,value) in init_eqs_dict
+    for (key, value) in init_eqs_dict
         init_eqs_dict[key] = substitute(value, parameter_val_map)
     end
-    
+
     #vars,pars,eqs, init_eqs_dict
 
     defaults = merge(init_eqs_dict, parameter_val_map)
