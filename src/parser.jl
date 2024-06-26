@@ -39,7 +39,6 @@ end
     BMDivide()
     BMElementWiseDivide()
     BMColon()
-    BMWhen()
     BMIf()
     BMFor()
     BMWhen()
