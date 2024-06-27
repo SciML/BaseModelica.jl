@@ -88,7 +88,6 @@ end
     BaseModelicaEQ(left, right)
     BaseModelicaNEQ(left, right)
     BaseModelicaIfExpression(conditions, expressions)
-
     BaseModelicaArrayReference(term, indexes)
 end
 
