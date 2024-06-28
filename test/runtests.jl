@@ -1,7 +1,11 @@
 using Test, SafeTestsets
 
-@testset "BaseModelica" begin
+
+@testset "Quality Assurance" begin
     @safetestset "Quality Assurance" include("qa.jl")
+end
+
+@testset "BaseModelica" begin
     @safetestset "Parsing and Conversion Tests" begin
         using BaseModelica
         using ModelingToolkit
