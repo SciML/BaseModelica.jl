@@ -208,6 +208,7 @@ function BaseModelicaIfExpression(input_list)
 end
 
 function create_component_clause(input_list)
+    #empty
 end
 
 function BaseModelicaArraySubscripts(input::Vector{Any})
