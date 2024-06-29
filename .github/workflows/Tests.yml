@@ -23,3 +23,10 @@ jobs:
     name: "Tests"
     uses: "SciML/.github/.github/workflows/tests.yml@v1"
     secrets: "inherit"
+    strategy:
+      matrix:
+        group:
+          - Core
+          - Quality
+        version:
+          - '1'
