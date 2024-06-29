@@ -1,3 +1,4 @@
+# holds functions predefined or defined in the Base Modelica Package
 function_map = Dict(
     :der => x -> D(x...),
     :abs => x -> Base.abs(x...),
