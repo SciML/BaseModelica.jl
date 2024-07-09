@@ -5,7 +5,6 @@ using ModelingToolkit: t_nounits as t, D_nounits as D
     RTRecord()
     RTClass()
     RTFunction()
-
     #built in classes
     RTReal()
     RTInteger()

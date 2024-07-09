@@ -1,6 +1,6 @@
 using Test, SafeTestsets
 
-const GROUP = get(ENV,"GROUP", "All")
+const GROUP = get(ENV, "GROUP", "All")
 
 if GROUP == "All" || GROUP == "Quality"
     @testset "Quality Assurance" begin
