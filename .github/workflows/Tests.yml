@@ -21,6 +21,16 @@ concurrency:
 jobs:
   tests:
     name: "Tests"
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - Core
+          - Quality
+        version:
+          - '1'
     uses: "SciML/.github/.github/workflows/tests.yml@v1"
+    with:
+      group: "${{ matrix.group }}"
     secrets: "inherit"
-
+   
