@@ -8,6 +8,7 @@ function_map = Dict(
 # holds variables, populated by evaluating component_clause
 variable_map = Dict()
 
+# holds parameter values, default values
 parameter_val_map = Dict()
 
 initial_value_map = Dict()
