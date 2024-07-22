@@ -11,7 +11,8 @@
 
 A parser for the [Base Modelica](https://github.com/modelica/ModelicaSpecification/tree/MCP/0031/RationaleMCP/0031) format. Contains utilities to parse Base Modelica model files in to Julia objects, and to convert Base Modelica models to [ModelingToolkit](https://docs.sciml.ai/ModelingToolkit/stable/) models.
 
-So far only very simple Base Modelica models are supported. Only models with real parameters, real variables, and equations consisting of simple arithmetic equations and first order derivatives are supported. Support for the rest of the BaseModelica specification is planned to be added in the future.
+Base Modelica is as of yet only a proposal with no concrete specification, so the grammar and features of the language are subject to change. 
+There is no support for Records, custom types, or custom functions. Any [built in BaseModelica functions](https://github.com/modelica/ModelicaSpecification/blob/MCP/0031/RationaleMCP/0031/functions.md) are not yet supported. Array variables and accessing elements of an array are not yet supported. Only models with real scalar parameters, real scalar variables, and equations consisting of simple arithmetic equations and first order derivatives are able to be translated to an MTK model at this time.
 
 ## Installation
 
