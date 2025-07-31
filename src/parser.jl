@@ -528,8 +528,7 @@ spc = Drop(Star(Space()))
                   Star((E"elseif" > BMIf) + spc + expression + (E"then" > BMThen) + spc +
                        Star(spc + equation + E";")
                   ) + spc +
-                  ((E"else" > BMIf) + spc +
-                   Star(spc + equation + E";")
+                  ((E"else" > BMIf) + spc + Star(spc + equation + E";")
                   )[0:1] + spc +
                   E"end if" |> BaseModelicaIfEquation
 
@@ -564,8 +563,7 @@ spc = Drop(Star(Space()))
                    Star(statement + E";") + NL +
                    Star(E"elseif" + expression + E"then" + NL +
                         Star(statement + E";")) +
-                   (E"else" + NL +
-                    Star(statement + E";"))[0:1] + NL +
+                   (E"else" + NL + Star(statement + E";"))[0:1] + NL +
                    E"end if"
 
     statement.matcher = decoration[0:1] +
