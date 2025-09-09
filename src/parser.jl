@@ -327,6 +327,9 @@ spc = Drop(Star(Space()))
     WS = p" " | p"\t" | NL
     LINE_COMMENT = p"//[^\r\n]*" + NL
     ML_COMMENT = p"/[*]([^*]|([*][^/]))*[*]/"
+    
+    # Pattern to match initial comments and whitespace at the beginning of file
+    initial_spc_and_comments = Drop(Star(WS | LINE_COMMENT | ML_COMMENT))
 
     #lexical units, not keywords
     NONDIGIT = p"_|[a-z]|[A-Z]"
@@ -585,7 +588,7 @@ spc = Drop(Star(Space()))
                          (spc + E"=" + spc + expression)[0:1]) |>
                         BaseModelicaSimpleEquation) + comment > BaseModelicaAnyEquation
 
-    base_modelica = (spc + E"package" + spc + IDENT + spc +
+    base_modelica = (initial_spc_and_comments + E"package" + spc + IDENT + spc +
                      Star((decoration[0:1] + spc + class_definition + spc + E";") |
                           (decoration[0:1] + global_constant + E";")) +
                      spc + decoration[0:1] + spc +

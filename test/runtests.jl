@@ -27,6 +27,13 @@ if GROUP == "All" || GROUP == "Core"
             newton_system = BM.baseModelica_to_ModelingToolkit(newton_cooling)
             @test newton_system isa ODESystem
             @test parse_basemodelica("testfiles/NewtonCoolingBase.mo") isa ODESystem
+            
+            # Test parsing with comments before package (issue #34)
+            comment_path = joinpath(
+                dirname(dirname(pathof(BM))), "test", "testfiles", "CommentBeforePackage.mo")
+            comment_package = BM.parse_file(comment_path)
+            @test comment_package isa BM.BaseModelicaPackage
+            @test comment_package.name == "Comment"
         end
     end
 end
