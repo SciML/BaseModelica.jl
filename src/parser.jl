@@ -20,6 +20,7 @@
     BaseModelicaForEquation(index, equations)
     BaseModelicaIfEquation(ifs, thens)
     BaseModelicaAnyEquation(equation, description)
+    BaseModelicaAnnotation(annotation_content)
     BaseModelicaForIndex(ident, expression)
     BaseModelicaComposition(components, equations, initial_equations)
     BaseModelicaLongClass(name, description, composition)
@@ -301,6 +302,10 @@ function BaseModelicaComposition(input_list)
             push!(initial_equations, input)
         elseif input isa BaseModelicaAnyEquation
             push!(equations, input)
+        elseif input isa BaseModelicaAnnotation
+            # For now, treat annotations as part of equations 
+            # (they appear in equation sections)
+            push!(equations, input)
         end
     end
     BaseModelicaComposition(components, equations, initial_equations)
@@ -437,7 +442,7 @@ spc = Drop(Star(Space()))
     subscript = (E":" > BMColon) | expression
     array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript) + E"]" |>
                                BaseModelicaArraySubscripts
-    annotation_comment = E"annotation" + class_modification
+    annotation_comment = E"annotation" + class_modification > BaseModelicaAnnotation
     comment.matcher = (string_comment + annotation_comment[0:1]) |> (x -> length(x) == 1 ? x[1] : BaseModelicaString(join([string(elem) for elem in x], " ")))
 
     enumeration_literal = IDENT + comment
@@ -463,9 +468,9 @@ spc = Drop(Star(Space()))
     statement = Delayed()
     base_partition = Delayed()
     composition = Star(decoration[0:1] + generic_element + E";" + spc) + spc +
-                  Star((spc + e"equation" + spc + Star(spc + equation + E";" + spc)) |
+                  Star((spc + e"equation" + spc + Star(spc + (equation | annotation_comment) + E";" + spc)) |
                        (e"initial equation" + spc +
-                        Star(spc + initial_equation + E";" + spc)) |
+                        Star(spc + (initial_equation | annotation_comment) + E";" + spc)) |
                        (e"initial"[0:1] + e"algorithm" + Star(statement + E";"))) +
                   (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";")[0:1] +
                   Star(base_partition) + (annotation_comment + E";")[0:1] |>
