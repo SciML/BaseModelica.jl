@@ -327,7 +327,7 @@ spc = Drop(Star(Space()))
     WS = p" " | p"\t" | NL
     LINE_COMMENT = p"//[^\r\n]*" + NL
     ML_COMMENT = p"/[*]([^*]|([*][^/]))*[*]/"
-    
+
     # Pattern to match initial comments and whitespace at the beginning of file
     initial_spc_and_comments = Drop(Star(WS | LINE_COMMENT | ML_COMMENT))
 
