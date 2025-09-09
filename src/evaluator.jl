@@ -31,6 +31,16 @@ function eval_AST(expr::BaseModelicaExpr)
             BaseModelicaGreaterThan(left, right) => f(left) > f(right)
             BaseModelicaEQ(left, right) => f(left) == f(right)
             BaseModelicaNEQ(left, right) => f(left) != f(right)
+            BaseModelicaIfExpression(conditions, expressions) => begin
+                # Evaluate conditions sequentially until one is true
+                for i in 1:length(conditions)
+                    if f(conditions[i])
+                        return f(expressions[i])
+                    end
+                end
+                # If no condition is true, return the else expression (last in expressions)
+                return f(expressions[end])
+            end
             _ => nothing
         end
     end
