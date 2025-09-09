@@ -32,14 +32,16 @@ function eval_AST(expr::BaseModelicaExpr)
             BaseModelicaEQ(left, right) => f(left) == f(right)
             BaseModelicaNEQ(left, right) => f(left) != f(right)
             BaseModelicaIfExpression(conditions, expressions) => begin
-                # Evaluate conditions sequentially until one is true
-                for i in 1:length(conditions)
-                    if f(conditions[i])
-                        return f(expressions[i])
-                    end
+                # Use Base.ifelse to construct nested ifelse chain
+                # Start from the else expression (last in expressions)
+                result = f(expressions[end])
+                
+                # Build the ifelse chain from right to left (reverse order)
+                for i in length(conditions):-1:1
+                    result = ifelse(f(conditions[i]), f(expressions[i]), result)
                 end
-                # If no condition is true, return the else expression (last in expressions)
-                return f(expressions[end])
+                
+                return result
             end
             _ => nothing
         end
