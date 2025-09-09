@@ -31,16 +31,17 @@ function eval_AST(expr::BaseModelicaExpr)
             BaseModelicaGreaterThan(left, right) => f(left) > f(right)
             BaseModelicaEQ(left, right) => f(left) == f(right)
             BaseModelicaNEQ(left, right) => f(left) != f(right)
-            BaseModelicaIfExpression(conditions, expressions) => begin
+            BaseModelicaIfExpression(conditions,
+                expressions) => begin
                 # Use Base.ifelse to construct nested ifelse chain
                 # Start from the else expression (last in expressions)
                 result = f(expressions[end])
-                
+
                 # Build the ifelse chain from right to left (reverse order)
                 for i in length(conditions):-1:1
                     result = ifelse(f(conditions[i]), f(expressions[i]), result)
                 end
-                
+
                 return result
             end
             _ => nothing
