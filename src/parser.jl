@@ -63,6 +63,7 @@ end
     BaseModelicaIdentifier(name)
     BaseModelicaSum(left, right)
     BaseModelicaMinus(left, right)
+    BaseModelicaUnaryMinus(operand)
     BaseModelicaProd(left, right)
     BaseModelicaFactor(base, exp)
     BaseModelicaElementWiseFactor(base, exp)
@@ -126,6 +127,11 @@ function create_term(input_list)
 end
 
 function create_arithmetic_expression(input_list)
+    # Handle unary minus case - if first element is a minus operator
+    if length(input_list) >= 2 && input_list[1] isa BMSubtract
+        return BaseModelicaUnaryMinus(input_list[2])
+    end
+    
     left_el = input_list[1]
     for (i, element) in enumerate(input_list)
         left_el = @match element begin
