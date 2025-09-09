@@ -34,5 +34,5 @@ jobs:
     uses: "SciML/.github/.github/workflows/tests.yml@v1"
     with:
       group: "${{ matrix.group }}"
-      julia-version: "${{ matrix.julia-version }}"
+      julia-version: "${{ matrix.version }}"
     secrets: "inherit"

@@ -10,7 +10,7 @@
     BaseModelicaArray(type, length)
     BaseModelicaString(string)
     BaseModelicaTypeSpecifier(type)
-    BaseModelicaTypePrefix(dpc, io)
+    BaseModelicaTypePrefix(final_flag, dpc, io)
     BaseModelicaDeclaration(ident, array_subs, modification)
     BaseModelicaComponentDeclaration(declaration, comment)
     BaseModelicaComponentClause(type_prefix, type_specifier, component_list)
@@ -220,16 +220,19 @@ function BaseModelicaFunctionCall(input)
 end
 
 function BaseModelicaTypePrefix(input_list)
+    final_flag = nothing
     dpc = nothing
     io = nothing
     for input in input_list
-        if input == "parameter" || input == "discrete" || input == "constant"
+        if input == "final"
+            final_flag = input
+        elseif input == "parameter" || input == "discrete" || input == "constant"
             dpc = input
         elseif input == ("input") || input == ("output")
             io = input
         end
     end
-    BaseModelicaTypePrefix(dpc, io)
+    BaseModelicaTypePrefix(final_flag, dpc, io)
 end
 
 function BaseModelicaSimpleEquation(input_list)
@@ -348,7 +351,7 @@ spc = Drop(Star(Space()))
     name = Not(Lookahead(e"end")) + Not(Lookahead(E"equation")) +
            Not(Lookahead(E"initial equation")) + (IDENT + Star(e"." + IDENT)) |> list2string # Not(Lookahead(foo)) tells it that names can't be foo
     type_specifier = E"."[0:1] + name > BaseModelicaTypeSpecifier
-    type_prefix = ((e"discrete" | e"parameter" | e"constant")[0:1] + spc +
+    type_prefix = ((e"final")[0:1] + spc + (e"discrete" | e"parameter" | e"constant")[0:1] + spc +
                    (e"input" | e"output")[0:1]) |> BaseModelicaTypePrefix
     array_subscripts = Delayed()
     modification = Delayed()
@@ -374,7 +377,7 @@ spc = Drop(Star(Space()))
     element_modification_or_replaceable = element_modification
     decoration = E"@" + UNSIGNED_INTEGER
     argument = decoration[0:1] + element_modification_or_replaceable
-    argument_list = argument + Star(E"," + argument)
+    argument_list = argument + Star(E"," + spc + argument)
     class_modification = E"(" + argument_list[0:1] + E")"
     expression = Delayed()
     modification.matcher = (class_modification + (spc + E"=" + spc + expression)[0:1]) |
@@ -429,7 +432,7 @@ spc = Drop(Star(Space()))
     array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript) + E"]" |>
                                BaseModelicaArraySubscripts
     annotation_comment = E"annotation" + class_modification
-    comment.matcher = string_comment + annotation_comment[0:1]
+    comment.matcher = (string_comment + annotation_comment[0:1]) |> (x -> length(x) == 1 ? x[1] : BaseModelicaString(join([string(elem) for elem in x], " ")))
 
     enumeration_literal = IDENT + comment
     enum_list = enumeration_literal + Star(E"," + enumeration_literal)
@@ -513,13 +516,13 @@ spc = Drop(Star(Space()))
     output_expression_list.matcher = expression[0:1] + Star(E"," + expression[0:1])
     expression_list.matcher = expression + Star(E"," + expression)
 
-    if_expression = Delayed()
+    # Simple if_expression supporting both "elseif" and "else if"
+    if_expression = e"if" + simple_expression + e"then" +
+                    simple_expression +
+                    Star((e"elseif" | (e"else" + e"if")) + simple_expression + e"then" +
+                         simple_expression) +
+                    e"else" + simple_expression |> BaseModelicaIfExpression
     expression_no_decoration = simple_expression | if_expression
-    if_expression.matcher = e"if" + expression_no_decoration + e"then" +
-                            expression_no_decoration +
-                            Star(e"elseif" + expression_no_decoration + e"then" +
-                                 expression_no_decoration) +
-                            e"else" + expression_no_decoration |> BaseModelicaIfExpression
 
     expression.matcher = expression_no_decoration + decoration[0:1]
 
@@ -585,7 +588,7 @@ spc = Drop(Star(Space()))
                          (spc + E"=" + spc + expression)[0:1]) |>
                         BaseModelicaSimpleEquation) + comment > BaseModelicaAnyEquation
 
-    base_modelica = (spc + E"package" + spc + IDENT + spc +
+    base_modelica = (Star(LINE_COMMENT) + spc + E"package" + spc + IDENT + spc +
                      Star((decoration[0:1] + spc + class_definition + spc + E";") |
                           (decoration[0:1] + global_constant + E";")) +
                      spc + decoration[0:1] + spc +
