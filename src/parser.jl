@@ -303,9 +303,6 @@ function BaseModelicaComposition(input_list)
         elseif input isa BaseModelicaAnyEquation
             push!(equations, input)
         elseif input isa BaseModelicaAnnotation
-            # For now, treat annotations as part of equations 
-            # (they appear in equation sections)
-            push!(equations, input)
         end
     end
     BaseModelicaComposition(components, equations, initial_equations)
@@ -442,7 +439,7 @@ spc = Drop(Star(Space()))
     subscript = (E":" > BMColon) | expression
     array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript) + E"]" |>
                                BaseModelicaArraySubscripts
-    annotation_comment = E"annotation" + class_modification > BaseModelicaAnnotation
+    annotation_comment = E"annotation" + class_modification |> BaseModelicaAnnotation
     comment.matcher = (string_comment + annotation_comment[0:1]) |> (x -> length(x) == 1 ? x[1] : BaseModelicaString(join([string(elem) for elem in x], " ")))
 
     enumeration_literal = IDENT + comment
