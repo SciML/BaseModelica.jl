@@ -49,6 +49,12 @@ function eval_AST(eq::BaseModelicaAnyEquation)
     return equation
 end
 
+function eval_AST(annotation::BaseModelicaAnnotation)
+    # Annotations are metadata and don't produce equations
+    # For now, return nothing (they are parsed but ignored during evaluation)
+    return nothing
+end
+
 function eval_AST(eq::BaseModelicaSimpleEquation)
     lhs = eval_AST(eq.lhs)
     rhs = eval_AST(eq.rhs)
@@ -102,7 +108,7 @@ function eval_AST(model::BaseModelicaModel)
         end
     end
 
-    eqs = [eval_AST(eq) for eq in equations]
+    eqs = filter(x -> x !== nothing, [eval_AST(eq) for eq in equations])
 
     #vars_and_pars = merge(Dict(vars .=> vars), Dict(pars .=> pars))
     #println(vars_and_pars)
