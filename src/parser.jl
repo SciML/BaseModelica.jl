@@ -132,7 +132,7 @@ function create_arithmetic_expression(input_list)
     if length(input_list) >= 2 && input_list[1] isa BMSubtract
         return BaseModelicaUnaryMinus(input_list[2])
     end
-    
+
     left_el = input_list[1]
     for (i, element) in enumerate(input_list)
         left_el = @match element begin
@@ -359,7 +359,8 @@ spc = Drop(Star(Space()))
     name = Not(Lookahead(e"end")) + Not(Lookahead(E"equation")) +
            Not(Lookahead(E"initial equation")) + (IDENT + Star(e"." + IDENT)) |> list2string # Not(Lookahead(foo)) tells it that names can't be foo
     type_specifier = E"."[0:1] + name > BaseModelicaTypeSpecifier
-    type_prefix = ((e"final")[0:1] + spc + (e"discrete" | e"parameter" | e"constant")[0:1] + spc +
+    type_prefix = ((e"final")[0:1] + spc + (e"discrete" | e"parameter" | e"constant")[0:1] +
+                   spc +
                    (e"input" | e"output")[0:1]) |> BaseModelicaTypePrefix
     array_subscripts = Delayed()
     modification = Delayed()
@@ -440,7 +441,9 @@ spc = Drop(Star(Space()))
     array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript) + E"]" |>
                                BaseModelicaArraySubscripts
     annotation_comment = E"annotation" + class_modification |> BaseModelicaAnnotation
-    comment.matcher = (string_comment + annotation_comment[0:1]) |> (x -> length(x) == 1 ? x[1] : BaseModelicaString(join([string(elem) for elem in x], " ")))
+    comment.matcher = (string_comment + annotation_comment[0:1]) |>
+                      (x -> length(x) == 1 ? x[1] :
+                            BaseModelicaString(join([string(elem) for elem in x], " ")))
 
     enumeration_literal = IDENT + comment
     enum_list = enumeration_literal + Star(E"," + enumeration_literal)
@@ -465,7 +468,8 @@ spc = Drop(Star(Space()))
     statement = Delayed()
     base_partition = Delayed()
     composition = Star(decoration[0:1] + generic_element + E";" + spc) + spc +
-                  Star((spc + e"equation" + spc + Star(spc + (equation | annotation_comment) + E";" + spc)) |
+                  Star((spc + e"equation" + spc +
+                        Star(spc + (equation | annotation_comment) + E";" + spc)) |
                        (e"initial equation" + spc +
                         Star(spc + (initial_equation | annotation_comment) + E";" + spc)) |
                        (e"initial"[0:1] + e"algorithm" + Star(statement + E";"))) +
@@ -606,15 +610,83 @@ spc = Drop(Star(Space()))
 end;
 
 """
+Helper function to get line and column information from a string position
+"""
+function get_position_info(source::String, position::Int)
+    lines = split(source[1:min(position, length(source))], '\n')
+    line_number = length(lines)
+    column_number = length(lines[end]) + 1
+    return line_number, column_number
+end
+
+"""
+Helper function to format error context showing the problematic lines
+"""
+function format_error_context(source::String, position::Int; context_lines = 2)
+    lines = split(source, '\n')
+    line_num, col_num = get_position_info(source, position)
+
+    start_line = max(1, line_num - context_lines)
+    end_line = min(length(lines), line_num + context_lines)
+
+    result = String[]
+    for i in start_line:end_line
+        if i == line_num
+            push!(result, "→ $(lines[i])")
+            # Add pointer to the error position
+            pointer = " " ^ (col_num + 1) * "^" *
+                      repeat("~", max(0, min(9, length(lines[i]) - col_num)))
+            push!(result, pointer)
+        else
+            push!(result, "  $(lines[i])")
+        end
+    end
+
+    return join(result, '\n')
+end
+
+"""
 Parses a String in to a BaseModelicaPackage.
 """
 function parse_str(data)
-    only(parse_one(data, base_modelica))
+    debug = ParserCombinator.Debug(data)
+    result = parse_one(data, base_modelica, debug = debug)
+
+    if isempty(result)
+        # Get error position and context
+        error_pos = debug.max_iter
+        line_num, col_num = get_position_info(data, error_pos)
+        context = format_error_context(data, error_pos)
+
+        error_msg = """
+        Failed to parse BaseModelica at line $line_num, column $col_num.
+
+        Error context:
+        $context
+
+        Parser stopped at position $error_pos of $(length(data))
+        """
+
+        throw(ParserCombinator.ParserException(error_msg))
+    end
+
+    return only(result)
 end
 
 """
 Takes a path to a file and parses the contents in to a BaseModelicaPackage
 """
 function parse_file(file)
-    parse_str(read(file, String))
+    content = read(file, String)
+    try
+        return parse_str(content)
+    catch e
+        if isa(e, ParserCombinator.ParserException)
+            # Add filename to the error message
+            error_msg = "Error in file: $file\n" * e.msg
+            throw(ParserCombinator.ParserException(error_msg))
+        else
+            rethrow(e)
+        end
+    end
 end
