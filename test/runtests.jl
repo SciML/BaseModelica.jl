@@ -56,5 +56,9 @@ if GROUP == "All" || GROUP == "Core"
             @test experiment_system isa ODESystem
             @test parse_basemodelica("testfiles/Experiment.mo") isa ODESystem
         end
+
+        @safetestset "Error Message Tests" begin
+            include("test_error_messages.jl")
+        end
     end
 end

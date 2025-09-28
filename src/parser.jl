@@ -650,27 +650,50 @@ Parses a String in to a BaseModelicaPackage.
 """
 function parse_str(data)
     debug = ParserCombinator.Debug(data)
-    result = parse_one(data, base_modelica, debug = debug)
 
-    if isempty(result)
-        # Get error position and context
-        error_pos = debug.max_iter
-        line_num, col_num = get_position_info(data, error_pos)
-        context = format_error_context(data, error_pos)
+    try
+        result = parse_one(data, base_modelica, debug = debug)
 
-        error_msg = """
-        Failed to parse BaseModelica at line $line_num, column $col_num.
+        if isempty(result)
+            # Get error position and context
+            error_pos = debug.max_iter
+            line_num, col_num = get_position_info(data, error_pos)
+            context = format_error_context(data, error_pos)
 
-        Error context:
-        $context
+            error_msg = """
+            Failed to parse BaseModelica at line $line_num, column $col_num.
 
-        Parser stopped at position $error_pos of $(length(data))
-        """
+            Error context:
+            $context
 
-        throw(ParserCombinator.ParserException(error_msg))
+            Parser stopped at position $error_pos of $(length(data))
+            """
+
+            throw(ParserCombinator.ParserException(error_msg))
+        end
+
+        return only(result)
+    catch e
+        if isa(e, ParserCombinator.ParserException) && e.msg == "cannot parse"
+            # Generic error - enhance with location information
+            error_pos = debug.max_iter
+            line_num, col_num = get_position_info(data, error_pos)
+            context = format_error_context(data, error_pos)
+
+            error_msg = """
+            Failed to parse BaseModelica at line $line_num, column $col_num.
+
+            Error context:
+            $context
+
+            Parser stopped at position $error_pos of $(length(data))
+            """
+
+            throw(ParserCombinator.ParserException(error_msg))
+        else
+            rethrow(e)
+        end
     end
-
-    return only(result)
 end
 
 """
