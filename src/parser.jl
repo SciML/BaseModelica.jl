@@ -713,10 +713,3 @@ function parse_file(file)
         end
     end
 end
-
-# Custom error display for ParserException to properly render newlines
-function Base.showerror(io::IO, e::ParserCombinator.ParserException)
-    print(io, "ParserException: ")
-    # Print the message with proper newline rendering
-    println(io, e.msg)
-end
