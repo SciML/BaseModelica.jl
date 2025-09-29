@@ -649,7 +649,7 @@ end
 Parses a String in to a BaseModelicaPackage.
 """
 function parse_str(data)
-    debug = ParserCombinator.Debug(data)
+        debug, task = make(Debug, data, base_modelica; delegate = NoCache)
 
     try
         result = parse_one(data, base_modelica, debug = debug)
