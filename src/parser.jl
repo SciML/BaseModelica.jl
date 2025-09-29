@@ -652,7 +652,7 @@ function parse_str(data)
         debug, task = make(Debug, data, base_modelica; delegate = NoCache)
 
     try
-        result = parse_one(data, base_modelica, debug = debug)
+     result = once(task)
 
         if isempty(result)
             # Get error position and context
