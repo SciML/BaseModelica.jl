@@ -714,7 +714,3 @@ function parse_file(file)
     end
 end
 
-# Type piracy: custom display for ParserCombinator.ParserException to render newlines properly
-function Base.showerror(io::IO, e::ParserCombinator.ParserException)
-    print(io, e.msg)
-end
