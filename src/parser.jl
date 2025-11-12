@@ -61,6 +61,7 @@ end
 
     # nodes in the AST 
     BaseModelicaNumber(val)
+    BaseModelicaBool(val)
     BaseModelicaIdentifier(name)
     BaseModelicaSum(left, right)
     BaseModelicaMinus(left, right)
@@ -422,7 +423,7 @@ spc = Drop(Star(Space()))
     output_expression_list = Delayed()
     expression_list = Delayed()
     array_arguments = expression + (Star(E"," + expression) | E"for" + for_index)
-    primary = UNSIGNED_NUMBER | STRING | e"false" | e"true" |
+    primary = UNSIGNED_NUMBER | STRING | (e"false" > BaseModelicaBool) | (e"true" > BaseModelicaBool)|
               ((e"der" | e"initial" | e"pure") + function_call_args |>
                component_reference_or_function_call) |
               ((component_reference + function_call_args[0:1]) |>

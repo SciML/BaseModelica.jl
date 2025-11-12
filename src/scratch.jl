@@ -275,3 +275,6 @@ x = only(parse_one("Real 'm' = 25.0;", component_clause))
 x.component_list[1].declaration.modification[1].expr[1].val
 
 x = only(parse_one("Real 'm';", component_clause))
+
+parse_one("1", BaseModelica.primary)
+

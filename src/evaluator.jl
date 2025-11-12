@@ -16,6 +16,7 @@ function eval_AST(expr::BaseModelicaExpr)
     let f = eval_AST
         @match expr begin
             BaseModelicaNumber(val) => val
+            BaseModelicaBool(val) => val == "true"
             BaseModelicaFactor(base, exp) => (f(base))^f(exp)
             BaseModelicaSum(left, right) => (f(left)) + (f(right))
             BaseModelicaMinus(left, right) => f(left) - f(right)
@@ -56,9 +57,95 @@ function eval_AST(annotation::BaseModelicaAnnotation)
 end
 
 function eval_AST(eq::BaseModelicaSimpleEquation)
+    if eq.lhs isa BaseModelicaIfEquation
+        return eval_AST(eq.lhs)
+    end
     lhs = eval_AST(eq.lhs)
     rhs = eval_AST(eq.rhs)
     lhs ~ rhs
+end
+
+function eval_AST(if_eq::BaseModelicaIfEquation)
+    # Convert if-equation to nested ifelse calls
+    # Structure: ifs[i] contains condition, thens[i] contains equations for that branch
+
+    # Process all equations in all branches to get the lhs variables
+    # We assume all branches assign to the same variables
+    all_equations = []
+    
+    for eq in if_eq.thens
+        if isa(eq, BaseModelicaAnyEquation)
+            push!(all_equations, eval_AST(eq.equation))
+        else
+            push!(all_equations, eval_AST(eq))
+        end
+    end
+
+    # Build result equations by nesting ifelse calls from right to left
+    # For each unique lhs variable, build an ifelse expression
+    result_equations = []
+
+    # Helper function to build nested ifelse for a single variable across all branches
+    function build_ifelse_for_var(var_lhs, branch_idx=1)
+        
+        if branch_idx > length(if_eq.ifs)
+            # This shouldn't happen if the model is well-formed
+            error("If-equation branches exhausted without finding assignment")
+        end
+
+        # Get the RHS for this variable in this branch
+        eq = if_eq.thens[branch_idx]
+        rhs_expr = nothing
+        eq_obj = isa(eq, BaseModelicaAnyEquation) ? eval_AST(eq.equation) : eval_AST(eq)
+        if !isnothing(eq_obj) && isa(eq_obj, Equation)
+            eq_lhs = eq_obj.lhs
+            if isequal(eq_lhs, var_lhs)
+                rhs_expr = eq_obj.rhs
+            end
+        end
+
+        if isnothing(rhs_expr)
+            error("Variable $var_lhs not assigned in branch $branch_idx")
+        end
+
+        # Get condition
+        condition = eval_AST(if_eq.ifs[branch_idx])
+
+        # Check if this is the last branch (else branch or last elseif)
+        if branch_idx == length(if_eq.ifs)
+            # Last branch - check if it's an else (no condition) or final elseif
+            # In Modelica, else branches still have a marker in ifs, but we need to detect them
+            # For now, assume if it's the last branch, use it as the else value
+            if branch_idx == length(if_eq.thens)
+                # This is a final else or final elseif
+                return rhs_expr
+            else
+                # Final elseif with no else - would need default
+                return ifelse(condition, rhs_expr, 0)  # Default to 0 if no else
+            end
+        else
+            # Recursive case: condition ? rhs : build_ifelse_for_var(branch_idx + 1)
+            else_expr = build_ifelse_for_var(var_lhs, branch_idx + 1)
+            return ifelse(condition, rhs_expr, else_expr)
+        end
+    end
+
+    # Extract unique lhs variables from all equations
+    lhs_vars = Set()
+    for eq in all_equations
+        if !isnothing(eq) && isa(eq, Equation)
+            push!(lhs_vars, eq.lhs)
+        end
+    end
+
+    # Build ifelse expression for each variable
+    
+    for var in lhs_vars
+        ifelse_rhs = build_ifelse_for_var(var)
+        push!(result_equations, var ~ ifelse_rhs)
+    end
+
+    return result_equations
 end
 
 function eval_AST(component::BaseModelicaComponentClause)
@@ -125,7 +212,20 @@ function eval_AST(model::BaseModelicaModel)
         end
     end
 
-    eqs = filter(x -> x !== nothing, [eval_AST(eq) for eq in equations])
+    # Flatten equations - some equations (like if-equations) return lists
+    eqs_raw = [eval_AST(eq) for eq in equations]
+    eqs = []
+    for eq in eqs_raw
+        if eq !== nothing
+            if isa(eq, Vector)
+                # If-equations return a vector of equations
+                append!(eqs, eq)
+            else
+                # Regular equations return a single equation
+                push!(eqs, eq)
+            end
+        end
+    end
 
     #vars_and_pars = merge(Dict(vars .=> vars), Dict(pars .=> pars))
     #println(vars_and_pars)
@@ -146,9 +246,10 @@ function eval_AST(model::BaseModelicaModel)
 
     #vars,pars,eqs, init_eqs_dict
 
-    defaults = merge(init_eqs_dict, parameter_val_map)
-    @named model = ODESystem(eqs, t, vars, pars; defaults)
-    structural_simplify(model)
+    defs = merge(init_eqs_dict, parameter_val_map)
+    real_eqs = [eq for eq in eqs] # Weird type stuff
+    @named sys = System(real_eqs, t; defaults = defs)
+    structural_simplify(sys)
 end
 
 function eval_AST(package::BaseModelicaPackage)
