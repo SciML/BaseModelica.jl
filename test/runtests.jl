@@ -55,6 +55,15 @@ if GROUP == "All" || GROUP == "Core"
             experiment_system = BM.baseModelica_to_ModelingToolkit(experiment_package)
             @test experiment_system isa ODESystem
             @test parse_basemodelica("testfiles/Experiment.mo") isa ODESystem
+
+            # Test parameter with modifiers (issue #49)
+            param_modifiers_path = joinpath(
+                dirname(dirname(pathof(BM))), "test", "testfiles", "ParameterWithModifiers.mo")
+            param_modifiers_package = BM.parse_file(param_modifiers_path)
+            @test param_modifiers_package isa BM.BaseModelicaPackage
+            param_modifiers_system = BM.baseModelica_to_ModelingToolkit(param_modifiers_package)
+            @test param_modifiers_system isa ODESystem
+            @test parse_basemodelica("testfiles/ParameterWithModifiers.mo") isa ODESystem
         end
 
         @safetestset "Error Message Tests" begin
