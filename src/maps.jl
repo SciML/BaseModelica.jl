@@ -2,7 +2,8 @@
 function_map = Dict(
     :der => x -> D(x...),
     :abs => x -> Base.abs(x...),
-    :sin => x -> Base.sin(x...)
+    :sin => x -> Base.sin(x...),
+    :assert => x -> nothing
 )
 
 # holds variables, populated by evaluating component_clause
