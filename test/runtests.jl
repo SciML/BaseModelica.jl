@@ -67,7 +67,7 @@ if GROUP == "All" || GROUP == "Core"
 
             if_equations_path = joinpath(
                 dirname(dirname(pathof(BM))), "test", "testfiles", "IfEquation.mo")
-            param_modifiers_package = BM.parse_file(if_equations_path)
+            if_equations_package = BM.parse_file(if_equations_path)
             @test if_equations_package isa BM.BaseModelicaPackage
             if_equations_system = BM.baseModelica_to_ModelingToolkit(param_modifiers_package)
             @test if_equations_system isa System
