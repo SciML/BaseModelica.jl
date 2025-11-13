@@ -84,6 +84,13 @@ function eval_AST(eq::BaseModelicaSimpleEquation)
     end
     lhs = eval_AST(eq.lhs)
     rhs = eval_AST(eq.rhs)
+
+    # If either side is nothing (e.g., from assert or other non-equation statements),
+    # return nothing to filter out this equation
+    if isnothing(lhs) || isnothing(rhs)
+        return nothing
+    end
+
     lhs ~ rhs
 end
 
@@ -168,6 +175,14 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     end
 
     return result_equations
+end
+
+function eval_AST(x::String)
+    x
+end
+
+function eval_AST(::Nothing)
+    nothing
 end
 
 function eval_AST(component::BaseModelicaComponentClause)
@@ -258,6 +273,12 @@ function eval_AST(model::BaseModelicaModel)
         end
     end
 
+    # Pass 3: Substitute parameter values to resolve symbolic references
+    # This ensures parameters that reference other parameters get concrete numeric values
+    for (param, value) in parameter_val_map
+        parameter_val_map[param] = substitute(value, parameter_val_map)
+    end
+
     # Flatten equations - some equations (like if-equations) return lists
     eqs_raw = [eval_AST(eq) for eq in equations]
     eqs = []
@@ -314,6 +335,12 @@ function eval_AST(function_call::BaseModelicaFunctionCall)
     else
         function_name = Symbol(function_call.func_name)
     end
+
+    # Skip assert calls - they are verification statements, not equations
+    if function_name == :assert
+        return nothing
+    end
+
     args = eval_AST(function_call.args)
     function_map[function_name](args)
 end
@@ -327,7 +354,11 @@ function eval_AST(comp_reference::BaseModelicaComponentReference)
     if ref_name == :time
         return t  # Map Modelica 'time' to ModelingToolkit 't'
     end
-    return variable_map[ref_name]
+    if ref_name == :AssertionLevel
+        return nothing
+    else
+        return variable_map[ref_name]
+    end
 end
 
 function baseModelica_to_ModelingToolkit(package::BaseModelicaPackage)
