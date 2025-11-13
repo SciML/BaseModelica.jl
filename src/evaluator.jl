@@ -316,7 +316,7 @@ function eval_AST(model::BaseModelicaModel)
     defs = merge(init_eqs_dict, parameter_val_map)
     real_eqs = [eq for eq in eqs] # Weird type stuff
     @named sys = System(real_eqs, t; defaults = defs)
-    mtk_compile(sys)
+    mtkcompile(sys)
 end
 
 function eval_AST(package::BaseModelicaPackage)
