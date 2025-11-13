@@ -1,7 +1,7 @@
 name = "BaseModelica"
 uuid = "a17d5099-185d-4ff5-b5d3-51aa4569e56d"
 authors = ["jClugstor <jadonclugston@gmail.com> and contributors"]
-version = "1.2.0"
+version = "1.3.0"
 
 [deps]
 MLStyle = "d8e11817-5142-5d16-987a-aa16d5891078"
@@ -11,7 +11,7 @@ ParserCombinator = "fae87a5f-d1ad-5cf0-8f61-c941e1580b46"
 [compat]
 Aqua = "0.8"
 MLStyle = "0.4.17"
-ModelingToolkit = "9"
+ModelingToolkit = "10"
 ParserCombinator = "2"
 SafeTestsets = "0.1"
 Test = "1.10"
