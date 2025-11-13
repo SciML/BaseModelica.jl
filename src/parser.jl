@@ -650,7 +650,7 @@ end
 Parses a String in to a BaseModelicaPackage.
 """
 function parse_str(data)
-        debug, task = make(Debug, data, base_modelica; delegate = Cache)
+        debug, task = make(Debug, data, base_modelica; delegate = NoCache)
 
     try
      result = once(task)
