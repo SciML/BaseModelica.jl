@@ -35,8 +35,8 @@ if GROUP == "All" || GROUP == "Core"
             newton_cooling = BM.parse_file(newton_path)
             @test newton_cooling isa BM.BaseModelicaPackage
             newton_system = BM.baseModelica_to_ModelingToolkit(newton_cooling)
-            @test newton_system isa ODESystem
-            @test parse_basemodelica("testfiles/NewtonCoolingBase.mo") isa ODESystem
+            @test newton_system isa System
+            @test parse_basemodelica(newton_path) isa System
             
             # Test parsing with negative variables (issue #35)
             negative_path = joinpath(
@@ -44,8 +44,8 @@ if GROUP == "All" || GROUP == "Core"
             negative_package = BM.parse_file(negative_path)
             @test negative_package isa BM.BaseModelicaPackage
             negative_system = BM.baseModelica_to_ModelingToolkit(negative_package)
-            @test negative_system isa ODESystem
-            @test parse_basemodelica("testfiles/NegativeVariable.mo") isa ODESystem
+            @test negative_system isa System
+            @test parse_basemodelica(negative_path) isa System
             
             # Test experiment annotation parsing (issue #38)
             experiment_path = joinpath(
@@ -53,8 +53,8 @@ if GROUP == "All" || GROUP == "Core"
             experiment_package = BM.parse_file(experiment_path)
             @test experiment_package isa BM.BaseModelicaPackage
             experiment_system = BM.baseModelica_to_ModelingToolkit(experiment_package)
-            @test experiment_system isa ODESystem
-            @test parse_basemodelica("testfiles/Experiment.mo") isa ODESystem
+            @test experiment_system isa System
+            @test parse_basemodelica(experiment_path) isa System
 
             # Test parameter with modifiers (issue #49)
             param_modifiers_path = joinpath(
@@ -63,7 +63,16 @@ if GROUP == "All" || GROUP == "Core"
             @test param_modifiers_package isa BM.BaseModelicaPackage
             param_modifiers_system = BM.baseModelica_to_ModelingToolkit(param_modifiers_package)
             @test param_modifiers_system isa ODESystem
-            @test parse_basemodelica("testfiles/ParameterWithModifiers.mo") isa ODESystem
+            @test parse_basemodelica(param_modifiers_path) isa System
+
+            if_equations_path = joinpath(
+                dirname(dirname(pathof(BM))), "test", "testfiles", "IfEquation.mo")
+            param_modifiers_package = BM.parse_file(if_equations_path)
+            @test if_equations_package isa BM.BaseModelicaPackage
+            if_equations_system = BM.baseModelica_to_ModelingToolkit(param_modifiers_package)
+            @test if_equations_system isa System
+            @test parse_basemodelica(if_equations_path) isa System
+
         end
 
         @safetestset "Error Message Tests" begin
