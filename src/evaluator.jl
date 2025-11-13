@@ -37,6 +37,28 @@ function eval_AST(expr::BaseModelicaExpr)
     end
 end
 
+function eval_AST(if_expr::BaseModelicaIfExpression)
+    # Convert if-expression to nested ifelse calls
+    # Structure: conditions[i] with expressions[i] for if/elseif
+    #           expressions[end] is the else value (no condition)
+
+    # Build nested ifelse from right to left
+    function build_nested_ifelse(idx=1)
+        if idx > length(if_expr.conditions)
+            # We've gone past all conditions, return the else value
+            return eval_AST(if_expr.expressions[end])
+        end
+
+        condition = eval_AST(if_expr.conditions[idx])
+        then_value = eval_AST(if_expr.expressions[idx])
+        else_value = build_nested_ifelse(idx + 1)
+
+        return ifelse(condition, then_value, else_value)
+    end
+
+    return build_nested_ifelse()
+end
+
 include("maps.jl")
 
 function eval_AST(eq::BaseModelicaInitialEquation)
@@ -283,12 +305,15 @@ end
 
 function eval_AST(function_args::BaseModelicaFunctionArgs)
     args = function_args.args
-    println(args)
     eval_AST.([args...])
 end
 
 function eval_AST(function_call::BaseModelicaFunctionCall)
-    function_name = Symbol(function_call.func_name)
+    if function_call.func_name isa BaseModelicaComponentReference
+        function_name = Symbol(function_call.func_name.ref_list[1].name)
+    else
+        function_name = Symbol(function_call.func_name)
+    end
     args = eval_AST(function_call.args)
     function_map[function_name](args)
 end
