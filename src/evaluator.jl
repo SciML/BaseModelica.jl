@@ -271,7 +271,14 @@ end
 function eval_AST(comp_reference::BaseModelicaComponentReference)
     #will need to eventually account for array references and dot references...
     #for now only does direct references to variables
-    return variable_map[Symbol(comp_reference.ref_list[1].name)]
+    ref_name = Symbol(comp_reference.ref_list[1].name)
+
+    # Handle special built-in variables
+    if ref_name == :time
+        return t  # Map Modelica 'time' to ModelingToolkit 't'
+    end
+
+    return variable_map[ref_name]
 end
 
 function baseModelica_to_ModelingToolkit(package::BaseModelicaPackage)
