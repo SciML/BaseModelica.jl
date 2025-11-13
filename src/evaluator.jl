@@ -194,21 +194,45 @@ function eval_AST(model::BaseModelicaModel)
     equations = composition.equations
     initial_equations = composition.initial_equations
 
-    #vars = [eval_AST(comp) for comp in components if comp.type_prefix.dpc != "parameter"]
-    #pars = [eval_AST(comp) for comp in components if comp.type_prefix.dpc == "parameter"]
+    # Two-pass approach for components:
+    # Pass 1: Create all symbols in variable_map (without evaluating parameter values)
+    # Pass 2: Evaluate parameter values (now all symbols exist for cross-references)
 
-    # this loop populates the variable_map
     vars = Num[]
     pars = Num[]
+
+    # Pass 1: Create all variables and parameters in variable_map
     for comp in components
         name = Symbol(comp.component_list[1].declaration.ident[1].name)
+        type_prefix = comp.type_prefix.dpc
 
-        eval_AST(comp)
-
-        if comp.type_prefix.dpc == "parameter" || comp.type_prefix.dpc == "constant"
+        if type_prefix == "parameter"
+            variable_map[name] = only(@parameters($name))
             push!(pars, variable_map[name])
-        else
+        elseif type_prefix == "constant"
+            variable_map[name] = only(@parameters($name))
+            push!(pars, variable_map[name])
+        elseif isnothing(type_prefix)
+            variable_map[name] = only(@variables($name(t)))
             push!(vars, variable_map[name])
+        end
+    end
+
+    # Pass 2: Evaluate parameter values (now all symbols exist)
+    for comp in components
+        type_prefix = comp.type_prefix.dpc
+        if type_prefix == "parameter" || type_prefix == "constant"
+            name = Symbol(comp.component_list[1].declaration.ident[1].name)
+            declaration = comp.component_list[1].declaration
+
+            # Extract parameter value from modification
+            if !isnothing(declaration.modification) && !isempty(declaration.modification)
+                modification = declaration.modification[1]
+                if !isnothing(modification.expr) && !isempty(modification.expr)
+                    value_expr = modification.expr[end]
+                    parameter_val_map[variable_map[name]] = eval_AST(value_expr)
+                end
+            end
         end
     end
 
@@ -259,6 +283,7 @@ end
 
 function eval_AST(function_args::BaseModelicaFunctionArgs)
     args = function_args.args
+    println(args)
     eval_AST.([args...])
 end
 
@@ -277,7 +302,6 @@ function eval_AST(comp_reference::BaseModelicaComponentReference)
     if ref_name == :time
         return t  # Map Modelica 'time' to ModelingToolkit 't'
     end
-
     return variable_map[ref_name]
 end
 
