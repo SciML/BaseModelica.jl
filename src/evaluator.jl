@@ -72,7 +72,24 @@ function eval_AST(component::BaseModelicaComponentClause)
     name = Symbol(declaration.ident[1].name)
     if type_prefix == "parameter"
         variable_map[name] = only(@parameters($name))
-        parameter_val_map[variable_map[name]] = declaration.modification[1].expr[1].val
+
+        # Extract parameter value from modification
+        # Modifications can be:
+        # 1. Simple assignment: = value
+        # 2. Class modification with assignment: (attr1=val1, ...) = value
+        # In case 2, expr has multiple elements; the value is the last element
+        if !isnothing(declaration.modification) && !isempty(declaration.modification)
+            modification = declaration.modification[1]
+            if !isnothing(modification.expr) && !isempty(modification.expr)
+                # Get the last element which should be the assigned value
+                # If there's only one element, it's a simple assignment
+                # If there are multiple elements, the last one is the value after class modifications
+                value_expr = modification.expr[end]
+
+                # Evaluate the expression to get the numeric value
+                parameter_val_map[variable_map[name]] = eval_AST(value_expr)
+            end
+        end
         return variable_map[name]
     elseif isnothing(type_prefix)
         variable_map[name] = only(@variables($name(t)))
