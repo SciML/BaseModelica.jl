@@ -37,6 +37,28 @@ function eval_AST(expr::BaseModelicaExpr)
     end
 end
 
+function eval_AST(if_expr::BaseModelicaIfExpression)
+    # Convert if-expression to nested ifelse calls
+    # Structure: conditions[i] with expressions[i] for if/elseif
+    #           expressions[end] is the else value (no condition)
+
+    # Build nested ifelse from right to left
+    function build_nested_ifelse(idx=1)
+        if idx > length(if_expr.conditions)
+            # We've gone past all conditions, return the else value
+            return eval_AST(if_expr.expressions[end])
+        end
+
+        condition = eval_AST(if_expr.conditions[idx])
+        then_value = eval_AST(if_expr.expressions[idx])
+        else_value = build_nested_ifelse(idx + 1)
+
+        return ifelse(condition, then_value, else_value)
+    end
+
+    return build_nested_ifelse()
+end
+
 include("maps.jl")
 
 function eval_AST(eq::BaseModelicaInitialEquation)
@@ -62,6 +84,13 @@ function eval_AST(eq::BaseModelicaSimpleEquation)
     end
     lhs = eval_AST(eq.lhs)
     rhs = eval_AST(eq.rhs)
+
+    # If either side is nothing (e.g., from assert or other non-equation statements),
+    # return nothing to filter out this equation
+    if isnothing(lhs) || isnothing(rhs)
+        return nothing
+    end
+
     lhs ~ rhs
 end
 
@@ -148,6 +177,14 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     return result_equations
 end
 
+function eval_AST(x::String)
+    x
+end
+
+function eval_AST(::Nothing)
+    nothing
+end
+
 function eval_AST(component::BaseModelicaComponentClause)
     #this mutates a dict
     #place holder to get simple equations working
@@ -194,22 +231,52 @@ function eval_AST(model::BaseModelicaModel)
     equations = composition.equations
     initial_equations = composition.initial_equations
 
-    #vars = [eval_AST(comp) for comp in components if comp.type_prefix.dpc != "parameter"]
-    #pars = [eval_AST(comp) for comp in components if comp.type_prefix.dpc == "parameter"]
+    # Two-pass approach for components:
+    # Pass 1: Create all symbols in variable_map (without evaluating parameter values)
+    # Pass 2: Evaluate parameter values (now all symbols exist for cross-references)
 
-    # this loop populates the variable_map
     vars = Num[]
     pars = Num[]
+
+    # Pass 1: Create all variables and parameters in variable_map
     for comp in components
         name = Symbol(comp.component_list[1].declaration.ident[1].name)
+        type_prefix = comp.type_prefix.dpc
 
-        eval_AST(comp)
-
-        if comp.type_prefix.dpc == "parameter" || comp.type_prefix.dpc == "constant"
+        if type_prefix == "parameter"
+            variable_map[name] = only(@parameters($name))
             push!(pars, variable_map[name])
-        else
+        elseif type_prefix == "constant"
+            variable_map[name] = only(@parameters($name))
+            push!(pars, variable_map[name])
+        elseif isnothing(type_prefix)
+            variable_map[name] = only(@variables($name(t)))
             push!(vars, variable_map[name])
         end
+    end
+
+    # Pass 2: Evaluate parameter values (now all symbols exist)
+    for comp in components
+        type_prefix = comp.type_prefix.dpc
+        if type_prefix == "parameter" || type_prefix == "constant"
+            name = Symbol(comp.component_list[1].declaration.ident[1].name)
+            declaration = comp.component_list[1].declaration
+
+            # Extract parameter value from modification
+            if !isnothing(declaration.modification) && !isempty(declaration.modification)
+                modification = declaration.modification[1]
+                if !isnothing(modification.expr) && !isempty(modification.expr)
+                    value_expr = modification.expr[end]
+                    parameter_val_map[variable_map[name]] = eval_AST(value_expr)
+                end
+            end
+        end
+    end
+
+    # Pass 3: Substitute parameter values to resolve symbolic references
+    # This ensures parameters that reference other parameters get concrete numeric values
+    for (param, value) in parameter_val_map
+        parameter_val_map[param] = substitute(value, parameter_val_map)
     end
 
     # Flatten equations - some equations (like if-equations) return lists
@@ -249,7 +316,7 @@ function eval_AST(model::BaseModelicaModel)
     defs = merge(init_eqs_dict, parameter_val_map)
     real_eqs = [eq for eq in eqs] # Weird type stuff
     @named sys = System(real_eqs, t; defaults = defs)
-    structural_simplify(sys)
+    mtkcompile(sys)
 end
 
 function eval_AST(package::BaseModelicaPackage)
@@ -263,7 +330,17 @@ function eval_AST(function_args::BaseModelicaFunctionArgs)
 end
 
 function eval_AST(function_call::BaseModelicaFunctionCall)
-    function_name = Symbol(function_call.func_name)
+    if function_call.func_name isa BaseModelicaComponentReference
+        function_name = Symbol(function_call.func_name.ref_list[1].name)
+    else
+        function_name = Symbol(function_call.func_name)
+    end
+
+    # Skip assert calls - they are verification statements, not equations
+    if function_name == :assert
+        return nothing
+    end
+
     args = eval_AST(function_call.args)
     function_map[function_name](args)
 end
@@ -277,8 +354,11 @@ function eval_AST(comp_reference::BaseModelicaComponentReference)
     if ref_name == :time
         return t  # Map Modelica 'time' to ModelingToolkit 't'
     end
-
-    return variable_map[ref_name]
+    if ref_name == :AssertionLevel
+        return nothing
+    else
+        return variable_map[ref_name]
+    end
 end
 
 function baseModelica_to_ModelingToolkit(package::BaseModelicaPackage)

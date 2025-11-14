@@ -73,6 +73,33 @@ if GROUP == "All" || GROUP == "Core"
             @test if_equations_system isa System
             @test parse_basemodelica(if_equations_path) isa System
 
+            # Test CauerLowPassAnalog
+            cauer_analog_path = joinpath(
+                dirname(dirname(pathof(BM))), "test", "testfiles", "CauerLowPassAnalog.bmo")
+            cauer_analog_package = BM.parse_file(cauer_analog_path)
+            @test cauer_analog_package isa BM.BaseModelicaPackage
+            cauer_analog_system = BM.baseModelica_to_ModelingToolkit(cauer_analog_package)
+            @test cauer_analog_system isa System
+            @test parse_basemodelica(cauer_analog_path) isa System
+
+            # Test CauerLowPassAnalogSine
+            cauer_sine_path = joinpath(
+                dirname(dirname(pathof(BM))), "test", "testfiles", "CauerLowPassAnalogSine.bmo")
+            cauer_sine_package = BM.parse_file(cauer_sine_path)
+            @test cauer_sine_package isa BM.BaseModelicaPackage
+            cauer_sine_system = BM.baseModelica_to_ModelingToolkit(cauer_sine_package)
+            @test cauer_sine_system isa System
+            @test parse_basemodelica(cauer_sine_path) isa System
+
+            # Test CauerLowPassAnalogSineNoAssert
+            cauer_sine_noassert_path = joinpath(
+                dirname(dirname(pathof(BM))), "test", "testfiles", "CauerLowPassAnalogSineNoAssert.bmo")
+            cauer_sine_noassert_package = BM.parse_file(cauer_sine_noassert_path)
+            @test cauer_sine_noassert_package isa BM.BaseModelicaPackage
+            cauer_sine_noassert_system = BM.baseModelica_to_ModelingToolkit(cauer_sine_noassert_package)
+            @test cauer_sine_noassert_system isa System
+            @test parse_basemodelica(cauer_sine_noassert_path) isa System
+
         end
 
         @safetestset "Error Message Tests" begin
