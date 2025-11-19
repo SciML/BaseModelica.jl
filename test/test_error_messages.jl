@@ -2,7 +2,11 @@ using Test
 using BaseModelica
 using ParserCombinator
 
-@testset "Error Message Improvements" begin
+# Note: These tests are specific to the Julia ParserCombinator parser
+# They test error message formatting and location reporting
+# ANTLR parser has its own error reporting mechanism
+
+@testset "Error Message Improvements (Julia Parser)" begin
     # Test that error messages include line and column information
     @testset "Basic Error Location" begin
         invalid_modelica = """package Test
