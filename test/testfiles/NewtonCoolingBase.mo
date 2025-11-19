@@ -1,3 +1,4 @@
+//! base 0.1.0
 package 'NewtonCoolingWithDefaults'
   model 'NewtonCoolingWithDefaults' "Cooling example with default parameter values"
     parameter Real 'T_inf' = 25.0 "Ambient temperature";

@@ -68,7 +68,7 @@ package 'CauerLowPassAnalog'
     Real 'R1.n.v'(unit = "V", quantity = "ElectricPotential") "Potential at the pin";
     Real 'R1.n.i'(unit = "A", quantity = "ElectricCurrent") "Current flowing into the pin";
     Real 'R1.i'(unit = "A", quantity = "ElectricCurrent") "Current flowing from pin p to pin n";
-    final parameter Boolean 'R1.useHeatPort' = false "= true, if heatPort is enabled" annotation(Evaluate = true);
+     parameter Boolean 'R1.useHeatPort' = false "= true, if heatPort is enabled" annotation(Evaluate = true);
     parameter Real 'R1.T'(nominal = 300.0, start = 288.15, min = 0.0, displayUnit = "degC", unit = "K", quantity = "ThermodynamicTemperature") = 'R1.T_ref' "Fixed device temperature if useHeatPort = false";
     Real 'R1.LossPower'(unit = "W", quantity = "Power") "Loss power leaving component via heatPort";
     Real 'R1.T_heatPort'(nominal = 300.0, start = 288.15, min = 0.0, displayUnit = "degC", unit = "K", quantity = "ThermodynamicTemperature") "Temperature of heatPort";
@@ -82,7 +82,7 @@ package 'CauerLowPassAnalog'
     Real 'R2.n.v'(unit = "V", quantity = "ElectricPotential") "Potential at the pin";
     Real 'R2.n.i'(unit = "A", quantity = "ElectricCurrent") "Current flowing into the pin";
     Real 'R2.i'(unit = "A", quantity = "ElectricCurrent") "Current flowing from pin p to pin n";
-    final parameter Boolean 'R2.useHeatPort' = false "= true, if heatPort is enabled" annotation(Evaluate = true);
+     parameter Boolean 'R2.useHeatPort' = false "= true, if heatPort is enabled" annotation(Evaluate = true);
     parameter Real 'R2.T'(nominal = 300.0, start = 288.15, min = 0.0, displayUnit = "degC", unit = "K", quantity = "ThermodynamicTemperature") = 'R2.T_ref' "Fixed device temperature if useHeatPort = false";
     Real 'R2.LossPower'(unit = "W", quantity = "Power") "Loss power leaving component via heatPort";
     Real 'R2.T_heatPort'(nominal = 300.0, start = 288.15, min = 0.0, displayUnit = "degC", unit = "K", quantity = "ThermodynamicTemperature") "Temperature of heatPort";
@@ -94,10 +94,10 @@ package 'CauerLowPassAnalog'
     Real 'V.n.v'(unit = "V", quantity = "ElectricPotential") "Potential at the pin";
     Real 'V.n.i'(unit = "A", quantity = "ElectricCurrent") "Current flowing into the pin";
     Real 'V.i'(unit = "A", quantity = "ElectricCurrent") "Current flowing from pin p to pin n";
-    final parameter Real 'V.signalSource.height' = 'V.V' "Height of step";
+    parameter Real 'V.signalSource.height' = 'V.V' "Height of step";
     Real 'V.signalSource.y' "Connector of Real output signal";
-    final parameter Real 'V.signalSource.offset' = 'V.offset' "Offset of output signal y";
-    final parameter Real 'V.signalSource.startTime'(unit = "s", quantity = "Time") = 'V.startTime' "Output y = offset for time < startTime";
+    parameter Real 'V.signalSource.offset' = 'V.offset' "Offset of output signal y";
+    parameter Real 'V.signalSource.startTime'(unit = "s", quantity = "Time") = 'V.startTime' "Output y = offset for time < startTime";
     parameter Real 'V.offset'(unit = "V", quantity = "ElectricPotential") = 0.0 "Voltage offset";
     parameter Real 'V.startTime'(unit = "s", quantity = "Time") = 1.0 "Time offset";
   equation
