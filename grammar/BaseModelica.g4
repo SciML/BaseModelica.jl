@@ -401,7 +401,7 @@ annotationComment
 
 // Version Header - must match exactly (does not consume trailing newline)
 VERSION_HEADER
-    : '//!' [ ] 'base' [ ] [0-9]+ '.' [0-9]+ ('.' [0-9]+)? ~[\r\n]*
+    : '//!' ' ' 'base' ' ' [0-9]+ '.' [0-9]+ ('.' [0-9]+)? ~[\r\n]*
     ;
 
 // Identifiers
@@ -467,7 +467,7 @@ WS
     ;
 
 LINE_COMMENT
-    : '//' ~[\r\n]* (NL | EOF) -> skip
+    : '//' ~[!\r\n] ~[\r\n]* (NL | EOF) -> skip
     ;
 
 ML_COMMENT

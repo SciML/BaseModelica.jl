@@ -3,12 +3,16 @@
 
 set -e
 
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
 # Configuration
 ANTLR_VERSION="4.13.1"
-ANTLR_JAR="antlr-${ANTLR_VERSION}-complete.jar"
+ANTLR_JAR="$SCRIPT_DIR/antlr-${ANTLR_VERSION}-complete.jar"
 ANTLR_URL="https://www.antlr.org/download/antlr-${ANTLR_VERSION}-complete.jar"
-GRAMMAR_FILE="./grammar/BaseModelica.g4"
-OUTPUT_DIR="../src/antlr_generated"
+GRAMMAR_FILE="$SCRIPT_DIR/BaseModelica.g4"
+OUTPUT_DIR="$PROJECT_ROOT/src/antlr_generated/"
 
 # Colors for output
 GREEN='\033[0;32m'
