@@ -261,7 +261,6 @@ function eval_AST(model::BaseModelicaModel)
         if type_prefix == "parameter" || type_prefix == "constant"
             name = Symbol(comp.component_list[1].declaration.ident[1].name)
             declaration = comp.component_list[1].declaration
-
             # Extract parameter value from modification
             if !isnothing(declaration.modification) && !isempty(declaration.modification)
                 modification = declaration.modification[1]
@@ -333,7 +332,7 @@ function eval_AST(function_call::BaseModelicaFunctionCall)
     if function_call.func_name isa BaseModelicaComponentReference
         function_name = Symbol(function_call.func_name.ref_list[1].name)
     else
-        function_name = Symbol(function_call.func_name)
+        function_name = Symbol(function_call.func_name.name)
     end
 
     # Skip assert calls - they are verification statements, not equations

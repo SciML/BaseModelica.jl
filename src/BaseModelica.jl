@@ -3,10 +3,14 @@ module BaseModelica
 using ModelingToolkit
 using ParserCombinator
 using MLStyle
+using CondaPkg
+using PythonCall
 
-#Includes
+include("ast.jl")
 include("parser.jl")
+include("antlr_parser.jl")
 include("evaluator.jl")
+
 """
     parse_basemodelica(filename::String)::ODESystem
 
