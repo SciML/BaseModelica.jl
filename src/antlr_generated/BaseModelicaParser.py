@@ -1,4 +1,4 @@
-# Generated from ./grammar/BaseModelica.g4 by ANTLR 4.13.1
+# Generated from /home/jadonclugston/Documents/Work/dev/Modelica/BaseModelica.jl/grammar/BaseModelica.g4 by ANTLR 4.13.1
 # encoding: utf-8
 from antlr4 import *
 from io import StringIO

@@ -1,4 +1,4 @@
-# Generated from ./grammar/BaseModelica.g4 by ANTLR 4.13.1
+# Generated from /home/jadonclugston/Documents/Work/dev/Modelica/BaseModelica.jl/grammar/BaseModelica.g4 by ANTLR 4.13.1
 from antlr4 import *
 if "." in __name__:
     from .BaseModelicaParser import BaseModelicaParser
