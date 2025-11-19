@@ -26,8 +26,8 @@ PC = BM.ParserCombinator
 
     @testset "Newton Cooling" begin
         newton_path = joinpath(
-            dirname(dirname(pathof(BM))), "test", "testfiles", "NewtonCoolingBase.mo")
-        newton_cooling = BM.parse_file(newton_path)
+            dirname(dirname(pathof(BM))), "test", "testfiles", "NewtonCoolingBase.bmo")
+        newton_cooling = BM.parse_file_julia(newton_path)
         @test newton_cooling isa BM.BaseModelicaPackage
         newton_system = BM.baseModelica_to_ModelingToolkit(newton_cooling)
         @test newton_system isa System
@@ -37,8 +37,8 @@ PC = BM.ParserCombinator
     @testset "Negative Variables" begin
         # Test parsing with negative variables (issue #35)
         negative_path = joinpath(
-            dirname(dirname(pathof(BM))), "test", "testfiles", "NegativeVariable.mo")
-        negative_package = BM.parse_file(negative_path)
+            dirname(dirname(pathof(BM))), "test", "testfiles", "NegativeVariable.bmo")
+        negative_package = BM.parse_file_julia(negative_path)
         @test negative_package isa BM.BaseModelicaPackage
         negative_system = BM.baseModelica_to_ModelingToolkit(negative_package)
         @test negative_system isa System
@@ -48,8 +48,8 @@ PC = BM.ParserCombinator
     @testset "Experiment Annotation" begin
         # Test experiment annotation parsing (issue #38)
         experiment_path = joinpath(
-            dirname(dirname(pathof(BM))), "test", "testfiles", "Experiment.mo")
-        experiment_package = BM.parse_file(experiment_path)
+            dirname(dirname(pathof(BM))), "test", "testfiles", "Experiment.bmo")
+        experiment_package = BM.parse_file_julia(experiment_path)
         @test experiment_package isa BM.BaseModelicaPackage
         experiment_system = BM.baseModelica_to_ModelingToolkit(experiment_package)
         @test experiment_system isa System
@@ -59,8 +59,8 @@ PC = BM.ParserCombinator
     @testset "Parameter with Modifiers" begin
         # Test parameter with modifiers (issue #49)
         param_modifiers_path = joinpath(
-            dirname(dirname(pathof(BM))), "test", "testfiles", "ParameterWithModifiers.mo")
-        param_modifiers_package = BM.parse_file(param_modifiers_path)
+            dirname(dirname(pathof(BM))), "test", "testfiles", "ParameterWithModifiers.bmo")
+        param_modifiers_package = BM.parse_file_julia(param_modifiers_path)
         @test param_modifiers_package isa BM.BaseModelicaPackage
         param_modifiers_system = BM.baseModelica_to_ModelingToolkit(param_modifiers_package)
         @test param_modifiers_system isa ODESystem
@@ -69,8 +69,8 @@ PC = BM.ParserCombinator
 
     @testset "If Equations" begin
         if_equations_path = joinpath(
-            dirname(dirname(pathof(BM))), "test", "testfiles", "IfEquation.mo")
-        if_equations_package = BM.parse_file(if_equations_path)
+            dirname(dirname(pathof(BM))), "test", "testfiles", "IfEquation.bmo")
+        if_equations_package = BM.parse_file_julia(if_equations_path)
         @test if_equations_package isa BM.BaseModelicaPackage
         if_equations_system = BM.baseModelica_to_ModelingToolkit(if_equations_package)
         @test if_equations_system isa System
@@ -81,7 +81,7 @@ PC = BM.ParserCombinator
         # Test CauerLowPassAnalog
         cauer_analog_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "CauerLowPassAnalog.bmo")
-        cauer_analog_package = BM.parse_file(cauer_analog_path)
+        cauer_analog_package = BM.parse_file_julia(cauer_analog_path)
         @test cauer_analog_package isa BM.BaseModelicaPackage
         cauer_analog_system = BM.baseModelica_to_ModelingToolkit(cauer_analog_package)
         @test cauer_analog_system isa System
@@ -90,7 +90,7 @@ PC = BM.ParserCombinator
         # Test CauerLowPassAnalogSine
         cauer_sine_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "CauerLowPassAnalogSine.bmo")
-        cauer_sine_package = BM.parse_file(cauer_sine_path)
+        cauer_sine_package = BM.parse_file_julia(cauer_sine_path)
         @test cauer_sine_package isa BM.BaseModelicaPackage
         cauer_sine_system = BM.baseModelica_to_ModelingToolkit(cauer_sine_package)
         @test cauer_sine_system isa System
@@ -99,7 +99,7 @@ PC = BM.ParserCombinator
         # Test CauerLowPassAnalogSineNoAssert
         cauer_sine_noassert_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "CauerLowPassAnalogSineNoAssert.bmo")
-        cauer_sine_noassert_package = BM.parse_file(cauer_sine_path)
+        cauer_sine_noassert_package = BM.parse_file_julia(cauer_sine_path)
         @test cauer_sine_noassert_package isa BM.BaseModelicaPackage
         cauer_sine_noassert_system = BM.baseModelica_to_ModelingToolkit(cauer_sine_noassert_package)
         @test cauer_sine_noassert_system isa System

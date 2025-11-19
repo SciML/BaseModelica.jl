@@ -20,7 +20,7 @@ end Test;"""
         # This should throw an error during parsing
         error_thrown = false
         try
-            BaseModelica.parse_str(invalid_modelica)
+            BaseModelica.julia_parse_str(invalid_modelica)
         catch e
             error_thrown = true
             @test isa(e, ParserCombinator.ParserException)
@@ -45,7 +45,7 @@ end Test;"""
 end 'Experiment';"""
 
         # This should now parse successfully since annotation support was added
-        result = BaseModelica.parse_str(annotation_modelica)
+        result = BaseModelica.julia_parse_str(annotation_modelica)
         @test isa(result, BaseModelica.BaseModelicaPackage)
     end
 
@@ -60,7 +60,7 @@ end Test;"""
 
         error_thrown = false
         try
-            BaseModelica.parse_str(beginning_error)
+            BaseModelica.julia_parse_str(beginning_error)
         catch e
             error_thrown = true
             @test occursin("line 1", e.msg)
@@ -81,7 +81,7 @@ end Test;"""
 
         error_thrown = false
         try
-            BaseModelica.parse_str(equation_error)
+            BaseModelica.julia_parse_str(equation_error)
         catch e
             error_thrown = true
             # Should show error location and context
@@ -91,10 +91,10 @@ end Test;"""
         @test error_thrown
     end
 
-    # Test that parse_file includes filename
+    # Test that parse_file_julia includes filename
     @testset "File Error Messages" begin
         # Create a temporary file with invalid content
-        temp_file = tempname() * ".mo"
+        temp_file = tempname() * ".bmo"
         error_thrown = false
         try
             open(temp_file, "w") do f
@@ -107,7 +107,7 @@ end Test;""")
             end
 
             try
-                BaseModelica.parse_file(temp_file)
+                BaseModelica.parse_file_julia(temp_file)
             catch e
                 error_thrown = true
                 @test occursin("Error in file:", e.msg)
@@ -151,7 +151,7 @@ end Test;""")
 end Test;"""
 
         # Should not throw any exceptions
-        result = BaseModelica.parse_str(valid_modelica)
+        result = BaseModelica.julia_parse_str(valid_modelica)
         @test isa(result, BaseModelica.BaseModelicaPackage)
     end
 end
