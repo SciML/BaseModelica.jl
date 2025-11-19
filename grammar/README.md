@@ -67,7 +67,7 @@ using BaseModelica
 BaseModelica.init_antlr_parser()
 
 # Parse a file
-ast = parse_file_with_antlr("path/to/model.mo")
+ast = parse_file_antlr("path/to/model.bmo")
 
 # Convert to ModelingToolkit
 sys = baseModelica_to_ModelingToolkit(ast)
@@ -79,10 +79,10 @@ The original ParserCombinator parser is still available. You can choose which to
 
 ```julia
 # Use ParserCombinator parser (original)
-ast1 = BM.parse_file("model.mo")
+ast1 = BM.parse_file_julia("model.bmo")
 
 # Use ANTLR parser (new)
-ast2 = parse_file_with_antlr("model.mo")
+ast2 = parse_file_antlr("model.bmo")
 
 # Both produce the same BaseModelicaPackage AST type
 ```
@@ -97,7 +97,7 @@ using PythonCall
 BaseModelica.init_antlr_parser()
 
 # Parse to ANTLR tree (Python object)
-source = read("model.mo", String)
+source = read("model.bmo", String)
 parse_tree = BaseModelica.parse_with_antlr(source)
 
 # Inspect the tree structure
@@ -114,7 +114,7 @@ ast = BaseModelica.antlr_tree_to_ast(parse_tree)
 1. Edit `BaseModelica.g4`
 2. Run `./build_parser.sh` to regenerate
 3. Restart your Julia session to reload the parser
-4. Test with `parse_file_with_antlr()`
+4. Test with `parse_file_antlr()`
 
 ### Testing the Grammar
 
@@ -142,7 +142,7 @@ from antlr4 import *
 from BaseModelicaLexer import BaseModelicaLexer
 from BaseModelicaParser import BaseModelicaParser
 
-with open('test.mo', 'r') as f:
+with open('test.bmo', 'r') as f:
     input_stream = InputStream(f.read())
 
 lexer = BaseModelicaLexer(input_stream)
@@ -161,7 +161,7 @@ python3 << 'PYTHON'
 from antlr4 import *
 from BaseModelicaLexer import BaseModelicaLexer
 
-with open('model.mo', 'r') as f:
+with open('model.bmo', 'r') as f:
     lexer = BaseModelicaLexer(InputStream(f.read()))
     for token in lexer.getAllTokens():
         print(token)
@@ -270,10 +270,10 @@ Once implemented, compare parsing performance:
 using BenchmarkTools
 
 # ParserCombinator (original)
-@btime BM.parse_file("CauerLowPassAnalog.bmo")
+@btime BM.parse_file_julia("CauerLowPassAnalog.bmo")
 
 # ANTLR4 (new)
-@btime parse_file_with_antlr("CauerLowPassAnalog.bmo")
+@btime parse_file_antlr("CauerLowPassAnalog.bmo")
 ```
 
 Expected improvements:
