@@ -24,11 +24,11 @@ This function is exported mainly for pre-loading or troubleshooting.
 using BaseModelica
 
 # Option 1: Lazy initialization (recommended)
-parse_file_with_antlr("model.mo")  # Initializes automatically
+parse_file_antlr("model.bmo")  # Initializes automatically
 
 # Option 2: Explicit initialization
 BaseModelica.init_antlr_parser()   # Pre-load the parser
-parse_file_with_antlr("model.mo")
+parse_file_antlr("model.bmo")
 ```
 """
 function init_antlr_parser()
@@ -53,13 +53,13 @@ function init_antlr_parser()
 
         # Add parser directory to Python's sys.path so we can import the modules
         # The generated files are in the grammar subdirectory
-        grammar_dir = joinpath(parser_dir, "grammar")
+
         py_sys = pyimport("sys")
         sys_path_list = py_sys.path
 
         # Check if grammar_dir is already in sys.path, if not add it
-        if pyconvert(Bool, grammar_dir ∉ sys_path_list)
-            sys_path_list.insert(0, grammar_dir)
+        if pyconvert(Bool, parser_dir ∉ sys_path_list)
+            sys_path_list.insert(0, parser_dir)
         end
 
         # Import generated parser modules by module name
@@ -101,7 +101,7 @@ so you don't need to call `init_antlr_parser()` explicitly.
 
 # Example
 ```julia
-source = read("model.mo", String)
+source = read("model.bmo", String)
 parse_tree = parse_with_antlr(source)  # Automatically initializes parser on first call
 ```
 """
@@ -149,7 +149,7 @@ This is where the bridge between ANTLR and BaseModelica AST happens.
 
 # Example
 ```julia
-source = read("model.mo", String)
+source = read("model.bmo", String)
 parse_tree = parse_with_antlr(source)
 ast = antlr_tree_to_ast(parse_tree)
 ```
@@ -556,34 +556,75 @@ function visit_ifEquation(visitor::ASTBuilderVisitor, ctx::Py)
     #   ('else' (equation ';')*)?
     #   'end' 'if'
 
-    # Collect all condition expressions
-    conditions = []
-    equation_lists = []
+    ifs = []  # conditions
+    thens = []  # equation lists for each branch
 
-    # Get all expressions (conditions)
-    expr_ctxs = ctx.expression()
-    for expr_ctx in expr_ctxs
-        push!(conditions, visit_expression(visitor, expr_ctx))
+    # Walk through children to properly group by branch
+    child_count = pyconvert(Int, ctx.getChildCount())
+    i = 0
+    seen_if = false  # Track if we've seen the initial 'if'
+
+    while i < child_count
+        child = ctx.getChild(i)
+        child_text = pyconvert(String, child.getText())
+
+        if (child_text == "if" && !seen_if) || child_text == "elseif"
+            if child_text == "if"
+                seen_if = true
+            end
+            # Next child should be the condition expression
+            i += 1
+            if i < child_count
+                cond_child = ctx.getChild(i)
+                cond_expr = visit_expression(visitor, cond_child)
+                push!(ifs, cond_expr)
+            end
+            # Skip 'then' keyword
+            i += 1
+            if i < child_count && pyconvert(String, ctx.getChild(i).getText()) == "then"
+                i += 1
+            end
+            # Collect equations until next keyword
+            branch_equations = []
+            while i < child_count
+                next_child = ctx.getChild(i)
+                next_text = pyconvert(String, next_child.getText())
+                if next_text in ["elseif", "else", "end"]
+                    break
+                elseif next_text != ";"
+                    # It's an equation
+                    eq = visit_equation(visitor, next_child)
+                    if !isnothing(eq)
+                        push!(branch_equations, eq)
+                    end
+                end
+                i += 1
+            end
+            push!(thens, branch_equations)
+        elseif child_text == "else"
+            # Else branch has no condition, just equations
+            i += 1
+            branch_equations = []
+            while i < child_count
+                next_child = ctx.getChild(i)
+                next_text = pyconvert(String, next_child.getText())
+                if next_text == "end"
+                    break
+                elseif next_text != ";"
+                    eq = visit_equation(visitor, next_child)
+                    if !isnothing(eq)
+                        push!(branch_equations, eq)
+                    end
+                end
+                i += 1
+            end
+            push!(thens, branch_equations)
+        else
+            i += 1
+        end
     end
 
-    # Get all equation lists
-    eq_ctxs = ctx.equation()
-    current_idx = 1
-
-    # Count equations per branch by parsing the structure
-    # This is simplified - in a full implementation, we'd need to track
-    # which equations belong to which branch
-    for expr_ctx in expr_ctxs
-        branch_equations = []
-        # Collect equations for this branch
-        # (simplified - actual implementation would need more sophisticated tracking)
-        push!(equation_lists, branch_equations)
-    end
-
-    # Add else branch if present
-    # (simplified)
-
-    return BaseModelicaIfEquation(conditions, equation_lists)
+    return BaseModelicaIfEquation(ifs, thens)
 end
 
 function visit_forEquation(visitor::ASTBuilderVisitor, ctx::Py)
@@ -654,26 +695,35 @@ function visit_ifExpression(visitor::ASTBuilderVisitor, ctx::Py)
     #   ('elseif' expressionNoDecoration 'then' expressionNoDecoration)*
     #   'else' expressionNoDecoration
 
+    # Use the simpler approach: get all expressionNoDecoration contexts in order
+    # The grammar guarantees they appear in a specific order:
+    # 1st: if condition, 2nd: then expression
+    # 3rd, 4th (if elseif): elseif condition, then expression
+    # ... more elseif pairs ...
+    # last: else expression
+
     conditions = []
     expressions = []
 
-    # Get all expressionNoDecoration contexts
     expr_ctxs = ctx.expressionNoDecoration()
+    num_exprs = pyconvert(Int, pybuiltins.len(expr_ctxs))
 
-    # First is condition, second is then-expression
-    push!(conditions, visit_expressionNoDecoration(visitor, expr_ctxs[0]))
-    push!(expressions, visit_expressionNoDecoration(visitor, expr_ctxs[1]))
-
-    # Handle elseif branches (pairs of condition and expression)
-    idx = 2
-    while idx < pyconvert(Int, length(expr_ctxs)) - 1
+    # Process pairs: condition, then-expression
+    
+    idx = 0
+    while idx < num_exprs - 1
+        # Condition
         push!(conditions, visit_expressionNoDecoration(visitor, expr_ctxs[idx]))
-        push!(expressions, visit_expressionNoDecoration(visitor, expr_ctxs[idx + 1]))
-        idx += 2
+        idx += 1
+        # Then-expression
+        push!(expressions, visit_expressionNoDecoration(visitor, expr_ctxs[idx]))
+        idx += 1
     end
 
-    # Last expression is the else branch
-    push!(expressions, visit_expressionNoDecoration(visitor, expr_ctxs[-1]))
+    # Last one is the else expression
+    if idx < num_exprs
+        push!(expressions, visit_expressionNoDecoration(visitor, expr_ctxs[idx]))
+    end
 
     return BaseModelicaIfExpression(conditions, expressions)
 end
@@ -811,8 +861,9 @@ function visit_arithmeticExpression(visitor::ASTBuilderVisitor, ctx::Py)
             term_idx = 1
         end
 
-        # Process remaining terms
-        while term_idx < pyconvert(Int, length(terms))
+        # Process remaining terms (using 0-based indexing for Python)
+        num_terms = pyconvert(Int, length(terms))
+        while term_idx < num_terms
             op_text = get_text(add_ops[op_idx])
             right_term = visit_term(visitor, terms[term_idx])
 
@@ -843,9 +894,11 @@ function visit_term(visitor::ASTBuilderVisitor, ctx::Py)
         return visit_factor(visitor, factors[0])
     else
         result = visit_factor(visitor, factors[0])
-        for i in 1:(pyconvert(Int, length(factors)) - 1)
-            op_text = get_text(mul_ops[i - 1])
-            right_factor = visit_factor(visitor, factors[i])
+        num_factors = pyconvert(Int, length(factors))
+        # Use 0-based indexing for Python lists
+        for i in 0:(num_factors - 2)
+            op_text = get_text(mul_ops[i])
+            right_factor = visit_factor(visitor, factors[i + 1])
 
             if op_text == "*"
                 result = BaseModelicaProd(result, right_factor)
@@ -904,7 +957,7 @@ function visit_primary(visitor::ASTBuilderVisitor, ctx::Py)
         return BaseModelicaBool(true)
     elseif get_text(ctx) == "end"
         return BaseModelicaIdentifier("end")
-    elseif !is_null(ctx.functionCallArgs())
+    elseif !is_null(ctx.functionCallArgs()) && is_null(ctx.componentReference())
         # Check for der, initial, or pure function calls
         # These appear as: ('der' | 'initial' | 'pure') functionCallArgs
         full_text = get_text(ctx)
@@ -1042,7 +1095,7 @@ function visit_stringComment(visitor::ASTBuilderVisitor, ctx::Py)
 end
 
 """
-    parse_file_with_antlr(file_path::String) -> BaseModelicaPackage
+    parse_file_antlr(file_path::String) -> BaseModelicaPackage
 
 Parse a BaseModelica file using ANTLR4 and convert to BaseModelica AST.
 
@@ -1054,11 +1107,11 @@ Parse a BaseModelica file using ANTLR4 and convert to BaseModelica AST.
 
 # Example
 ```julia
-ast = parse_file_with_antlr("model.mo")
+ast = parse_file_antlr("model.bmo")
 sys = baseModelica_to_ModelingToolkit(ast)
 ```
 """
-function parse_file_with_antlr(file_path::String)
+function parse_file_antlr(file_path::String)
     if !isfile(file_path)
         error("File not found: $file_path")
     end

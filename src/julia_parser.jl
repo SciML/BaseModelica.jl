@@ -553,7 +553,7 @@ end
 """
 Parses a String in to a BaseModelicaPackage.
 """
-function parse_str(data)
+function julia_parse_str(data)
         debug, task = make(Debug, data, base_modelica; delegate = NoCache)
 
     try
@@ -604,10 +604,10 @@ end
 """
 Takes a path to a file and parses the contents in to a BaseModelicaPackage
 """
-function parse_file(file)
+function parse_file_julia(file)
     content = read(file, String)
     try
-        return parse_str(content)
+        return julia_parse_str(content)
     catch e
         if isa(e, ParserCombinator.ParserException)
             # Add filename to the error message
