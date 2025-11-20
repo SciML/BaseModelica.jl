@@ -1,99 +1,3 @@
-@data BaseModelicaASTNode begin
-    BaseModelicaType(name, fields)
-    BaseModelicaPackage(name, class_defs, model)
-    BaseModelicaModel(long_class_specifier)
-    BaseModelicaConstant(type, name, value, description, modification)
-    BaseModelicaParameter(type, name, value, description, modification)
-    BaseModelicaVariable(type, name, input_or_output, description, modification)
-    BaseModelicaSimpleEquation(lhs, rhs)
-    BaseModelicaInitialEquation(equation) # Just holds a BaseModelicaAnyEquation and denotes that it's an initial equation
-    BaseModelicaArray(type, length)
-    BaseModelicaString(string)
-    BaseModelicaTypeSpecifier(type)
-    BaseModelicaTypePrefix(final_flag, dpc, io)
-    BaseModelicaDeclaration(ident, array_subs, modification)
-    BaseModelicaComponentDeclaration(declaration, comment)
-    BaseModelicaComponentClause(type_prefix, type_specifier, component_list)
-    BaseModelicaComponentReference(ref_list)
-    BaseModelicaParameterEquation(component_reference, expression, comment)
-    BaseModelicaWhenEquation(whens, thens)
-    BaseModelicaForEquation(index, equations)
-    BaseModelicaIfEquation(ifs, thens)
-    BaseModelicaAnyEquation(equation, description)
-    BaseModelicaAnnotation(annotation_content)
-    BaseModelicaForIndex(ident, expression)
-    BaseModelicaComposition(components, equations, initial_equations)
-    BaseModelicaLongClass(name, description, composition)
-    BaseModelicaModification(expr)
-    #Class types
-    BaseModelicaClassDefinition(class_type, class)
-end
-
-@data BaseModelicaExpr<:BaseModelicaASTNode begin
-    # these are basically just tokens...
-    BMAdd()
-    BMElementWiseAdd()
-    BMSubtract()
-    BMElementWiseSubtract()
-    BMMult()
-    BMElementWiseMult()
-    BMDivide()
-    BMElementWiseDivide()
-    BMColon()
-    BMIf()
-    BMFor()
-    BMWhen()
-    BMThen()
-    BMLoop()
-    BMequation()
-
-    # relational tokens
-    BMLessThan()
-    BMGreaterThan()
-    BMLEQ()
-    BMGEQ()
-    BMEQ()
-    BMNEQ()
-
-    BMAND()
-    BMOR()
-    BMNOT()
-
-    # nodes in the AST 
-    BaseModelicaNumber(val)
-    BaseModelicaBool(val)
-    BaseModelicaIdentifier(name)
-    BaseModelicaSum(left, right)
-    BaseModelicaMinus(left, right)
-    BaseModelicaUnaryMinus(operand)
-    BaseModelicaProd(left, right)
-    BaseModelicaFactor(base, exp)
-    BaseModelicaElementWiseFactor(base, exp)
-    BaseModelicaElementWiseProd(left, right)
-    BaseModelicaElementWiseSum(left, right)
-    BaseModelicaElementWiseMinus(top, bottom)
-    BaseModelicaDivide(top, bottom)
-    BaseModelicaElementWiseDivide(left, right)
-    BaseModelicaParens(BaseModelicaExpr)
-    BaseModelicaFunctionArgs(args)
-    BaseModelicaFunctionCall(func_name, args)
-    BaseModelicaRange(start, step, stop)
-    BaseModelicaArraySubscripts(subscripts)
-
-    # relational nodes
-    BaseModelicaNot(relation)
-    BaseModelicaAnd(left, right)
-    BaseModelicaOr(left, right)
-    BaseModelicaLessThan(left, right)
-    BaseModelicaGreaterThan(left, right)
-    BaseModelicaLEQ(left, right)
-    BaseModelicaGEQ(left, right)
-    BaseModelicaEQ(left, right)
-    BaseModelicaNEQ(left, right)
-    BaseModelicaIfExpression(conditions, expressions)
-    BaseModelicaArrayReference(term, indexes)
-end
-
 #constructors 
 function create_factor(input_list)
     elementwise_index = findfirst(x -> x == ".^", input_list)
@@ -424,7 +328,7 @@ spc = Drop(Star(Space()))
     expression_list = Delayed()
     array_arguments = expression + (Star(E"," + expression) | E"for" + for_index)
     primary = UNSIGNED_NUMBER | STRING | (e"false" > BaseModelicaBool) | (e"true" > BaseModelicaBool)|
-              ((e"der" | e"initial" | e"pure") + function_call_args |>
+              (((e"der" | e"initial" | e"pure") > BaseModelicaIdentifier) + function_call_args |>
                component_reference_or_function_call) |
               ((component_reference + function_call_args[0:1]) |>
                component_reference_or_function_call) |
@@ -649,7 +553,7 @@ end
 """
 Parses a String in to a BaseModelicaPackage.
 """
-function parse_str(data)
+function julia_parse_str(data)
         debug, task = make(Debug, data, base_modelica; delegate = NoCache)
 
     try
@@ -700,10 +604,10 @@ end
 """
 Takes a path to a file and parses the contents in to a BaseModelicaPackage
 """
-function parse_file(file)
+function parse_file_julia(file)
     content = read(file, String)
     try
-        return parse_str(content)
+        return julia_parse_str(content)
     catch e
         if isa(e, ParserCombinator.ParserException)
             # Add filename to the error message

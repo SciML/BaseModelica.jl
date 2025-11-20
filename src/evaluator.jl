@@ -52,7 +52,6 @@ function eval_AST(if_expr::BaseModelicaIfExpression)
         condition = eval_AST(if_expr.conditions[idx])
         then_value = eval_AST(if_expr.expressions[idx])
         else_value = build_nested_ifelse(idx + 1)
-
         return ifelse(condition, then_value, else_value)
     end
 
@@ -96,17 +95,29 @@ end
 
 function eval_AST(if_eq::BaseModelicaIfEquation)
     # Convert if-equation to nested ifelse calls
-    # Structure: ifs[i] contains condition, thens[i] contains equations for that branch
+    # Structure: ifs[i] contains condition, thens[i] contains a list of equations for that branch
 
     # Process all equations in all branches to get the lhs variables
     # We assume all branches assign to the same variables
+    # thens is a list of lists: thens[i] is a list of equations for branch i
     all_equations = []
-    
-    for eq in if_eq.thens
-        if isa(eq, BaseModelicaAnyEquation)
-            push!(all_equations, eval_AST(eq.equation))
+    for eq_list in if_eq.thens
+        # Each element in thens is a list of equations
+        if isa(eq_list, AbstractArray)
+            for eq in eq_list
+                if isa(eq, BaseModelicaAnyEquation)
+                    push!(all_equations, eval_AST(eq.equation))
+                else
+                    push!(all_equations, eval_AST(eq))
+                end
+            end
         else
-            push!(all_equations, eval_AST(eq))
+            # Fallback for single equation
+            if isa(eq_list, BaseModelicaAnyEquation)
+                push!(all_equations, eval_AST(eq_list.equation))
+            else
+                push!(all_equations, eval_AST(eq_list))
+            end
         end
     end
 
@@ -116,20 +127,26 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
 
     # Helper function to build nested ifelse for a single variable across all branches
     function build_ifelse_for_var(var_lhs, branch_idx=1)
-        
+
         if branch_idx > length(if_eq.ifs)
             # This shouldn't happen if the model is well-formed
             error("If-equation branches exhausted without finding assignment")
         end
 
         # Get the RHS for this variable in this branch
-        eq = if_eq.thens[branch_idx]
+        eq_list = if_eq.thens[branch_idx]
         rhs_expr = nothing
-        eq_obj = isa(eq, BaseModelicaAnyEquation) ? eval_AST(eq.equation) : eval_AST(eq)
-        if !isnothing(eq_obj) && isa(eq_obj, Equation)
-            eq_lhs = eq_obj.lhs
-            if isequal(eq_lhs, var_lhs)
-                rhs_expr = eq_obj.rhs
+
+        # Handle list of equations
+        equations_to_check = isa(eq_list, AbstractArray) ? eq_list : [eq_list]
+        for eq in equations_to_check
+            eq_obj = isa(eq, BaseModelicaAnyEquation) ? eval_AST(eq.equation) : eval_AST(eq)
+            if !isnothing(eq_obj) && isa(eq_obj, Equation)
+                eq_lhs = eq_obj.lhs
+                if isequal(eq_lhs, var_lhs)
+                    rhs_expr = eq_obj.rhs
+                    break
+                end
             end
         end
 
@@ -261,7 +278,6 @@ function eval_AST(model::BaseModelicaModel)
         if type_prefix == "parameter" || type_prefix == "constant"
             name = Symbol(comp.component_list[1].declaration.ident[1].name)
             declaration = comp.component_list[1].declaration
-
             # Extract parameter value from modification
             if !isnothing(declaration.modification) && !isempty(declaration.modification)
                 modification = declaration.modification[1]
@@ -281,8 +297,9 @@ function eval_AST(model::BaseModelicaModel)
 
     # Flatten equations - some equations (like if-equations) return lists
     eqs_raw = [eval_AST(eq) for eq in equations]
+    real_eqs_raw = [eq for eq in eqs_raw] # Weird type stuff
     eqs = []
-    for eq in eqs_raw
+    for eq in real_eqs_raw
         if eq !== nothing
             if isa(eq, Vector)
                 # If-equations return a vector of equations
@@ -333,7 +350,7 @@ function eval_AST(function_call::BaseModelicaFunctionCall)
     if function_call.func_name isa BaseModelicaComponentReference
         function_name = Symbol(function_call.func_name.ref_list[1].name)
     else
-        function_name = Symbol(function_call.func_name)
+        function_name = Symbol(function_call.func_name.name)
     end
 
     # Skip assert calls - they are verification statements, not equations

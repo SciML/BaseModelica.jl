@@ -46,6 +46,6 @@ To parse the model in the file to ModelingToolkit, use the `parse_basemodelica` 
 ```
 using BaseModelica
 
-parse_basemodelica("path/to/ExampleFirstOrder.mo")
+parse_basemodelica("path/to/ExampleFirstOrder.bmo")
 
 ```
