@@ -84,11 +84,31 @@ BM = BaseModelica
         @test parse_basemodelica(cauer_sine_noassert_path, parser=:antlr) isa System
     end
 
+    @testset "Chua Circuits" begin
+        # Test ChuaCircuit
+        chua_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "ChuaCircuit.bmo")
+        chua_package = BM.parse_file_antlr(chua_path)
+        @test chua_package isa BM.BaseModelicaPackage
+        chua_system = BM.baseModelica_to_ModelingToolkit(chua_package)
+        @test chua_system isa System
+        @test parse_basemodelica(chua_path, parser=:antlr) isa System
+
+        # Test ChuaCircuitNoAssert
+        chua_noassert_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "ChuaCircuitNoAssert.bmo")
+        chua_noassert_package = BM.parse_file_antlr(chua_noassert_path)
+        @test chua_noassert_package isa BM.BaseModelicaPackage
+        chua_noassert_system = BM.baseModelica_to_ModelingToolkit(chua_noassert_package)
+        @test chua_noassert_system isa System
+        @test parse_basemodelica(chua_noassert_path, parser=:antlr) isa System
+    end
+
     @testset "Minimal Valid File" begin
         minimal_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "MinimalValid.bmo")
         minimal_package = BM.parse_file_antlr(minimal_path)
         @test minimal_package isa BM.BaseModelicaPackage
-        # don't want to evaluate since there are no equations 
+        # don't want to evaluate since there are no equations
     end
 end
