@@ -43,9 +43,24 @@ end 'FirstOrder';
 
 To parse the model in the file to ModelingToolkit, use the `parse_basemodelica` function:
 
-```
+```julia
 using BaseModelica
 
 parse_basemodelica("path/to/ExampleFirstOrder.bmo")
+```
 
+To solve and simulate the model:
+
+```julia
+using BaseModelica, OrdinaryDiffEq, Plots
+
+# Parse to ModelingToolkit ODESystem
+sys = parse_basemodelica("path/to/ExampleFirstOrder.bmo")
+
+# Create and solve the problem
+prob = ODEProblem(sys, [], (0.0, 10.0))
+sol = solve(prob)
+
+# Plot the results
+plot(sol)
 ```
