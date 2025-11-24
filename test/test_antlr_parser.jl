@@ -111,4 +111,55 @@ BM = BaseModelica
         @test minimal_package isa BM.BaseModelicaPackage
         # don't want to evaluate since there are no equations
     end
+
+    @testset "Create ODEProblem with ANTLR Parser" begin
+        # Test create_odeproblem with Experiment annotation
+        experiment_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "Experiment.bmo")
+
+        prob = BM.create_odeproblem(experiment_path, parser=:antlr)
+        @test prob isa ODEProblem
+
+        # Check that tspan was set from annotation
+        @test prob.tspan[1] == 0.0  # StartTime
+        @test prob.tspan[2] == 2.0  # StopTime
+
+        # Check that reltol and saveat were set from annotation
+        @test prob.kwargs[:reltol] == 1e-06  # Tolerance
+        @test prob.kwargs[:saveat] == 0.004  # Interval
+
+        # Test parse_experiment_annotation directly with ANTLR parser
+        experiment_package = BM.parse_file_antlr(experiment_path)
+        annotation = experiment_package.model.long_class_specifier.composition.annotation
+        @test !isnothing(annotation)
+        @test annotation isa BM.BaseModelicaAnnotation
+
+        exp_params = BM.parse_experiment_annotation(annotation)
+        @test !isnothing(exp_params)
+        @test exp_params.StartTime == 0.0
+        @test exp_params.StopTime == 2.0
+        @test exp_params.Tolerance == 1e-06
+        @test exp_params.Interval == 0.004
+
+        # Test with model without annotation
+        newton_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "NewtonCoolingBase.bmo")
+        prob_no_annotation = BM.create_odeproblem(newton_path, parser=:antlr)
+        @test prob_no_annotation isa ODEProblem
+        # Should use default tspan
+        @test prob_no_annotation.tspan[1] == 0.0
+        @test prob_no_annotation.tspan[2] == 1.0
+
+        # Verify annotation field is nothing for models without annotation
+        newton_package = BM.parse_file_antlr(newton_path)
+        newton_annotation = newton_package.model.long_class_specifier.composition.annotation
+        @test isnothing(newton_annotation)
+
+        # Test that user can override annotation values
+        prob_override = BM.create_odeproblem(experiment_path, parser=:antlr, reltol=1e-8, saveat=0.01)
+        @test prob_override isa ODEProblem
+        @test prob_override.kwargs[:reltol] == 1e-8  # User override
+        @test prob_override.kwargs[:saveat] == 0.01  # User override
+        @test prob_override.tspan[2] == 2.0  # Still from annotation
+    end
 end
