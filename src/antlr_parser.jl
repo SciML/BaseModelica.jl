@@ -441,31 +441,70 @@ function visit_modification(visitor::ASTBuilderVisitor, ctx::Py)
     # modification: classModification ('=' expression)?
     #   | '=' expression
     #   | ':=' expression
-    # Note: modification.expr should be a list to match parser.jl
 
-    # Get all expressions - ctx.expression() returns a list or single element
-    expr_ctxs = ctx.expression()
-    if is_null(expr_ctxs)
-        return nothing
-    end
-
-    # Collect all expressions into a list
-    expr_list = []
-    if pyconvert(Bool, pybuiltins.hasattr(expr_ctxs, "__iter__"))
-        # It's a list
-        for expr_ctx in expr_ctxs
-            push!(expr_list, visit_expression(visitor, expr_ctx))
+    # Parse class modifications (the argument list in parentheses)
+    class_mods = []
+    if !is_null(ctx.classModification())
+        class_mod_ctx = ctx.classModification()
+        if !is_null(class_mod_ctx.argumentList())
+            class_mods = visit_argumentList(visitor, class_mod_ctx.argumentList())
         end
-    else
-        # It's a single element
-        push!(expr_list, visit_expression(visitor, expr_ctxs))
     end
 
-    if !isempty(expr_list)
-        return BaseModelicaModification(expr_list)
+    # Get the final assignment expression (if present)
+    expr_list = []
+    expr_ctxs = ctx.expression()
+    if !is_null(expr_ctxs)
+        if pyconvert(Bool, pybuiltins.hasattr(expr_ctxs, "__iter__"))
+            # It's a list
+            for expr_ctx in expr_ctxs
+                push!(expr_list, visit_expression(visitor, expr_ctx))
+            end
+        else
+            # It's a single element
+            push!(expr_list, visit_expression(visitor, expr_ctxs))
+        end
+    end
+
+    # Return modification only if we have class mods or expressions
+    if !isempty(class_mods) || !isempty(expr_list)
+        return BaseModelicaModification(class_mods, expr_list)
     end
 
     return nothing
+end
+
+function visit_argumentList(visitor::ASTBuilderVisitor, ctx::Py)
+    # argumentList: argument (',' argument)*
+    args = []
+    arg_ctxs = ctx.argument()
+    for arg_ctx in arg_ctxs
+        arg = visit_argument(visitor, arg_ctx)
+        if !isnothing(arg)
+            push!(args, arg)
+        end
+    end
+    return args
+end
+
+function visit_argument(visitor::ASTBuilderVisitor, ctx::Py)
+    # argument: decoration? elementModificationOrReplaceable
+    # elementModificationOrReplaceable: elementModification
+    # elementModification: name modification? stringComment
+
+    elem_mod_ctx = ctx.elementModificationOrReplaceable().elementModification()
+
+    # Get the name
+    name_ctx = elem_mod_ctx.name()
+    name = get_text(name_ctx)
+
+    # Get the modification (if present)
+    mod = nothing
+    if !is_null(elem_mod_ctx.modification())
+        mod = visit_modification(visitor, elem_mod_ctx.modification())
+    end
+
+    return BaseModelicaClassModificationArg(name, mod)
 end
 
 function visit_arraySubscripts(visitor::ASTBuilderVisitor, ctx::Py)

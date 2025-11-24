@@ -16,7 +16,14 @@ function eval_AST(expr::BaseModelicaExpr)
     let f = eval_AST
         @match expr begin
             BaseModelicaNumber(val) => val
-            BaseModelicaBool(val) => val == "true"
+            BaseModelicaBool(val) => begin
+                # val can be either a string "true"/"false" or a boolean true/false
+                if isa(val, Bool)
+                    val
+                else
+                    val == "true"
+                end
+            end
             BaseModelicaFactor(base, exp) => (f(base))^f(exp)
             BaseModelicaSum(left, right) => (f(left)) + (f(right))
             BaseModelicaMinus(left, right) => f(left) - f(right)
@@ -74,6 +81,29 @@ end
 function eval_AST(annotation::BaseModelicaAnnotation)
     # Annotations are metadata and don't produce equations
     # For now, return nothing (they are parsed but ignored during evaluation)
+    return nothing
+end
+
+# Helper function to extract a specific class modification value by name
+function get_class_modification_value(modification, key_name::String)
+    if isnothing(modification) || isempty(modification)
+        return nothing
+    end
+
+    mod = modification[1]
+    if isnothing(mod.class_modifications)
+        return nothing
+    end
+
+    for arg in mod.class_modifications
+        if arg.name == key_name
+            # If the arg has a modification with an expression, evaluate it
+            if !isnothing(arg.modification) && !isnothing(arg.modification.expr) && !isempty(arg.modification.expr)
+                return eval_AST(arg.modification.expr[end])
+            end
+        end
+    end
+
     return nothing
 end
 
@@ -272,18 +302,39 @@ function eval_AST(model::BaseModelicaModel)
         end
     end
 
-    # Pass 2: Evaluate parameter values (now all symbols exist)
+    # Pass 2: Evaluate parameter values and handle start/fixed for variables
     for comp in components
         type_prefix = comp.type_prefix.dpc
+        name = Symbol(comp.component_list[1].declaration.ident[1].name)
+        declaration = comp.component_list[1].declaration
+
         if type_prefix == "parameter" || type_prefix == "constant"
-            name = Symbol(comp.component_list[1].declaration.ident[1].name)
-            declaration = comp.component_list[1].declaration
             # Extract parameter value from modification
             if !isnothing(declaration.modification) && !isempty(declaration.modification)
                 modification = declaration.modification[1]
                 if !isnothing(modification.expr) && !isempty(modification.expr)
                     value_expr = modification.expr[end]
                     parameter_val_map[variable_map[name]] = eval_AST(value_expr)
+                end
+            end
+        elseif isnothing(type_prefix)
+            # This is a variable - check for start and fixed attributes
+            start_value = get_class_modification_value(declaration.modification, "start")
+            fixed_value = get_class_modification_value(declaration.modification, "fixed")
+
+            if !isnothing(start_value)
+                var = variable_map[name]
+                # If fixed=true, use setdefault for initial condition
+                # Otherwise use setguess for guess value
+                is_fixed = !isnothing(fixed_value) && (fixed_value === true || fixed_value == true)
+                if is_fixed
+                    variable_map[name] = ModelingToolkit.setdefault(var, start_value)
+                    idx = findfirst(v -> ModelingToolkit.getname(v) == name, vars)
+                    vars[idx] = variable_map[name]
+                else
+                    variable_map[name] = ModelingToolkit.setguess(var, start_value)
+                    idx = findfirst(v -> ModelingToolkit.getname(v) == name, vars)
+                    vars[idx] = variable_map[name]
                 end
             end
         end

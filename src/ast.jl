@@ -24,7 +24,8 @@
     BaseModelicaForIndex(ident, expression)
     BaseModelicaComposition(components, equations, initial_equations, annotation)
     BaseModelicaLongClass(name, description, composition)
-    BaseModelicaModification(expr)
+    BaseModelicaModification(class_modifications, expr)
+    BaseModelicaClassModificationArg(name, modification)
     #Class types
     BaseModelicaClassDefinition(class_type, class)
 end
