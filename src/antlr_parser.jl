@@ -248,13 +248,13 @@ end
 function visit_shortClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
     # For now, return a placeholder - can be expanded later
     name = get_text(ctx.IDENT())
-    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], []))
+    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], nothing))
 end
 
 function visit_derClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
     # For now, return a placeholder - can be expanded later
     name = get_text(ctx.IDENT(0))
-    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], []))
+    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], nothing))
 end
 
 function visit_globalConstant(visitor::ASTBuilderVisitor, ctx::Py)
@@ -318,7 +318,23 @@ function visit_composition(visitor::ASTBuilderVisitor, ctx::Py)
         end
     end
 
-    return BaseModelicaComposition(components, equations, initial_equations)
+    # Get annotation comment at the end of composition
+    annotation = nothing
+    annotation_ctx = ctx.annotationComment()
+    if !is_null(annotation_ctx)
+        # Handle both single and list cases
+        if pyconvert(Bool, pybuiltins.hasattr(annotation_ctx, "__iter__"))
+            # Multiple annotations - take the last one
+            if pyconvert(Int, pybuiltins.len(annotation_ctx)) > 0
+                annotation = visit_annotationComment(visitor, annotation_ctx[pyconvert(Int, pybuiltins.len(annotation_ctx)) - 1])
+            end
+        else
+            # Single annotation
+            annotation = visit_annotationComment(visitor, annotation_ctx)
+        end
+    end
+
+    return BaseModelicaComposition(components, equations, initial_equations, annotation)
 end
 
 function visit_genericElement(visitor::ASTBuilderVisitor, ctx::Py)
@@ -1063,7 +1079,25 @@ end
 # Comment visitors
 function visit_comment(visitor::ASTBuilderVisitor, ctx::Py)
     # comment: stringComment annotationComment?
-    return visit_stringComment(visitor, ctx.stringComment())
+    string_comment = visit_stringComment(visitor, ctx.stringComment())
+
+    # Check if there's an annotationComment
+    annotation_ctx = ctx.annotationComment()
+    if !is_null(annotation_ctx)
+        # Parse and store the annotation
+        annotation = visit_annotationComment(visitor, annotation_ctx)
+        # For now, just return the string comment
+        # The annotation is parsed but not yet integrated into the return value
+    end
+
+    return string_comment
+end
+
+function visit_annotationComment(visitor::ASTBuilderVisitor, ctx::Py)
+    # annotationComment: 'annotation' classModification
+    # Store the full annotation text
+    annotation_text = get_text(ctx)
+    return BaseModelicaAnnotation(annotation_text)
 end
 
 function visit_stringComment(visitor::ASTBuilderVisitor, ctx::Py)

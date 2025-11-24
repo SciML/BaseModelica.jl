@@ -22,7 +22,7 @@
     BaseModelicaAnyEquation(equation, description)
     BaseModelicaAnnotation(annotation_content)
     BaseModelicaForIndex(ident, expression)
-    BaseModelicaComposition(components, equations, initial_equations)
+    BaseModelicaComposition(components, equations, initial_equations, annotation)
     BaseModelicaLongClass(name, description, composition)
     BaseModelicaModification(expr)
     #Class types
