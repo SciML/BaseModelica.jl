@@ -61,11 +61,7 @@ function parse_experiment_annotation(annotation::Union{BaseModelicaAnnotation, N
         return nothing
     end
 
-    annotation_text = annotation.annotation_content
-
-    if isnothing(annotation_text) || !occursin("experiment", annotation_text)
-        return nothing
-    end
+    annotation_content = annotation.annotation_content
 
     # Default values
     start_time = 0.0
@@ -73,28 +69,85 @@ function parse_experiment_annotation(annotation::Union{BaseModelicaAnnotation, N
     tolerance = 1e-4
     interval = nothing
 
-    # Extract StartTime
-    start_match = match(r"StartTime\s*=\s*([0-9.eE+-]+)", annotation_text)
-    if !isnothing(start_match)
-        start_time = parse(Float64, start_match.captures[1])
-    end
+    # Check if annotation_content is a string (ANTLR parser) or structured data (Julia parser)
+    if annotation_content isa String
+        # ANTLR parser case - parse from text
+        if !occursin("experiment", annotation_content)
+            return nothing
+        end
 
-    # Extract StopTime
-    stop_match = match(r"StopTime\s*=\s*([0-9.eE+-]+)", annotation_text)
-    if !isnothing(stop_match)
-        stop_time = parse(Float64, stop_match.captures[1])
-    end
+        # Extract StartTime
+        start_match = match(r"StartTime\s*=\s*([0-9.eE+-]+)", annotation_content)
+        if !isnothing(start_match)
+            start_time = parse(Float64, start_match.captures[1])
+        end
 
-    # Extract Tolerance
-    tol_match = match(r"Tolerance\s*=\s*([0-9.eE+-]+)", annotation_text)
-    if !isnothing(tol_match)
-        tolerance = parse(Float64, tol_match.captures[1])
-    end
+        # Extract StopTime
+        stop_match = match(r"StopTime\s*=\s*([0-9.eE+-]+)", annotation_content)
+        if !isnothing(stop_match)
+            stop_time = parse(Float64, stop_match.captures[1])
+        end
 
-    # Extract Interval
-    interval_match = match(r"Interval\s*=\s*([0-9.eE+-]+)", annotation_text)
-    if !isnothing(interval_match)
-        interval = parse(Float64, interval_match.captures[1])
+        # Extract Tolerance
+        tol_match = match(r"Tolerance\s*=\s*([0-9.eE+-]+)", annotation_content)
+        if !isnothing(tol_match)
+            tolerance = parse(Float64, tol_match.captures[1])
+        end
+
+        # Extract Interval
+        interval_match = match(r"Interval\s*=\s*([0-9.eE+-]+)", annotation_content)
+        if !isnothing(interval_match)
+            interval = parse(Float64, interval_match.captures[1])
+        end
+    elseif annotation_content isa Array
+        # Julia parser case - parse from structured AST
+        # Structure: [BaseModelicaIdentifier("experiment"), BaseModelicaModification(...), BaseModelicaString("")]
+        if length(annotation_content) < 2
+            return nothing
+        end
+
+        # Check if first element is "experiment"
+        if !(annotation_content[1] isa BaseModelicaIdentifier) || annotation_content[1].name != "experiment"
+            return nothing
+        end
+
+        # Second element should be the modification containing parameters
+        if annotation_content[2] isa BaseModelicaModification
+            mod_content = annotation_content[2].expr
+
+            # Parse the modification array: [name1, mod1, string1, name2, mod2, string2, ...]
+            i = 1
+            while i <= length(mod_content)
+                if mod_content[i] isa BaseModelicaIdentifier
+                    param_name = mod_content[i].name
+
+                    # Next element should be a modification with the value
+                    if i + 1 <= length(mod_content) && mod_content[i + 1] isa BaseModelicaModification
+                        mod_expr = mod_content[i + 1].expr
+                        if !isempty(mod_expr) && mod_expr[1] isa BaseModelicaNumber
+                            value = mod_expr[1].val
+
+                            if param_name == "StartTime"
+                                start_time = value
+                            elseif param_name == "StopTime"
+                                stop_time = value
+                            elseif param_name == "Tolerance"
+                                tolerance = value
+                            elseif param_name == "Interval"
+                                interval = value
+                            end
+                        end
+                    end
+
+                    # Skip to next parameter (name is at i, modification at i+1, string at i+2)
+                    i += 3
+                else
+                    i += 1
+                end
+            end
+        end
+    else
+        return nothing
     end
 
     return (StartTime = start_time, StopTime = stop_time, Tolerance = tolerance, Interval = interval)
