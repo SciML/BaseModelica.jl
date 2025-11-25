@@ -496,7 +496,8 @@ function visit_argument(visitor::ASTBuilderVisitor, ctx::Py)
 
     # Get the name
     name_ctx = elem_mod_ctx.name()
-    name = get_text(name_ctx)
+    name_str = get_text(name_ctx)
+    name = BaseModelicaIdentifier(name_str)
 
     # Get the modification (if present)
     mod = nothing
@@ -1134,9 +1135,27 @@ end
 
 function visit_annotationComment(visitor::ASTBuilderVisitor, ctx::Py)
     # annotationComment: 'annotation' classModification
-    # Store the full annotation text
-    annotation_text = get_text(ctx)
-    return BaseModelicaAnnotation(annotation_text)
+    # Parse the class modification structure
+    class_mod_ctx = ctx.classModification()
+    if !is_null(class_mod_ctx)
+        class_mod = visit_classModification(visitor, class_mod_ctx)
+        return BaseModelicaAnnotation(class_mod)
+    end
+
+    # Fallback to empty modification
+    return BaseModelicaAnnotation(BaseModelicaModification([], []))
+end
+
+function visit_classModification(visitor::ASTBuilderVisitor, ctx::Py)
+    # classModification: '(' argumentList? ')'
+    arg_list_ctx = ctx.argumentList()
+    if !is_null(arg_list_ctx)
+        args = visit_argumentList(visitor, arg_list_ctx)
+        return BaseModelicaModification(args, [])
+    end
+
+    # Empty class modification
+    return BaseModelicaModification([], [])
 end
 
 function visit_stringComment(visitor::ASTBuilderVisitor, ctx::Py)
