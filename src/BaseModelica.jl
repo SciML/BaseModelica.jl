@@ -68,81 +68,51 @@ function parse_experiment_annotation(annotation::Union{BaseModelicaAnnotation, N
     stop_time = 1.0
     tolerance = 1e-4
     interval = nothing
+    
+    # Both parsers now produce BaseModelicaModification structure
+    if annotation_content isa BaseModelicaModification
+        # annotation_content is the class_modification which contains the experiment(...) structure
+        
+        # The class_modifications should contain a single arg for "experiment"
+        # which itself has nested class_modifications for the parameters
+        if !isnothing(annotation_content.class_modifications) && !isempty(annotation_content.class_modifications)
+            # Find the "experiment" argument
+            experiment_arg = nothing
+            for arg in annotation_content.class_modifications
+                if arg isa BaseModelicaClassModificationArg && arg.name.name == "experiment"
+                    experiment_arg = arg
+                    break
+                end
+            end
 
-    # Check if annotation_content is a string (ANTLR parser) or structured data (Julia parser)
-    if annotation_content isa String
-        # ANTLR parser case - parse from text
-        if !occursin("experiment", annotation_content)
-            return nothing
-        end
-
-        # Extract StartTime
-        start_match = match(r"StartTime\s*=\s*([0-9.eE+-]+)", annotation_content)
-        if !isnothing(start_match)
-            start_time = parse(Float64, start_match.captures[1])
-        end
-
-        # Extract StopTime
-        stop_match = match(r"StopTime\s*=\s*([0-9.eE+-]+)", annotation_content)
-        if !isnothing(stop_match)
-            stop_time = parse(Float64, stop_match.captures[1])
-        end
-
-        # Extract Tolerance
-        tol_match = match(r"Tolerance\s*=\s*([0-9.eE+-]+)", annotation_content)
-        if !isnothing(tol_match)
-            tolerance = parse(Float64, tol_match.captures[1])
-        end
-
-        # Extract Interval
-        interval_match = match(r"Interval\s*=\s*([0-9.eE+-]+)", annotation_content)
-        if !isnothing(interval_match)
-            interval = parse(Float64, interval_match.captures[1])
-        end
-    elseif annotation_content isa Array
-        # Julia parser case - parse from structured AST
-        # Structure: [BaseModelicaIdentifier("experiment"), BaseModelicaModification(...), BaseModelicaString("")]
-        if length(annotation_content) < 2
-            return nothing
-        end
-
-        # Check if first element is "experiment"
-        if !(annotation_content[1] isa BaseModelicaIdentifier) || annotation_content[1].name != "experiment"
-            return nothing
-        end
-
-        # Second element should be the modification containing parameters
-        if annotation_content[2] isa BaseModelicaModification
-            mod_content = annotation_content[2].expr
-
-            # Parse the modification array: [name1, mod1, string1, name2, mod2, string2, ...]
-            i = 1
-            while i <= length(mod_content)
-                if mod_content[i] isa BaseModelicaIdentifier
-                    param_name = mod_content[i].name
-
-                    # Next element should be a modification with the value
-                    if i + 1 <= length(mod_content) && mod_content[i + 1] isa BaseModelicaModification
-                        mod_expr = mod_content[i + 1].expr
-                        if !isempty(mod_expr) && mod_expr[1] isa BaseModelicaNumber
-                            value = mod_expr[1].val
-
-                            if param_name == "StartTime"
-                                start_time = value
-                            elseif param_name == "StopTime"
-                                stop_time = value
-                            elseif param_name == "Tolerance"
-                                tolerance = value
-                            elseif param_name == "Interval"
-                                interval = value
+            if !isnothing(experiment_arg) && !isnothing(experiment_arg.modification)
+                # The experiment's modification contains the parameters
+                
+                exp_mod = experiment_arg.modification
+                if !isnothing(exp_mod.class_modifications) && !isempty(exp_mod.class_modifications)
+                    for param_arg in exp_mod.class_modifications
+                        if param_arg isa BaseModelicaClassModificationArg
+                            param_name = param_arg.name.name
+                            
+                            # Extract value from the parameter's modification
+                            if !isnothing(param_arg.modification) && !isnothing(param_arg.modification.expr) && !isempty(param_arg.modification.expr)
+                                value_expr = param_arg.modification.expr[end]
+                                if value_expr isa BaseModelicaNumber
+                                    value = value_expr.val
+                                    
+                                    if param_name == "StartTime"
+                                        start_time = value
+                                    elseif param_name == "StopTime"
+                                        stop_time = value
+                                    elseif param_name == "Tolerance"
+                                        tolerance = value
+                                    elseif param_name == "Interval"
+                                        interval = value
+                                    end
+                                end
                             end
                         end
                     end
-
-                    # Skip to next parameter (name is at i, modification at i+1, string at i+2)
-                    i += 3
-                else
-                    i += 1
                 end
             end
         end
