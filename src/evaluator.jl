@@ -96,7 +96,9 @@ function get_class_modification_value(modification, key_name::String)
     end
 
     for arg in mod.class_modifications
-        if arg.name == key_name
+        # Extract name string from BaseModelicaIdentifier
+        arg_name = arg.name isa BaseModelicaIdentifier ? arg.name.name : arg.name
+        if arg_name == key_name
             # If the arg has a modification with an expression, evaluate it
             if !isnothing(arg.modification) && !isnothing(arg.modification.expr) && !isempty(arg.modification.expr)
                 return eval_AST(arg.modification.expr[end])

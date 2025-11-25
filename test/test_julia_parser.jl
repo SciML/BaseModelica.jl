@@ -132,6 +132,12 @@ PC = BM.ParserCombinator
         @test cauer_analog_system isa System
         @test parse_basemodelica(cauer_analog_path, parser=:julia) isa System
 
+        # Test that initial conditions (fixed=true) are set correctly
+        @test !isempty(ModelingToolkit.defaults(cauer_analog_system))
+
+        # Test that guess values (fixed=false or no fixed) are set correctly
+        @test !isempty(ModelingToolkit.guesses(cauer_analog_system))
+
         # Test CauerLowPassAnalogSine
         cauer_sine_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "CauerLowPassAnalogSine.bmo")
