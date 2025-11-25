@@ -1,4 +1,39 @@
-#constructors 
+#constructors
+# Helper to parse modification into (class_modifications, expr) structure
+function parse_modification(parts)
+    class_mods = []
+    expr = []
+
+    for part in parts
+        if isa(part, Vector) && !isempty(part)
+            # This is the argument_list from class_modification
+            for item in part
+                if isa(item, BaseModelicaClassModificationArg)
+                    push!(class_mods, item)
+                end
+            end
+        elseif isa(part, BaseModelicaClassModificationArg)
+            push!(class_mods, part)
+        elseif isa(part, BaseModelicaExpr) || isa(part, BaseModelicaASTNode)
+            # This is an expression
+            push!(expr, part)
+        end
+    end
+
+    return BaseModelicaModification(class_mods, expr)
+end
+
+# Helper to wrap class_modification arguments in BaseModelicaModification for annotations
+function wrap_annotation_content(args)
+    if isnothing(args) || (isa(args, Vector) && isempty(args))
+        return BaseModelicaModification([], [])
+    elseif isa(args, Vector)
+        return BaseModelicaModification(args, [])
+    else
+        return BaseModelicaModification([args], [])
+    end
+end
+
 function create_factor(input_list)
     elementwise_index = findfirst(x -> x == ".^", input_list)
     power_index = findfirst(x -> x == "^", input_list)
@@ -199,6 +234,7 @@ function BaseModelicaComposition(input_list)
     equations = []
     initial_equations = []
     components = []
+    annotation = nothing
 
     for input in input_list
         if input isa BaseModelicaComponentClause
@@ -208,9 +244,10 @@ function BaseModelicaComposition(input_list)
         elseif input isa BaseModelicaAnyEquation
             push!(equations, input)
         elseif input isa BaseModelicaAnnotation
+            annotation = input
         end
     end
-    BaseModelicaComposition(components, equations, initial_equations)
+    BaseModelicaComposition(components, equations, initial_equations, annotation)
 end
 
 function BaseModelicaPackage(input_list)
@@ -287,7 +324,8 @@ spc = Drop(Star(Space()))
     #modification
     string_comment = (STRING + spc + Star(spc + E"+" + spc + STRING))[0:1] |>
                      BaseModelicaString
-    element_modification = name + modification[0:1] + string_comment
+    element_modification = name + modification[0:1] + Drop(string_comment) >
+                          BaseModelicaClassModificationArg
     element_modification_or_replaceable = element_modification
     decoration = E"@" + UNSIGNED_INTEGER
     argument = decoration[0:1] + element_modification_or_replaceable
@@ -296,7 +334,7 @@ spc = Drop(Star(Space()))
     expression = Delayed()
     modification.matcher = (class_modification + (spc + E"=" + spc + expression)[0:1]) |
                            (spc + E"=" + spc + expression) | (E":=" + spc + expression) |>
-                           BaseModelicaModification
+                           parse_modification
 
     #expressions
     relational_operator = (E"<" > BMLessThan) | (E"<=" > BMLEQ) | (E">" > BMGreaterThan) |
@@ -345,7 +383,8 @@ spc = Drop(Star(Space()))
     subscript = (E":" > BMColon) | expression
     array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript) + E"]" |>
                                BaseModelicaArraySubscripts
-    annotation_comment = E"annotation" + class_modification |> BaseModelicaAnnotation
+    annotation_comment = E"annotation" + class_modification |>
+                         (args -> BaseModelicaAnnotation(wrap_annotation_content(args)))
     comment.matcher = (string_comment + annotation_comment[0:1]) |>
                       (x -> length(x) == 1 ? x[1] :
                             BaseModelicaString(join([string(elem) for elem in x], " ")))

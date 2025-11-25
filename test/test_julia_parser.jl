@@ -77,6 +77,51 @@ PC = BM.ParserCombinator
         @test parse_basemodelica(if_equations_path, parser=:julia) isa System
     end
 
+    @testset "Create ODEProblem" begin
+        # Test create_odeproblem with Experiment annotation
+        experiment_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "Experiment.bmo")
+
+        prob = BM.create_odeproblem(experiment_path, parser=:julia)
+        @test prob isa ODEProblem
+
+        # Check that tspan was set from annotation
+        @test prob.tspan[1] == 0.0  # StartTime
+        @test prob.tspan[2] == 2.0  # StopTime
+
+        # Check that reltol and saveat were set from annotation
+        @test prob.kwargs[:reltol] == 1e-06  # Tolerance
+        @test prob.kwargs[:saveat] == 0.004  # Interval
+
+        # Test parse_experiment_annotation directly
+        experiment_package = BM.parse_file_julia(experiment_path)
+        annotation = experiment_package.model.long_class_specifier.composition.annotation
+        @test !isnothing(annotation)
+
+        exp_params = BM.parse_experiment_annotation(annotation)
+        @test !isnothing(exp_params)
+        @test exp_params.StartTime == 0.0
+        @test exp_params.StopTime == 2.0
+        @test exp_params.Tolerance == 1e-06
+        @test exp_params.Interval == 0.004
+
+        # Test with model without annotation
+        newton_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "NewtonCoolingBase.bmo")
+        prob_no_annotation = BM.create_odeproblem(newton_path, parser=:julia)
+        @test prob_no_annotation isa ODEProblem
+        # Should use default tspan
+        @test prob_no_annotation.tspan[1] == 0.0
+        @test prob_no_annotation.tspan[2] == 1.0
+
+        # Test that user can override annotation values
+        prob_override = BM.create_odeproblem(experiment_path, parser=:julia, reltol=1e-8, saveat=0.01)
+        @test prob_override isa ODEProblem
+        @test prob_override.kwargs[:reltol] == 1e-8  # User override
+        @test prob_override.kwargs[:saveat] == 0.01  # User override
+        @test prob_override.tspan[2] == 2.0  # Still from annotation
+    end
+
     @testset "Cauer Low Pass Filters" begin
         # Test CauerLowPassAnalog
         cauer_analog_path = joinpath(
@@ -86,6 +131,12 @@ PC = BM.ParserCombinator
         cauer_analog_system = BM.baseModelica_to_ModelingToolkit(cauer_analog_package)
         @test cauer_analog_system isa System
         @test parse_basemodelica(cauer_analog_path, parser=:julia) isa System
+
+        # Test that initial conditions (fixed=true) are set correctly
+        @test !isempty(ModelingToolkit.defaults(cauer_analog_system))
+
+        # Test that guess values (fixed=false or no fixed) are set correctly
+        @test !isempty(ModelingToolkit.guesses(cauer_analog_system))
 
         # Test CauerLowPassAnalogSine
         cauer_sine_path = joinpath(

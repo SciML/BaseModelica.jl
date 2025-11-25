@@ -44,23 +44,27 @@ end 'FirstOrder';
 To parse the model in the file to ModelingToolkit, use the `parse_basemodelica` function:
 
 ```julia
+```julia
 using BaseModelica
 
-parse_basemodelica("path/to/ExampleFirstOrder.bmo")
+sys = parse_basemodelica("path/to/ExampleFirstOrder.bmo")
 ```
 
-To solve and simulate the model:
+To automatically create an ODEProblem ready for simulation, use `create_odeproblem`:
 
 ```julia
-using BaseModelica, OrdinaryDiffEq, Plots
+using BaseModelica, DifferentialEquations
 
-# Parse to ModelingToolkit ODESystem
-sys = parse_basemodelica("path/to/ExampleFirstOrder.bmo")
+# Automatically sets tspan, reltol, and saveat from annotation if present
+prob = create_odeproblem("path/to/ExampleFirstOrder.bmo")
 
-# Create and solve the problem
-prob = ODEProblem(sys, [], (0.0, 10.0))
+# Solve and plot
 sol = solve(prob)
-
-# Plot the results
-plot(sol)
 ```
+
+If the model contains an experiment annotation like:
+```modelica
+annotation(experiment(StartTime = 0, StopTime = 2.0, Tolerance = 1e-06, Interval = 0.004))
+```
+
+The time span, relative tolerance, and save interval will be automatically configured from the annotation.
