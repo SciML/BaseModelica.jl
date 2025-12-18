@@ -1,9 +1,6 @@
 [deps]
-BaseModelica = "a17d5099-185d-4ff5-b5d3-51aa4569e56d"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
-
-[sources]
-BaseModelica = {path = "/home/runner/work/BaseModelica.jl/BaseModelica.jl"}
+BaseModelica = "a17d5099-185d-4ff5-b5d3-51aa4569e56d"
 
 [compat]
 BaseModelica = "1.2.0"
