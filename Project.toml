@@ -13,7 +13,7 @@ PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 [compat]
 Aqua = "0.8"
 CondaPkg = "0.2.33"
-JET = "0.11.2"
+JET = "0.9, 0.11.2"
 MLStyle = "0.4.17"
 ModelingToolkit = "10"
 OrdinaryDiffEq = "6.103"
