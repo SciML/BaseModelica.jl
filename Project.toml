@@ -13,20 +13,22 @@ PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 [compat]
 Aqua = "0.8"
 CondaPkg = "0.2.33"
+JET = "0.11.2"
 MLStyle = "0.4.17"
 ModelingToolkit = "10"
+OrdinaryDiffEq = "6.103"
 ParserCombinator = "2"
 PythonCall = "0.9.29"
-OrdinaryDiffEq = "6.103"
 SafeTestsets = "0.1"
 Test = "1.10"
 julia = "1.10"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
 
 [targets]
-test = ["Aqua", "SafeTestsets", "OrdinaryDiffEq", "Test"]
+test = ["Aqua", "JET", "SafeTestsets", "OrdinaryDiffEq", "Test"]
