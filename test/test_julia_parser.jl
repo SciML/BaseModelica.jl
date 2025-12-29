@@ -63,7 +63,7 @@ PC = BM.ParserCombinator
         param_modifiers_package = BM.parse_file_julia(param_modifiers_path)
         @test param_modifiers_package isa BM.BaseModelicaPackage
         param_modifiers_system = BM.baseModelica_to_ModelingToolkit(param_modifiers_package)
-        @test param_modifiers_system isa ODESystem
+        @test param_modifiers_system isa System
         @test parse_basemodelica(param_modifiers_path, parser=:julia) isa System
     end
 
