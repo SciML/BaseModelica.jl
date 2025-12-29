@@ -4,7 +4,7 @@ Pkg.add(&quot;BaseModelica&quot;)</code></pre><h2 id="API"><a class="docs-headin
 parse_basemodelica(&quot;testfiles/NewtonCoolingBase.bmo&quot;)
 parse_basemodelica(&quot;testfiles/NewtonCoolingBase.bmo&quot;, parser=:antlr)
 # Use ParserCombinator parser
-parse_basemodelica(&quot;testfiles/NewtonCoolingBase.bmo&quot;, parser = :julia)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/SciML/BaseModelica.jl/blob/582dff68790d558eb487e393e13e594e8f736398/src/BaseModelica.jl#L14-L34">source</a></section></details></article><h2 id="Contributing"><a class="docs-heading-anchor" href="#Contributing">Contributing</a><a id="Contributing-1"></a><a class="docs-heading-anchor-permalink" href="#Contributing" title="Permalink"></a></h2><ul><li><p>Please refer to the <a href="https://github.com/SciML/ColPrac/blob/master/README.md">SciML ColPrac: Contributor&#39;s Guide on Collaborative Practices for Community Packages</a> for guidance on PRs, issues, and other matters relating to contributing to SciML.</p></li><li><p>See the <a href="https://github.com/SciML/SciMLStyle">SciML Style Guide</a> for common coding practices and other style decisions.</p></li><li><p>There are a few community forums:</p><ul><li>The #diffeq-bridged and #sciml-bridged channels in the <a href="https://julialang.org/slack/">Julia Slack</a></li><li>The #diffeq-bridged and #sciml-bridged channels in the <a href="https://julialang.zulipchat.com/#narrow/stream/279055-sciml-bridged">Julia Zulip</a></li><li>On the <a href="https://discourse.julialang.org">Julia Discourse forums</a></li><li>See also <a href="https://sciml.ai/community/">SciML Community page</a></li></ul></li></ul><h2 id="Reproducibility"><a class="docs-heading-anchor" href="#Reproducibility">Reproducibility</a><a id="Reproducibility-1"></a><a class="docs-heading-anchor-permalink" href="#Reproducibility" title="Permalink"></a></h2><details><summary>The documentation of this SciML package was built using these direct dependencies,</summary><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Status `~/work/BaseModelica.jl/BaseModelica.jl/docs/Project.toml`
+parse_basemodelica(&quot;testfiles/NewtonCoolingBase.bmo&quot;, parser = :julia)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/SciML/BaseModelica.jl/blob/4d0113c7ce638140db36dd27b21e3ea14c2b225e/src/BaseModelica.jl#L14-L34">source</a></section></details></article><h2 id="Contributing"><a class="docs-heading-anchor" href="#Contributing">Contributing</a><a id="Contributing-1"></a><a class="docs-heading-anchor-permalink" href="#Contributing" title="Permalink"></a></h2><ul><li><p>Please refer to the <a href="https://github.com/SciML/ColPrac/blob/master/README.md">SciML ColPrac: Contributor&#39;s Guide on Collaborative Practices for Community Packages</a> for guidance on PRs, issues, and other matters relating to contributing to SciML.</p></li><li><p>See the <a href="https://github.com/SciML/SciMLStyle">SciML Style Guide</a> for common coding practices and other style decisions.</p></li><li><p>There are a few community forums:</p><ul><li>The #diffeq-bridged and #sciml-bridged channels in the <a href="https://julialang.org/slack/">Julia Slack</a></li><li>The #diffeq-bridged and #sciml-bridged channels in the <a href="https://julialang.zulipchat.com/#narrow/stream/279055-sciml-bridged">Julia Zulip</a></li><li>On the <a href="https://discourse.julialang.org">Julia Discourse forums</a></li><li>See also <a href="https://sciml.ai/community/">SciML Community page</a></li></ul></li></ul><h2 id="Reproducibility"><a class="docs-heading-anchor" href="#Reproducibility">Reproducibility</a><a id="Reproducibility-1"></a><a class="docs-heading-anchor-permalink" href="#Reproducibility" title="Permalink"></a></h2><details><summary>The documentation of this SciML package was built using these direct dependencies,</summary><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Status `~/work/BaseModelica.jl/BaseModelica.jl/docs/Project.toml`
   [a17d5099] BaseModelica v1.3.0 `~/work/BaseModelica.jl/BaseModelica.jl`
   [e30172f5] Documenter v1.16.1</code></pre></details><details><summary>and using this machine and Julia version.</summary><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Julia Version 1.12.3
 Commit 966d0af0fdf (2025-12-15 11:20 UTC)
@@ -40,7 +40,7 @@ Environment:
   [944b1d66] CodecZlib v0.7.8
 ⌅ [861a8166] Combinatorics v1.0.2
   [a80b9123] CommonMark v0.9.1
-  [38540f10] CommonSolve v0.2.4
+  [38540f10] CommonSolve v0.2.6
   [bbf7d656] CommonSubexpressions v0.3.1
   [f70d9fcc] CommonWorldInvalidations v1.0.0
   [34da2185] Compat v4.18.1
@@ -54,7 +54,7 @@ Environment:
   [864edb3b] DataStructures v0.19.3
   [e2d170a0] DataValueInterfaces v1.0.0
   [2b5f629d] DiffEqBase v6.193.0
-  [459566f4] DiffEqCallbacks v4.10.1
+  [459566f4] DiffEqCallbacks v4.11.0
   [77a26b50] DiffEqNoiseProcess v5.24.1
   [163ba53b] DiffResults v1.1.0
   [b552c78f] DiffRules v1.15.1
@@ -77,7 +77,7 @@ Environment:
   [64ca27bc] FindFirstFunctions v1.4.2
   [6a86dc24] FiniteDiff v2.29.0
   [1fa38f19] Format v1.3.7
-  [f6369f11] ForwardDiff v1.3.0
+  [f6369f11] ForwardDiff v1.3.1
   [069b7b12] FunctionWrappers v1.1.3
   [77dc65aa] FunctionWrappersWrappers v0.1.3
   [46192b85] GPUArraysCore v0.2.0
@@ -87,7 +87,7 @@ Environment:
   [34004b35] HypergeometricFunctions v0.3.28
   [b5f81e59] IOCapture v1.0.0
   [615f187c] IfElse v0.1.1
-  [3263718b] ImplicitDiscreteSolve v1.4.0
+  [3263718b] ImplicitDiscreteSolve v1.5.0
   [d25df0c9] Inflate v0.1.5
   [18e54dd8] IntegerMathUtils v0.1.3
   [8197267c] IntervalSets v0.7.13
@@ -127,7 +127,7 @@ Environment:
   [6fe1bfb0] OffsetArrays v1.17.0
   [429524aa] Optim v1.13.3
   [bac558e1] OrderedCollections v1.8.1
-  [bbf590c4] OrdinaryDiffEqCore v2.1.0
+  [bbf590c4] OrdinaryDiffEqCore v2.3.0
   [90014a1f] PDMats v0.11.37
   [fae87a5f] ParserCombinator v2.2.1
   [69de0a69] Parsers v2.8.3
@@ -163,7 +163,7 @@ Environment:
   [53ae85a6] SciMLStructures v1.7.0
   [6c6a2e73] Scratch v1.3.0
   [efcf1570] Setfield v1.1.2
-  [727e6d20] SimpleNonlinearSolve v2.9.0
+  [727e6d20] SimpleNonlinearSolve v2.10.0
   [699a6c99] SimpleTraits v0.9.5
   [a2af1166] SortingAlgorithms v1.2.2
   [276daf66] SpecialFunctions v2.6.1
@@ -256,4 +256,4 @@ Environment:
   [8e850b90] libblastrampoline_jll v5.15.0+0
   [8e850ede] nghttp2_jll v1.64.0+1
   [3f19e933] p7zip_jll v17.7.0+0
-Info Packages marked with ⌃ and ⌅ have new versions available. Those with ⌃ may be upgradable, but those with ⌅ are restricted by compatibility constraints from upgrading. To see why use `status --outdated -m`</code></pre></details><p>You can also download the <a href="https://github.com/SciML/BaseModelica.jl/tree/gh-pages/v1.3.0/assets/Manifest.toml">manifest</a> file and the <a href="https://github.com/SciML/BaseModelica.jl/tree/gh-pages/v1.3.0/assets/Project.toml">project</a> file.</p></article><nav class="docs-footer"><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Thursday 25 December 2025 21:45">Thursday 25 December 2025</span>. Using Julia version 1.12.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+Info Packages marked with ⌃ and ⌅ have new versions available. Those with ⌃ may be upgradable, but those with ⌅ are restricted by compatibility constraints from upgrading. To see why use `status --outdated -m`</code></pre></details><p>You can also download the <a href="https://github.com/SciML/BaseModelica.jl/tree/gh-pages/v1.3.0/assets/Manifest.toml">manifest</a> file and the <a href="https://github.com/SciML/BaseModelica.jl/tree/gh-pages/v1.3.0/assets/Project.toml">project</a> file.</p></article><nav class="docs-footer"><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Monday 29 December 2025 01:34">Monday 29 December 2025</span>. Using Julia version 1.12.3.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
