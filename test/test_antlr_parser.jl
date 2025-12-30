@@ -12,7 +12,7 @@ BM = BaseModelica
         @test newton_cooling isa BM.BaseModelicaPackage
         newton_system = BM.baseModelica_to_ModelingToolkit(newton_cooling)
         @test newton_system isa System
-        @test parse_basemodelica(newton_path, parser=:antlr) isa System
+        @test parse_basemodelica(newton_path, parser = :antlr) isa System
     end
 
     @testset "Negative Variables" begin
@@ -22,7 +22,7 @@ BM = BaseModelica
         @test negative_package isa BM.BaseModelicaPackage
         negative_system = BM.baseModelica_to_ModelingToolkit(negative_package)
         @test negative_system isa System
-        @test parse_basemodelica(negative_path, parser=:antlr) isa System
+        @test parse_basemodelica(negative_path, parser = :antlr) isa System
     end
 
     @testset "Experiment Annotation" begin
@@ -32,7 +32,7 @@ BM = BaseModelica
         @test experiment_package isa BM.BaseModelicaPackage
         experiment_system = BM.baseModelica_to_ModelingToolkit(experiment_package)
         @test experiment_system isa System
-        @test parse_basemodelica(experiment_path, parser=:antlr) isa System
+        @test parse_basemodelica(experiment_path, parser = :antlr) isa System
     end
 
     @testset "Parameter with Modifiers" begin
@@ -42,7 +42,7 @@ BM = BaseModelica
         @test param_modifiers_package isa BM.BaseModelicaPackage
         param_modifiers_system = BM.baseModelica_to_ModelingToolkit(param_modifiers_package)
         @test param_modifiers_system isa System
-        @test parse_basemodelica(param_modifiers_path, parser=:antlr) isa System
+        @test parse_basemodelica(param_modifiers_path, parser = :antlr) isa System
     end
 
     @testset "If Equations" begin
@@ -52,7 +52,7 @@ BM = BaseModelica
         @test if_equations_package isa BM.BaseModelicaPackage
         if_equations_system = BM.baseModelica_to_ModelingToolkit(if_equations_package)
         @test if_equations_system isa System
-        @test parse_basemodelica(if_equations_path, parser=:antlr) isa System
+        @test parse_basemodelica(if_equations_path, parser = :antlr) isa System
     end
 
     @testset "Cauer Low Pass Filters" begin
@@ -63,10 +63,12 @@ BM = BaseModelica
         @test cauer_analog_package isa BM.BaseModelicaPackage
         cauer_analog_system = BM.baseModelica_to_ModelingToolkit(cauer_analog_package)
         @test cauer_analog_system isa System
-        @test parse_basemodelica(cauer_analog_path, parser=:antlr) isa System
+        @test parse_basemodelica(cauer_analog_path, parser = :antlr) isa System
 
         # Test that initial conditions (fixed=true) are set correctly
-        @test !isempty(ModelingToolkit.defaults(cauer_analog_system))
+        # MTK v11 replaced defaults with initial_conditions and bindings
+        @test !isempty(ModelingToolkit.initial_conditions(cauer_analog_system)) ||
+              !isempty(ModelingToolkit.bindings(cauer_analog_system))
 
         # Test that guess values (fixed=false or no fixed) are set correctly
         @test !isempty(ModelingToolkit.guesses(cauer_analog_system))
@@ -78,7 +80,7 @@ BM = BaseModelica
         @test cauer_sine_package isa BM.BaseModelicaPackage
         cauer_sine_system = BM.baseModelica_to_ModelingToolkit(cauer_sine_package)
         @test cauer_sine_system isa System
-        @test parse_basemodelica(cauer_sine_path, parser=:antlr) isa System
+        @test parse_basemodelica(cauer_sine_path, parser = :antlr) isa System
 
         # Test CauerLowPassAnalogSineNoAssert
         cauer_sine_noassert_path = joinpath(
@@ -87,7 +89,7 @@ BM = BaseModelica
         @test cauer_sine_noassert_package isa BM.BaseModelicaPackage
         cauer_sine_noassert_system = BM.baseModelica_to_ModelingToolkit(cauer_sine_noassert_package)
         @test cauer_sine_noassert_system isa System
-        @test parse_basemodelica(cauer_sine_noassert_path, parser=:antlr) isa System
+        @test parse_basemodelica(cauer_sine_noassert_path, parser = :antlr) isa System
     end
 
     @testset "Chua Circuits" begin
@@ -98,7 +100,7 @@ BM = BaseModelica
         @test chua_package isa BM.BaseModelicaPackage
         chua_system = BM.baseModelica_to_ModelingToolkit(chua_package)
         @test chua_system isa System
-        @test parse_basemodelica(chua_path, parser=:antlr) isa System
+        @test parse_basemodelica(chua_path, parser = :antlr) isa System
 
         # Test ChuaCircuitNoAssert
         chua_noassert_path = joinpath(
@@ -107,7 +109,7 @@ BM = BaseModelica
         @test chua_noassert_package isa BM.BaseModelicaPackage
         chua_noassert_system = BM.baseModelica_to_ModelingToolkit(chua_noassert_package)
         @test chua_noassert_system isa System
-        @test parse_basemodelica(chua_noassert_path, parser=:antlr) isa System
+        @test parse_basemodelica(chua_noassert_path, parser = :antlr) isa System
     end
 
     @testset "Minimal Valid File" begin
@@ -123,7 +125,7 @@ BM = BaseModelica
         experiment_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "Experiment.bmo")
 
-        prob = BM.create_odeproblem(experiment_path, parser=:antlr)
+        prob = BM.create_odeproblem(experiment_path, parser = :antlr)
         @test prob isa ODEProblem
 
         # Check that tspan was set from annotation
@@ -150,7 +152,7 @@ BM = BaseModelica
         # Test with model without annotation
         newton_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "NewtonCoolingBase.bmo")
-        prob_no_annotation = BM.create_odeproblem(newton_path, parser=:antlr)
+        prob_no_annotation = BM.create_odeproblem(newton_path, parser = :antlr)
         @test prob_no_annotation isa ODEProblem
         # Should use default tspan
         @test prob_no_annotation.tspan[1] == 0.0
@@ -162,7 +164,7 @@ BM = BaseModelica
         @test isnothing(newton_annotation)
 
         # Test that user can override annotation values
-        prob_override = BM.create_odeproblem(experiment_path, parser=:antlr, reltol=1e-8, saveat=0.01)
+        prob_override = BM.create_odeproblem(experiment_path, parser = :antlr, reltol = 1e-8, saveat = 0.01)
         @test prob_override isa ODEProblem
         @test prob_override.kwargs[:reltol] == 1e-8  # User override
         @test prob_override.kwargs[:saveat] == 0.01  # User override
