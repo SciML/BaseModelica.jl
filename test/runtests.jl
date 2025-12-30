@@ -5,6 +5,7 @@ const GROUP = get(ENV, "GROUP", "All")
 if GROUP == "All" || GROUP == "Quality"
     @testset "Quality Assurance" begin
         @safetestset "Quality Assurance" include("qa.jl")
+        @safetestset "JET Static Analysis" include("test_jet.jl")
     end
 end
 
