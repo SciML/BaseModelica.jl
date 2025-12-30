@@ -50,7 +50,7 @@ function eval_AST(if_expr::BaseModelicaIfExpression)
     #           expressions[end] is the else value (no condition)
 
     # Build nested ifelse from right to left
-    function build_nested_ifelse(idx=1)
+    function build_nested_ifelse(idx = 1)
         if idx > length(if_expr.conditions)
             # We've gone past all conditions, return the else value
             return eval_AST(if_expr.expressions[end])
@@ -100,7 +100,8 @@ function get_class_modification_value(modification, key_name::String)
         arg_name = arg.name isa BaseModelicaIdentifier ? arg.name.name : arg.name
         if arg_name == key_name
             # If the arg has a modification with an expression, evaluate it
-            if !isnothing(arg.modification) && !isnothing(arg.modification.expr) && !isempty(arg.modification.expr)
+            if !isnothing(arg.modification) && !isnothing(arg.modification.expr) &&
+               !isempty(arg.modification.expr)
                 return eval_AST(arg.modification.expr[end])
             end
         end
@@ -158,8 +159,7 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     result_equations = []
 
     # Helper function to build nested ifelse for a single variable across all branches
-    function build_ifelse_for_var(var_lhs, branch_idx=1)
-
+    function build_ifelse_for_var(var_lhs, branch_idx = 1)
         if branch_idx > length(if_eq.ifs)
             # This shouldn't happen if the model is well-formed
             error("If-equation branches exhausted without finding assignment")
@@ -217,7 +217,7 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     end
 
     # Build ifelse expression for each variable
-    
+
     for var in lhs_vars
         ifelse_rhs = build_ifelse_for_var(var)
         push!(result_equations, var ~ ifelse_rhs)
@@ -328,7 +328,8 @@ function eval_AST(model::BaseModelicaModel)
                 var = variable_map[name]
                 # If fixed=true, use setdefault for initial condition
                 # Otherwise use setguess for guess value
-                is_fixed = !isnothing(fixed_value) && (fixed_value === true || fixed_value == true)
+                is_fixed = !isnothing(fixed_value) &&
+                           (fixed_value === true || fixed_value == true)
                 if is_fixed
                     variable_map[name] = ModelingToolkit.setdefault(var, start_value)
                     idx = findfirst(v -> ModelingToolkit.getname(v) == name, vars)
@@ -385,7 +386,7 @@ function eval_AST(model::BaseModelicaModel)
 
     defs = merge(init_eqs_dict, parameter_val_map)
     real_eqs = [eq for eq in eqs] # Weird type stuff
-    @named sys = System(real_eqs, t; defaults = defs)
+    @named sys = System(real_eqs, t; __legacy_defaults__ = defs)
     mtkcompile(sys)
 end
 
