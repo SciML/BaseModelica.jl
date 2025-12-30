@@ -31,6 +31,11 @@ jobs:
         group:
           - Core
           - Quality
+        exclude:
+          # JET 0.9.x only works on Julia 1.11, JET 0.11.x has dependency conflicts on Julia 1.12
+          # Skip Quality tests on Julia pre (1.12) until JET versioning is resolved
+          - version: "pre"
+            group: "Quality"
     uses: "SciML/.github/.github/workflows/tests.yml@v1"
     with:
       group: "${{ matrix.group }}"
