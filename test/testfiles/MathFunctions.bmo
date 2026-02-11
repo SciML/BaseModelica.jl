@@ -1,0 +1,19 @@
+//! base 0.1.0
+package 'MathFunctions'
+  model 'MathFunctions' "Test model exercising various Modelica built-in math functions"
+    parameter Real 'omega' = 1.0 "Angular frequency";
+    parameter Real 'k' = 0.5 "Damping coefficient";
+    Real 'x' "Position";
+    Real 'v' "Velocity";
+    Real 'energy' "Total energy";
+    Real 'phase' "Phase angle via atan2";
+  initial equation
+    'x' = 1.0;
+    'v' = 0.0;
+  equation
+    der('x') = 'v';
+    der('v') = -'omega' * 'omega' * sin('x') - 'k' * tanh('v');
+    'energy' = 0.5 * 'v' * 'v' + 'omega' * 'omega' * (1.0 - cos('x'));
+    'phase' = atan2('v', 'x');
+  end 'MathFunctions';
+end 'MathFunctions';

@@ -1,0 +1,18 @@
+//! base 0.1.0
+package 'MathFunctionsExtended'
+  model 'MathFunctionsExtended' "Test model with noEvent, sqrt, exp, log, max, sign"
+    parameter Real 'tau' = 1.0 "Time constant";
+    parameter Real 'x0' = 2.0 "Initial value";
+    Real 'x' "State variable";
+    Real 'y' "Auxiliary: exp decay";
+    Real 'z' "Auxiliary: sqrt and max";
+    Real 'w' "Auxiliary: noEvent wrapper";
+  initial equation
+    'x' = 'x0';
+  equation
+    der('x') = -'x' / 'tau';
+    'y' = exp(-time / 'tau');
+    'z' = sqrt(max('x', 0.001));
+    'w' = noEvent(sign('x') * log(abs('x') + 1.0));
+  end 'MathFunctionsExtended';
+end 'MathFunctionsExtended';

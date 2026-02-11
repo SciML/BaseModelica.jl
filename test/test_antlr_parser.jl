@@ -112,6 +112,67 @@ BM = BaseModelica
         @test parse_basemodelica(chua_noassert_path, parser = :antlr) isa System
     end
 
+    @testset "Math Functions" begin
+        # Test model with cos, tanh, atan2
+        math_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "MathFunctions.bmo")
+        math_package = BM.parse_file_antlr(math_path)
+        @test math_package isa BM.BaseModelicaPackage
+        math_system = BM.baseModelica_to_ModelingToolkit(math_package)
+        @test math_system isa System
+        @test parse_basemodelica(math_path, parser = :antlr) isa System
+    end
+
+    @testset "Math Functions Extended" begin
+        # Test model with exp, sqrt, max, noEvent, sign, log, abs
+        math_ext_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "MathFunctionsExtended.bmo")
+        math_ext_package = BM.parse_file_antlr(math_ext_path)
+        @test math_ext_package isa BM.BaseModelicaPackage
+        math_ext_system = BM.baseModelica_to_ModelingToolkit(math_ext_package)
+        @test math_ext_system isa System
+        @test parse_basemodelica(math_ext_path, parser = :antlr) isa System
+    end
+
+    @testset "Function Map Coverage" begin
+        # Verify all expected BaseModelica built-in functions are in the map
+        fmap = BM.function_map
+
+        # Derivative operator
+        @test haskey(fmap, :der)
+
+        # Elementary math (Spec 3.7.3)
+        for f in [:sin, :cos, :tan, :asin, :acos, :atan, :atan2,
+                  :sinh, :cosh, :tanh, :exp, :log, :log10]
+            @test haskey(fmap, f)
+        end
+
+        # Numeric functions (Spec 3.7.1)
+        for f in [:abs, :sign, :sqrt, :min, :max]
+            @test haskey(fmap, f)
+        end
+
+        # Event-triggering math (Spec 3.7.2)
+        for f in [:div, :mod, :rem, :ceil, :floor, :integer]
+            @test haskey(fmap, f)
+        end
+
+        # Special operators (Spec 3.7.4)
+        for f in [:semiLinear, :homotopy]
+            @test haskey(fmap, f)
+        end
+
+        # Event-related (Spec 3.7.5)
+        for f in [:noEvent, :smooth]
+            @test haskey(fmap, f)
+        end
+
+        # Assertion/termination
+        for f in [:assert, :terminate]
+            @test haskey(fmap, f)
+        end
+    end
+
     @testset "Minimal Valid File" begin
         minimal_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "MinimalValid.bmo")
