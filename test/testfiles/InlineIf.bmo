@@ -1,0 +1,10 @@
+//! base 0.1.0
+package 'InlineIf'
+  model 'InlineIf'
+    Real 'x';
+    Real 'y';
+  equation
+    'x' = if time < 0.5 then 1.0 else 2.0;
+    der('y') = 'x';
+  end 'InlineIf';
+end 'InlineIf';

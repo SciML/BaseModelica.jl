@@ -13,7 +13,7 @@ using ModelingToolkit: t_nounits as t, D_nounits as D
 end
 
 function eval_AST(expr::BaseModelicaExpr)
-    let f = eval_AST
+    return let f = eval_AST
         @match expr begin
             BaseModelicaNumber(val) => val
             BaseModelicaBool(val) => begin
@@ -69,7 +69,7 @@ include("maps.jl")
 
 function eval_AST(eq::BaseModelicaInitialEquation)
     inner_eq = eq.equation.equation
-    Dict(eval_AST(inner_eq.lhs) => eval_AST(inner_eq.rhs))
+    return Dict(eval_AST(inner_eq.lhs) => eval_AST(inner_eq.rhs))
 end
 
 function eval_AST(eq::BaseModelicaAnyEquation)
@@ -101,7 +101,7 @@ function get_class_modification_value(modification, key_name::String)
         if arg_name == key_name
             # If the arg has a modification with an expression, evaluate it
             if !isnothing(arg.modification) && !isnothing(arg.modification.expr) &&
-               !isempty(arg.modification.expr)
+                    !isempty(arg.modification.expr)
                 return eval_AST(arg.modification.expr[end])
             end
         end
@@ -123,101 +123,74 @@ function eval_AST(eq::BaseModelicaSimpleEquation)
         return nothing
     end
 
-    lhs ~ rhs
+    return lhs ~ rhs
 end
 
 function eval_AST(if_eq::BaseModelicaIfEquation)
     # Convert if-equation to nested ifelse calls
     # Structure: ifs[i] contains condition, thens[i] contains a list of equations for that branch
+    # If length(thens) > length(ifs), thens[end] is the else branch (no condition)
 
-    # Process all equations in all branches to get the lhs variables
-    # We assume all branches assign to the same variables
-    # thens is a list of lists: thens[i] is a list of equations for branch i
-    all_equations = []
-    for eq_list in if_eq.thens
-        # Each element in thens is a list of equations
-        if isa(eq_list, AbstractArray)
-            for eq in eq_list
-                if isa(eq, BaseModelicaAnyEquation)
-                    push!(all_equations, eval_AST(eq.equation))
-                else
-                    push!(all_equations, eval_AST(eq))
-                end
-            end
-        else
-            # Fallback for single equation
-            if isa(eq_list, BaseModelicaAnyEquation)
-                push!(all_equations, eval_AST(eq_list.equation))
-            else
-                push!(all_equations, eval_AST(eq_list))
+    has_else = length(if_eq.thens) > length(if_eq.ifs)
+
+    # Helper to extract RHS for a specific variable from a branch's equation list
+    function get_rhs_for_var(var_lhs, branch_equations)
+        equations_to_check = isa(branch_equations, AbstractArray) ? branch_equations :
+            [branch_equations]
+        for eq in equations_to_check
+            eq_obj = isa(eq, BaseModelicaAnyEquation) ? eval_AST(eq.equation) : eval_AST(eq)
+            if !isnothing(eq_obj) && isa(eq_obj, Equation) && isequal(eq_obj.lhs, var_lhs)
+                return eq_obj.rhs
             end
         end
+        return nothing
     end
 
-    # Build result equations by nesting ifelse calls from right to left
-    # For each unique lhs variable, build an ifelse expression
-    result_equations = []
-
-    # Helper function to build nested ifelse for a single variable across all branches
-    function build_ifelse_for_var(var_lhs, branch_idx = 1)
-        if branch_idx > length(if_eq.ifs)
-            # This shouldn't happen if the model is well-formed
-            error("If-equation branches exhausted without finding assignment")
-        end
-
-        # Get the RHS for this variable in this branch
-        eq_list = if_eq.thens[branch_idx]
-        rhs_expr = nothing
-
-        # Handle list of equations
+    # Collect all unique LHS variables across all branches
+    lhs_vars = Set()
+    for eq_list in if_eq.thens
         equations_to_check = isa(eq_list, AbstractArray) ? eq_list : [eq_list]
         for eq in equations_to_check
             eq_obj = isa(eq, BaseModelicaAnyEquation) ? eval_AST(eq.equation) : eval_AST(eq)
             if !isnothing(eq_obj) && isa(eq_obj, Equation)
-                eq_lhs = eq_obj.lhs
-                if isequal(eq_lhs, var_lhs)
-                    rhs_expr = eq_obj.rhs
-                    break
+                push!(lhs_vars, eq_obj.lhs)
+            end
+        end
+    end
+
+    # Build nested ifelse for each variable
+    function build_ifelse_for_var(var_lhs, idx = 1)
+        if idx > length(if_eq.ifs)
+            # Past all conditions
+            if has_else
+                rhs = get_rhs_for_var(var_lhs, if_eq.thens[end])
+                if isnothing(rhs)
+                    error("Variable $var_lhs not assigned in else branch")
                 end
-            end
-        end
-
-        if isnothing(rhs_expr)
-            error("Variable $var_lhs not assigned in branch $branch_idx")
-        end
-
-        # Get condition
-        condition = eval_AST(if_eq.ifs[branch_idx])
-
-        # Check if this is the last branch (else branch or last elseif)
-        if branch_idx == length(if_eq.ifs)
-            # Last branch - check if it's an else (no condition) or final elseif
-            # In Modelica, else branches still have a marker in ifs, but we need to detect them
-            # For now, assume if it's the last branch, use it as the else value
-            if branch_idx == length(if_eq.thens)
-                # This is a final else or final elseif
-                return rhs_expr
+                return rhs
             else
-                # Final elseif with no else - would need default
-                return ifelse(condition, rhs_expr, 0)  # Default to 0 if no else
+                error("If-equation has no else branch and exhausted all conditions for $var_lhs")
             end
+        end
+
+        condition = eval_AST(if_eq.ifs[idx])
+        rhs = get_rhs_for_var(var_lhs, if_eq.thens[idx])
+
+        if isnothing(rhs)
+            error("Variable $var_lhs not assigned in branch $idx")
+        end
+
+        if idx == length(if_eq.ifs) && !has_else
+            # Last conditional branch with no else clause
+            # In well-formed Modelica, this should be elseif true (always true)
+            return ifelse(condition, rhs, zero(rhs))
         else
-            # Recursive case: condition ? rhs : build_ifelse_for_var(branch_idx + 1)
-            else_expr = build_ifelse_for_var(var_lhs, branch_idx + 1)
-            return ifelse(condition, rhs_expr, else_expr)
+            else_expr = build_ifelse_for_var(var_lhs, idx + 1)
+            return ifelse(condition, rhs, else_expr)
         end
     end
 
-    # Extract unique lhs variables from all equations
-    lhs_vars = Set()
-    for eq in all_equations
-        if !isnothing(eq) && isa(eq, Equation)
-            push!(lhs_vars, eq.lhs)
-        end
-    end
-
-    # Build ifelse expression for each variable
-
+    result_equations = []
     for var in lhs_vars
         ifelse_rhs = build_ifelse_for_var(var)
         push!(result_equations, var ~ ifelse_rhs)
@@ -227,11 +200,11 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
 end
 
 function eval_AST(x::String)
-    x
+    return x
 end
 
 function eval_AST(::Nothing)
-    nothing
+    return nothing
 end
 
 function eval_AST(component::BaseModelicaComponentClause)
@@ -329,7 +302,7 @@ function eval_AST(model::BaseModelicaModel)
                 # If fixed=true, use setdefault for initial condition
                 # Otherwise use setguess for guess value
                 is_fixed = !isnothing(fixed_value) &&
-                           (fixed_value === true || fixed_value == true)
+                    (fixed_value === true || fixed_value == true)
                 if is_fixed
                     variable_map[name] = ModelingToolkit.setdefault(var, start_value)
                     idx = findfirst(v -> ModelingToolkit.getname(v) == name, vars)
@@ -387,17 +360,17 @@ function eval_AST(model::BaseModelicaModel)
     defs = merge(init_eqs_dict, parameter_val_map)
     real_eqs = [eq for eq in eqs] # Weird type stuff
     @named sys = System(real_eqs, t; __legacy_defaults__ = defs)
-    mtkcompile(sys)
+    return mtkcompile(sys)
 end
 
 function eval_AST(package::BaseModelicaPackage)
     model = package.model
-    eval_AST(model)
+    return eval_AST(model)
 end
 
 function eval_AST(function_args::BaseModelicaFunctionArgs)
     args = function_args.args
-    eval_AST.([args...])
+    return eval_AST.([args...])
 end
 
 function eval_AST(function_call::BaseModelicaFunctionCall)
@@ -413,7 +386,7 @@ function eval_AST(function_call::BaseModelicaFunctionCall)
     end
 
     args = eval_AST(function_call.args)
-    function_map[function_name](args)
+    return function_map[function_name](args)
 end
 
 function eval_AST(comp_reference::BaseModelicaComponentReference)
@@ -433,5 +406,5 @@ function eval_AST(comp_reference::BaseModelicaComponentReference)
 end
 
 function baseModelica_to_ModelingToolkit(package::BaseModelicaPackage)
-    eval_AST(package)
+    return eval_AST(package)
 end

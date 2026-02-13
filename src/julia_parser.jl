@@ -60,11 +60,12 @@ function create_term(input_list)
             ::BMElementWiseMult => BaseModelicaElementWiseProd(left_el, input_list[i + 1])
             ::BMDivide => BaseModelicaDivide(left_el, input_list[i + 1])
             ::BMElementWiseDivide => BaseModelicaElementWiseDivide(
-                left_el, input_list[i + 1])
+                left_el, input_list[i + 1]
+            )
             _ => left_el
         end
     end
-    left_el
+    return left_el
 end
 
 function create_arithmetic_expression(input_list)
@@ -80,11 +81,12 @@ function create_arithmetic_expression(input_list)
             ::BMElementWiseAdd => BaseModelicaElementWiseSum(left_el, input_list[i + 1])
             ::BMSubtract => BaseModelicaMinus(left_el, input_list[i + 1])
             ::BMElementWiseSubtract => BaseModelicaElementWiseMinus(
-                left_el, input_list[i + 1])
+                left_el, input_list[i + 1]
+            )
             _ => left_el
         end
     end
-    left_el
+    return left_el
 end
 
 function create_relation(input_list)
@@ -116,7 +118,7 @@ function create_logical_term(input_list)
             _ => left_el
         end
     end
-    left_el
+    return left_el
 end
 
 function create_logical_expression(input_list)
@@ -127,11 +129,11 @@ function create_logical_expression(input_list)
             _ => left_el
         end
     end
-    left_el
+    return left_el
 end
 
 function create_simple_expression(input_list)
-    @match input_list begin
+    return @match input_list begin
         [start, ":", stop] => BaseModelicaRange(start, BaseModelicaNumber(1), stop)
         [start, ":", step, ":", stop] => BaseModelicaRange(start, step, stop)
         _ => only(input_list)
@@ -151,7 +153,7 @@ function BaseModelicaIfExpression(input_list)
             _ => nothing
         end
     end
-    BaseModelicaIfExpression(condition_list, expression_list)
+    return BaseModelicaIfExpression(condition_list, expression_list)
 end
 
 function create_component_clause(input_list)
@@ -159,11 +161,11 @@ function create_component_clause(input_list)
 end
 
 function BaseModelicaArraySubscripts(input::Vector{Any})
-    BaseModelicaArraySubscripts(Tuple(input))
+    return BaseModelicaArraySubscripts(Tuple(input))
 end
 
 function BaseModelicaFunctionCall(input)
-    BaseModelicaFunctionCall(input[1], input[2:end])
+    return BaseModelicaFunctionCall(input[1], input[2:end])
 end
 
 function BaseModelicaTypePrefix(input_list)
@@ -179,11 +181,11 @@ function BaseModelicaTypePrefix(input_list)
             io = input
         end
     end
-    BaseModelicaTypePrefix(final_flag, dpc, io)
+    return BaseModelicaTypePrefix(final_flag, dpc, io)
 end
 
 function BaseModelicaSimpleEquation(input_list)
-    @match input_list begin
+    return @match input_list begin
         [lhs] => BaseModelicaSimpleEquation(lhs, nothing)
         [lhs, rhs] => BaseModelicaSimpleEquation(lhs, rhs)
         _ => nothing
@@ -208,26 +210,58 @@ function BaseModelicaWhenEquation(input_list)
             _ => nothing
         end
     end
-    BaseModelicaWhenEquation(whens, thens)
+    return BaseModelicaWhenEquation(whens, thens)
 end
 
 function BaseModelicaIfEquation(input_list)
     ifs = []
     thens = []
-    for (i, element) in enumerate(input_list)
+    current_equations = []
+    collecting_equations = false
+    expecting_condition = false
+
+    for element in input_list
         @match element begin
-            ::BMIf => push!(ifs, input_list[i + 1])
-            ::BMThen => push!(thens, input_list[i + 1])
-            _ => nothing
+            ::BMIf => begin
+                # Save accumulated equations for previous branch
+                if collecting_equations
+                    push!(thens, current_equations)
+                    current_equations = []
+                    collecting_equations = false
+                end
+                expecting_condition = true
+            end
+            ::BMThen => begin
+                # Save accumulated equations for previous branch (if any)
+                if collecting_equations
+                    push!(thens, current_equations)
+                    current_equations = []
+                end
+                collecting_equations = true
+            end
+            _ => begin
+                if expecting_condition
+                    push!(ifs, element)
+                    expecting_condition = false
+                elseif collecting_equations
+                    push!(current_equations, element)
+                end
+            end
         end
     end
-    BaseModelicaIfEquation(ifs, thens)
+
+    # Save last branch's equations
+    if collecting_equations && !isempty(current_equations)
+        push!(thens, current_equations)
+    end
+
+    return BaseModelicaIfEquation(ifs, thens)
 end
 
 function BaseModelicaForEquation(input_list)
     index = input_list[1]
     equations = input_list[2:end]
-    BaseModelicaForEquation(index, equations)
+    return BaseModelicaForEquation(index, equations)
 end
 
 function BaseModelicaComposition(input_list)
@@ -247,7 +281,7 @@ function BaseModelicaComposition(input_list)
             annotation = input
         end
     end
-    BaseModelicaComposition(components, equations, initial_equations, annotation)
+    return BaseModelicaComposition(components, equations, initial_equations, annotation)
 end
 
 function BaseModelicaPackage(input_list)
@@ -261,7 +295,7 @@ function BaseModelicaPackage(input_list)
             model = input
         end
     end
-    BaseModelicaPackage(name, class_defs, model)
+    return BaseModelicaPackage(name, class_defs, model)
 end
 
 function component_reference_or_function_call(input_list)
@@ -289,43 +323,49 @@ spc = Drop(Star(Space()))
     S_ESCAPE = p"\\['\"?\\abfnrtv]"
     S_CHAR = NL | p"[^\r\n\\\"]"
     Q_IDENT = (E"'" + (Q_CHAR | S_ESCAPE) + Star(Q_CHAR | S_ESCAPE | E"\"") + E"'") |>
-              list2string
+        list2string
     IDENT = (((NONDIGIT + Star(DIGIT | NONDIGIT)) |> list2string) | Q_IDENT) >
-            BaseModelicaIdentifier
+        BaseModelicaIdentifier
     STRING = E"\"" + Star(S_CHAR | S_ESCAPE) + E"\"" |> list2string
     EXPONENT = (e"e" | e"E") + (e"+" | e"-")[0:1] + DIGIT[1:end]
-    UNSIGNED_NUMBER = (DIGIT[1:end] + (e"." + Star(DIGIT))[0:1] + EXPONENT[0:1] |>
-                       list2string) |> (x -> BaseModelicaNumber(parse(Float64, only(x))))
+    UNSIGNED_NUMBER = (
+        DIGIT[1:end] + (e"." + Star(DIGIT))[0:1] + EXPONENT[0:1] |>
+            list2string
+    ) |> (x -> BaseModelicaNumber(parse(Float64, only(x))))
 
     #component clauses
     name = Not(Lookahead(e"end")) + Not(Lookahead(E"equation")) +
-           Not(Lookahead(E"initial equation")) + (IDENT + Star(e"." + IDENT)) |> list2string # Not(Lookahead(foo)) tells it that names can't be foo
+        Not(Lookahead(E"initial equation")) + (IDENT + Star(e"." + IDENT)) |> list2string # Not(Lookahead(foo)) tells it that names can't be foo
     type_specifier = E"."[0:1] + name > BaseModelicaTypeSpecifier
-    type_prefix = ((e"final")[0:1] + spc + (e"discrete" | e"parameter" | e"constant")[0:1] +
-                   spc +
-                   (e"input" | e"output")[0:1]) |> BaseModelicaTypePrefix
+    type_prefix = (
+        (e"final")[0:1] + spc + (e"discrete" | e"parameter" | e"constant")[0:1] +
+            spc +
+            (e"input" | e"output")[0:1]
+    ) |> BaseModelicaTypePrefix
     array_subscripts = Delayed()
     modification = Delayed()
     declaration = IDENT & array_subscripts[0:1] & modification[0:1] >
-                  BaseModelicaDeclaration
+        BaseModelicaDeclaration
     comment = Delayed()
     component_declaration = declaration + spc + comment > BaseModelicaComponentDeclaration
     global_constant = e"constant" + type_specifier + array_subscripts[0:1] + declaration +
-                      comment
-    component_list = (component_declaration + spc +
-                      Star(E"," + spc + component_declaration))
+        comment
+    component_list = (
+        component_declaration + spc +
+            Star(E"," + spc + component_declaration)
+    )
     component_reference = E"."[0:1] + IDENT + array_subscripts[0:1] +
-                          Star(E"." + IDENT + array_subscripts[0:1]) |>
-                          BaseModelicaComponentReference
+        Star(E"." + IDENT + array_subscripts[0:1]) |>
+        BaseModelicaComponentReference
     component_clause = type_prefix + spc + type_specifier + spc + component_list[1:1, :&] >
-                       BaseModelicaComponentClause
+        BaseModelicaComponentClause
     #equations
 
     #modification
     string_comment = (STRING + spc + Star(spc + E"+" + spc + STRING))[0:1] |>
-                     BaseModelicaString
+        BaseModelicaString
     element_modification = name + modification[0:1] + Drop(string_comment) >
-                          BaseModelicaClassModificationArg
+        BaseModelicaClassModificationArg
     element_modification_or_replaceable = element_modification
     decoration = E"@" + UNSIGNED_INTEGER
     argument = decoration[0:1] + element_modification_or_replaceable
@@ -333,61 +373,75 @@ spc = Drop(Star(Space()))
     class_modification = E"(" + argument_list[0:1] + E")"
     expression = Delayed()
     modification.matcher = (class_modification + (spc + E"=" + spc + expression)[0:1]) |
-                           (spc + E"=" + spc + expression) | (E":=" + spc + expression) |>
-                           parse_modification
+        (spc + E"=" + spc + expression) | (E":=" + spc + expression) |>
+        parse_modification
 
     #expressions
     relational_operator = (E"<" > BMLessThan) | (E"<=" > BMLEQ) | (E">" > BMGreaterThan) |
-                          (E">=" > BMGEQ) | (E"==" > BMEQ) | (E"<>" > BMNEQ)
+        (E">=" > BMGEQ) | (E"==" > BMEQ) | (E"<>" > BMNEQ)
     add_operator = (E"+" > BMAdd) | (E"-" > BMSubtract) | (E".+" > BMElementWiseAdd) |
-                   (E".-" > BMElementWiseSubtract)
+        (E".-" > BMElementWiseSubtract)
     mul_operator = (E"*" > BMMult) | (E"/" > BMDivide) | (E".*" > BMElementWiseMult) |
-                   (E"./" > BMElementWiseDivide)
+        (E"./" > BMElementWiseDivide)
     named_arguments = Delayed()
     function_partial_application = E"function" + type_specifier + e"(" + named_arguments +
-                                   e")"
+        e")"
     function_argument = function_partial_application | expression
     function_arguments_non_first = Delayed()
-    function_arguments_non_first.matcher = (function_argument +
-                                            (E"," + function_arguments_non_first)[0:1]) |
-                                           named_arguments
+    function_arguments_non_first.matcher = (
+        function_argument +
+            (E"," + function_arguments_non_first)[0:1]
+    ) |
+        named_arguments
     named_argument = IDENT + E"=" + function_argument
     named_arguments.matcher = named_argument + Star(E"," + named_argument)
     function_partial_applications = E"function" + type_specifier + E"(" +
-                                    named_arguments[0:1] + E")"
+        named_arguments[0:1] + E")"
     for_index = Delayed()
-    function_arguments = (expression +
-                          ((E"," + function_arguments_non_first) | (E"for" + for_index))[0:1]) |
-                         (function_partial_application +
-                          (E"," + function_arguments_non_first)[0:1]) |
-                         named_arguments |> BaseModelicaFunctionArgs
+    function_arguments = (
+        expression +
+            ((E"," + function_arguments_non_first) | (E"for" + for_index))[0:1]
+    ) |
+        (
+        function_partial_application +
+            (E"," + function_arguments_non_first)[0:1]
+    ) |
+        named_arguments |> BaseModelicaFunctionArgs
     function_call_args = E"(" + function_arguments[0:1] + E")"
     output_expression_list = Delayed()
     expression_list = Delayed()
     array_arguments = expression + (Star(E"," + expression) | E"for" + for_index)
-    primary = UNSIGNED_NUMBER | STRING | (e"false" > BaseModelicaBool) | (e"true" > BaseModelicaBool)|
-              (((e"der" | e"initial" | e"pure") > BaseModelicaIdentifier) + function_call_args |>
-               component_reference_or_function_call) |
-              ((component_reference + function_call_args[0:1]) |>
-               component_reference_or_function_call) |
-              (E"(" + spc + output_expression_list + spc + E")" + array_subscripts[0:1]) |
-              (e"[" + spc + expression_list + spc + Star(E";" + spc + expression_list) +
-               spc + e"]") |
-              (e"{" + spc + array_arguments + spc + e"}") |
-              E"end"
+    primary = UNSIGNED_NUMBER | STRING | (e"false" > BaseModelicaBool) | (e"true" > BaseModelicaBool) |
+        (
+        ((e"der" | e"initial" | e"pure") > BaseModelicaIdentifier) + function_call_args |>
+            component_reference_or_function_call
+    ) |
+        (
+        (component_reference + function_call_args[0:1]) |>
+            component_reference_or_function_call
+    ) |
+        (E"(" + spc + output_expression_list + spc + E")" + array_subscripts[0:1]) |
+        (
+        e"[" + spc + expression_list + spc + Star(E";" + spc + expression_list) +
+            spc + e"]"
+    ) |
+        (e"{" + spc + array_arguments + spc + e"}") |
+        E"end"
     factor = primary + spc + ((e"^" | e".^") + spc + primary)[0:1] |> create_factor
     term = factor + spc + Star(mul_operator + spc + factor) |> create_term
     arithmetic_expression = add_operator[0:1] + spc + term + spc +
-                            Star(add_operator + spc + term) |> create_arithmetic_expression
+        Star(add_operator + spc + term) |> create_arithmetic_expression
 
     subscript = (E":" > BMColon) | expression
     array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript) + E"]" |>
-                               BaseModelicaArraySubscripts
+        BaseModelicaArraySubscripts
     annotation_comment = E"annotation" + class_modification |>
-                         (args -> BaseModelicaAnnotation(wrap_annotation_content(args)))
+        (args -> BaseModelicaAnnotation(wrap_annotation_content(args)))
     comment.matcher = (string_comment + annotation_comment[0:1]) |>
-                      (x -> length(x) == 1 ? x[1] :
-                            BaseModelicaString(join([string(elem) for elem in x], " ")))
+        (
+        x -> length(x) == 1 ? x[1] :
+            BaseModelicaString(join([string(elem) for elem in x], " "))
+    )
 
     enumeration_literal = IDENT + comment
     enum_list = enumeration_literal + Star(E"," + enumeration_literal)
@@ -395,8 +449,8 @@ spc = Drop(Star(Space()))
     guess_value = E"guess" + E"(" + component_reference + E")"
     prioritize_expression = Delayed()
     parameter_equation = E"parameter equation" + spc + guess_value + spc + E"=" + spc +
-                         (expression | prioritize_expression) + comment >
-                         BaseModelicaParameterEquation
+        (expression | prioritize_expression) + comment >
+        BaseModelicaParameterEquation
 
     normal_element = component_clause
 
@@ -405,152 +459,186 @@ spc = Drop(Star(Space()))
     language_specification = STRING
 
     external_function_call = (component_reference + E"=")[0:1] + IDENT + E"(" +
-                             expression_list[0:1] + E")"
+        expression_list[0:1] + E")"
 
     equation = Delayed()
     initial_equation = Delayed()
     statement = Delayed()
     base_partition = Delayed()
     composition = Star(decoration[0:1] + generic_element + E";" + spc) + spc +
-                  Star((spc + e"equation" + spc +
-                        Star(spc + (equation | annotation_comment) + E";" + spc)) |
-                       (e"initial equation" + spc +
-                        Star(spc + (initial_equation | annotation_comment) + E";" + spc)) |
-                       (e"initial"[0:1] + e"algorithm" + Star(statement + E";"))) +
-                  (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";")[0:1] +
-                  Star(base_partition) + (annotation_comment + E";")[0:1] |>
-                  BaseModelicaComposition
+        Star(
+        (
+            spc + e"equation" + spc +
+                Star(spc + (equation | annotation_comment) + E";" + spc)
+        ) |
+            (
+            e"initial equation" + spc +
+                Star(spc + (initial_equation | annotation_comment) + E";" + spc)
+        ) |
+            (e"initial"[0:1] + e"algorithm" + Star(statement + E";"))
+    ) +
+        (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";")[0:1] +
+        Star(base_partition) + (annotation_comment + E";")[0:1] |>
+        BaseModelicaComposition
 
     base_prefix = e"input" | e"output"
     long_class_specifier = IDENT + spc + string_comment + spc + composition + spc + E"end" +
-                           spc + Drop(IDENT) > BaseModelicaLongClass
+        spc + Drop(IDENT) > BaseModelicaLongClass
     short_class_specifier = IDENT + spc + E"=" + spc +
-                            (base_prefix[0:1] + type_specifier + class_modification[0:1])
+        (base_prefix[0:1] + type_specifier + class_modification[0:1])
     (e"enumeration" + E"(" + (enum_list[0:1] | E":") + E")") + comment
     class_prefixes = e"type" | e"record" |
-                     ((e"pure constant")[0:1] | ((e"impure")[0:1]) + e"function")
+        ((e"pure constant")[0:1] | ((e"impure")[0:1]) + e"function")
     der_class_specifier = IDENT + E"=" + E" "[0:1] + E"der" + E" " + E"(" + type_specifier +
-                          E"," + IDENT + Star(E"," + IDENT) + E")" + comment
+        E"," + IDENT + Star(E"," + IDENT) + E")" + comment
     class_specifier = long_class_specifier | short_class_specifier | der_class_specifier
     class_definition = class_prefixes + spc + class_specifier > BaseModelicaClassDefinition
 
     clock_clause = decoration[0:1] + E"Clock" + IDENT + E"=" + expression + comment
     sub_partition = E"subpartition" + E"(" + argument_list + E")" + string_comment +
-                    (annotation_comment + E";")[0:1] +
-                    (Star(E"equation" + ((equation + E";"))) | E"algorithm" +
-                     Star(statement + E";"))
+        (annotation_comment + E";")[0:1] +
+        (
+        Star(E"equation" + ((equation + E";"))) | E"algorithm" +
+            Star(statement + E";")
+    )
     base_partition.matcher = E"partition" + string_comment +
-                             (annotation_comment + E";")[0:1] + (clock_clause + E";") +
-                             sub_partition
+        (annotation_comment + E";")[0:1] + (clock_clause + E";") +
+        sub_partition
 
-    #equations 
+    #equations
 
     relation = arithmetic_expression + spc +
-               (relational_operator + arithmetic_expression)[0:1]
+        (relational_operator + arithmetic_expression)[0:1]
     logical_factor = (e"not"[0:1] |> (x -> !isempty(x) ? BMNOT() : nothing)) + spc +
-                     relation |> create_relation
+        relation |> create_relation
     logical_term = logical_factor + spc + Star((E"and" > BMAND) + spc + logical_factor) |>
-                   create_logical_term
+        create_logical_term
     logical_expression = logical_term + spc + Star((E"or" > BMOR) + spc + logical_term) |>
-                         create_logical_expression
+        create_logical_expression
 
     # can be expression or a range, the : are for ranges
     simple_expression = logical_expression + spc +
-                        (e":" + spc + logical_expression + spc + (e":" + spc + logical_expression)[0:1])[0:1] |>
-                        create_simple_expression
+        (e":" + spc + logical_expression + spc + (e":" + spc + logical_expression)[0:1])[0:1] |>
+        create_simple_expression
 
     priority = expression
 
     prioritize_equation = E"prioritize" + E"(" + component_reference + E"," + priority +
-                          E")"
+        E")"
     prioritize_expression.matcher = E"prioritize" + E"(" + expression + E"," + priority +
-                                    E")"
+        E")"
 
     initial_equation.matcher = (equation | prioritize_equation) >
-                               BaseModelicaInitialEquation
+        BaseModelicaInitialEquation
 
     output_expression_list.matcher = expression[0:1] + Star(E"," + expression[0:1])
     expression_list.matcher = expression + Star(E"," + expression)
 
-    # Simple if_expression supporting both "elseif" and "else if"
+    # if_expression: conditions/then-values use simple_expression,
+    # else-value uses expression (Delayed) to support nested if-expressions
     if_expression = e"if" + simple_expression + e"then" +
-                    simple_expression +
-                    Star((e"elseif" | (e"else" + e"if")) + simple_expression + e"then" +
-                         simple_expression) +
-                    e"else" + simple_expression |> BaseModelicaIfExpression
-    expression_no_decoration = simple_expression | if_expression
+        simple_expression +
+        Star(
+        e"elseif" + simple_expression + e"then" +
+            simple_expression
+    ) +
+        e"else" + spc + expression |> BaseModelicaIfExpression
+    expression_no_decoration = if_expression | simple_expression
 
     expression.matcher = expression_no_decoration + decoration[0:1]
 
-    if_equation = (E"if" > BMIf) + expression + (E"then" > BMThen) + spc +
-                  Star(equation + E";") + spc +
-                  Star((E"elseif" > BMIf) + spc + expression + (E"then" > BMThen) + spc +
-                       Star(spc + equation + E";")
-                  ) + spc +
-                  ((E"else" > BMIf) + spc + Star(spc + equation + E";")
-                  )[0:1] + spc +
-                  E"end if" |> BaseModelicaIfEquation
+    # Guarded equation for if-equation blocks: consume whitespace, then check
+    # that we're not at a block-ending keyword before trying to match an equation.
+    # This prevents exponential backtracking with NoCache.
+    guarded_eq = spc + Not(Lookahead(e"elseif")) + Not(Lookahead(e"else")) +
+        Not(Lookahead(E"end if")) + equation + E";"
+    if_equation = (E"if" > BMIf) + expression + (E"then" > BMThen) +
+        Star(guarded_eq) + spc +
+        Star(
+        spc + (E"elseif" > BMIf) + spc + expression + (E"then" > BMThen) +
+            Star(guarded_eq)
+    ) + spc +
+        (
+        spc + (E"else" > BMThen) + Star(guarded_eq)
+    )[0:1] + spc +
+        E"end if" |> BaseModelicaIfEquation
 
     for_index.matcher = IDENT + spc + E"in" + spc + expression > BaseModelicaForIndex
 
     for_equation = E"for" + spc + for_index + spc + E"loop" + spc +
-                   Star(spc + equation + E";") + spc +
-                   E"end for" |> BaseModelicaForEquation
+        Star(spc + equation + E";") + spc +
+        E"end for" |> BaseModelicaForEquation
 
     for_statement = E"for" + for_index + E"loop" + NL +
-                    Star(statement + E";") + NL +
-                    E"end for"
+        Star(statement + E";") + NL +
+        E"end for"
 
     while_statement = E"while" + expression + E"loop" +
-                      Star(statement + E";") + NL +
-                      E"end while"
+        Star(statement + E";") + NL +
+        E"end while"
 
     when_equation = (E"when" > BMWhen) + spc + expression + spc + (E"then" > BMThen) + spc +
-                    Star(equation + E";" + spc) + spc +
-                    Star((E"elsewhen" > BMWhen) + spc + expression + spc +
-                         (E"then" > BMThen) + spc +
-                         Star(equation + E";")) + spc +
-                    E"end when" |> BaseModelicaWhenEquation
+        Star(equation + E";" + spc) + spc +
+        Star(
+        (E"elsewhen" > BMWhen) + spc + expression + spc +
+            (E"then" > BMThen) + spc +
+            Star(equation + E";")
+    ) + spc +
+        E"end when" |> BaseModelicaWhenEquation
 
     when_statement = E"when" + expression + E"then" + spc +
-                     Star(statement + E";") + spc +
-                     Star(E"elsewhen" + expression + E"then" + NL +
-                          Star(statement + E";")) + NL +
-                     E"end when"
+        Star(statement + E";") + spc +
+        Star(
+        E"elsewhen" + expression + E"then" + NL +
+            Star(statement + E";")
+    ) + NL +
+        E"end when"
 
     if_statement = E"if" + expression + E"then" + NL +
-                   Star(statement + E";") + NL +
-                   Star(E"elseif" + expression + E"then" + NL +
-                        Star(statement + E";")) +
-                   (E"else" + NL + Star(statement + E";"))[0:1] + NL +
-                   E"end if"
+        Star(statement + E";") + NL +
+        Star(
+        E"elseif" + expression + E"then" + NL +
+            Star(statement + E";")
+    ) +
+        (E"else" + NL + Star(statement + E";"))[0:1] + NL +
+        E"end if"
 
     statement.matcher = decoration[0:1] +
-                        (component_reference + (E":=" + expression | function_call_args) |
-                         E"(" + output_expression_list + E")" + E":=" +
-                         component_reference + function_call_args |
-                         E"break" |
-                         E"return" |
-                         if_statement |
-                         for_statement |
-                         while_statement |
-                         when_statement) + comment
+        (
+        component_reference + (E":=" + expression | function_call_args) |
+            E"(" + output_expression_list + E")" + E":=" +
+            component_reference + function_call_args |
+            E"break" |
+            E"return" |
+            if_statement |
+            for_statement |
+            while_statement |
+            when_statement
+    ) + comment
 
     equation.matcher = decoration[0:1] +
-                       (when_equation |
-                        if_equation |
-                        for_equation |
-                        (simple_expression + decoration[0:1] +
-                         (spc + E"=" + spc + expression)[0:1]) |>
-                        BaseModelicaSimpleEquation) + comment > BaseModelicaAnyEquation
+        (
+        when_equation |
+            if_equation |
+            for_equation |
+            (
+            simple_expression + decoration[0:1] +
+                (spc + E"=" + spc + expression)[0:1]
+        ) |>
+            BaseModelicaSimpleEquation
+    ) + comment > BaseModelicaAnyEquation
 
-    base_modelica = (Star(LINE_COMMENT) + spc + E"package" + spc + IDENT + spc +
-                     Star((decoration[0:1] + spc + class_definition + spc + E";") |
-                          (decoration[0:1] + global_constant + E";")) +
-                     spc + decoration[0:1] + spc +
-                     ((E"model" + spc + long_class_specifier + E";") > BaseModelicaModel) +
-                     spc + (annotation_comment + E";")[0:1] + spc +
-                     E"end" + spc + Drop(IDENT) + spc + E";" + spc) |> BaseModelicaPackage
+    base_modelica = (
+        Star(LINE_COMMENT) + spc + E"package" + spc + IDENT + spc +
+            Star(
+            (decoration[0:1] + spc + class_definition + spc + E";") |
+                (decoration[0:1] + global_constant + E";")
+        ) +
+            spc + decoration[0:1] + spc +
+            ((E"model" + spc + long_class_specifier + E";") > BaseModelicaModel) +
+            spc + (annotation_comment + E";")[0:1] + spc +
+            E"end" + spc + Drop(IDENT) + spc + E";" + spc
+    ) |> BaseModelicaPackage
 end;
 
 """
@@ -578,8 +666,8 @@ function format_error_context(source::String, position::Int; context_lines = 2)
         if i == line_num
             push!(result, "→ $(lines[i])")
             # Add pointer to the error position
-            pointer = " " ^ (col_num + 1) * "^" *
-                      repeat("~", max(0, min(9, length(lines[i]) - col_num)))
+            pointer = " "^(col_num + 1) * "^" *
+                repeat("~", max(0, min(9, length(lines[i]) - col_num)))
             push!(result, pointer)
         else
             push!(result, "  $(lines[i])")
@@ -593,10 +681,10 @@ end
 Parses a String in to a BaseModelicaPackage.
 """
 function julia_parse_str(data)
-        debug, task = make(Debug, data, base_modelica; delegate = NoCache)
+    debug, task = make(Debug, data, base_modelica; delegate = NoCache)
 
     try
-     result = once(task)
+        result = once(task)
 
         if isempty(result)
             # Get error position and context
@@ -657,4 +745,3 @@ function parse_file_julia(file)
         end
     end
 end
-
