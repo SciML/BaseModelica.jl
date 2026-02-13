@@ -1085,21 +1085,38 @@ function visit_functionArguments(visitor::ASTBuilderVisitor, ctx::Py)
 
     args = []
 
-    # Get all expressions
-    expr_ctxs = ctx.expression()
-    if !is_null(expr_ctxs)
-        if pyconvert(Bool, pybuiltins.hasattr(expr_ctxs, "__iter__"))
-            # It's a list
-            for expr_ctx in expr_ctxs
-                push!(args, visit_expression(visitor, expr_ctx))
-            end
-        else
-            # Single expression
-            push!(args, visit_expression(visitor, expr_ctxs))
-        end
+    # Get the first expression
+    expr_ctx = ctx.expression()
+    if !is_null(expr_ctx)
+        push!(args, visit_expression(visitor, expr_ctx))
+    end
+
+    # Collect remaining arguments from functionArgumentsNonFirst (recursive grammar)
+    non_first_ctx = ctx.functionArgumentsNonFirst()
+    if !is_null(non_first_ctx)
+        collect_functionArgumentsNonFirst!(visitor, non_first_ctx, args)
     end
 
     return BaseModelicaFunctionArgs(args)
+end
+
+function collect_functionArgumentsNonFirst!(visitor::ASTBuilderVisitor, ctx::Py, args::Vector)
+    # functionArgumentsNonFirst: functionArgument (',' functionArgumentsNonFirst)?
+    #   | namedArguments
+    func_arg_ctx = ctx.functionArgument()
+    if !is_null(func_arg_ctx)
+        # functionArgument: functionPartialApplication | expression
+        expr_ctx = func_arg_ctx.expression()
+        if !is_null(expr_ctx)
+            push!(args, visit_expression(visitor, expr_ctx))
+        end
+    end
+
+    # Recurse into remaining arguments
+    non_first_ctx = ctx.functionArgumentsNonFirst()
+    if !is_null(non_first_ctx)
+        collect_functionArgumentsNonFirst!(visitor, non_first_ctx, args)
+    end
 end
 
 function visit_outputExpressionList(visitor::ASTBuilderVisitor, ctx::Py)
