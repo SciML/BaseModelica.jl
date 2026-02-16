@@ -1,6 +1,6 @@
 name = "BaseModelica"
 uuid = "a17d5099-185d-4ff5-b5d3-51aa4569e56d"
-version = "1.5.0"
+version = "1.6.0"
 authors = ["jClugstor <jadonclugston@gmail.com> and contributors"]
 
 [deps]
