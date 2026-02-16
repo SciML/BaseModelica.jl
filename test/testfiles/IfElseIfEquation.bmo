@@ -1,0 +1,16 @@
+//! base 0.1.0
+package 'IfElseIfEquation'
+  model 'IfElseIfEquation'
+    Real 'x';
+    Real 'y';
+  equation
+    if time < 0.33 then
+      'x' = 1.0;
+    elseif time < 0.66 then
+      'x' = 2.0;
+    else
+      'x' = 3.0;
+    end if;
+    der('y') = 'x';
+  end 'IfElseIfEquation';
+end 'IfElseIfEquation';
