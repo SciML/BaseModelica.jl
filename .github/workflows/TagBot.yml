@@ -13,3 +13,20 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           ssh: ${{ secrets.DOCUMENTER_KEY }}
+          changelog: |
+            ## {{ package }} {{ version }}
+            {% if custom %}
+            {{ custom }}
+            {% endif %}
+            {% if pulls %}
+            **Merged pull requests:**
+            {% for pull in pulls %}
+            - {{ pull.title }} (#{{ pull.number }})
+            {% endfor %}
+            {% endif %}
+            {% if issues %}
+            **Closed issues:**
+            {% for issue in issues %}
+            - {{ issue.title }} (#{{ issue.number }})
+            {% endfor %}
+            {% endif %}
