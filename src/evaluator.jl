@@ -284,12 +284,14 @@ function eval_AST(model::BaseModelicaModel)
         declaration = comp.component_list[1].declaration
 
         if type_prefix == "parameter" || type_prefix == "constant"
-            # Extract parameter value from modification
+            # Extract parameter value and apply via setdefault directly.
+            # MTK resolves symbolic defaults lazily, so parameters referencing other
+            # parameters (e.g. c2 = 1/(k * l1)) just work without manual substitution.
             if !isnothing(declaration.modification) && !isempty(declaration.modification)
                 modification = declaration.modification[1]
                 if !isnothing(modification.expr) && !isempty(modification.expr)
                     value_expr = modification.expr[end]
-                    parameter_val_map[variable_map[name]] = eval_AST(value_expr)
+                    variable_map[name] = ModelingToolkit.setdefault(variable_map[name], eval_AST(value_expr))
                 end
             end
         elseif isnothing(type_prefix)
@@ -313,23 +315,6 @@ function eval_AST(model::BaseModelicaModel)
                     vars[idx] = variable_map[name]
                 end
             end
-        end
-    end
-
-    # Pass 3: Substitute parameter values to resolve symbolic references
-    # This ensures parameters that reference other parameters get concrete numeric values
-    for (param, value) in parameter_val_map
-        parameter_val_map[param] = substitute(value, parameter_val_map)
-    end
-
-    # Pass 3.5: Apply concrete parameter values via setdefault (MTK v11 proper API).
-    # This replaces __legacy_defaults__ for parameters — same pattern already used for
-    # variables with start/fixed above.
-    for name in collect(keys(variable_map))
-        sym = variable_map[name]
-        val = get(parameter_val_map, sym, nothing)
-        if !isnothing(val)
-            variable_map[name] = ModelingToolkit.setdefault(sym, val)
         end
     end
 
@@ -358,7 +343,6 @@ function eval_AST(model::BaseModelicaModel)
     # Might be able to use the bindings mechanism here in the future? 
     for dictionary in [eval_AST(eq) for eq in initial_equations]
         for (var, value) in dictionary
-            value = substitute(value, parameter_val_map)
             for (name, sym) in variable_map
                 if isequal(sym, var)
                     new_sym = ModelingToolkit.setdefault(sym, value)
