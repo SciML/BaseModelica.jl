@@ -30,7 +30,7 @@
     BaseModelicaClassDefinition(class_type, class)
 end
 
-@data BaseModelicaExpr<:BaseModelicaASTNode begin
+@data BaseModelicaExpr <: BaseModelicaASTNode begin
     # these are basically just tokens...
     BMAdd()
     BMElementWiseAdd()
@@ -60,7 +60,7 @@ end
     BMOR()
     BMNOT()
 
-    # nodes in the AST 
+    # nodes in the AST
     BaseModelicaNumber(val)
     BaseModelicaBool(val)
     BaseModelicaIdentifier(name)

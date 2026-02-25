@@ -4,19 +4,23 @@ cp("./docs/Manifest.toml", "./docs/src/assets/Manifest.toml", force = true)
 cp("./docs/Project.toml", "./docs/src/assets/Project.toml", force = true)
 
 pages = [
-    "Home" => "index.md"
+    "Home" => "index.md",
 ]
 
 ENV["GKSwstype"] = "100"
 
-makedocs(modules = [BaseModelica],
+makedocs(
+    modules = [BaseModelica],
     sitename = "BaseModelica.jl",
     clean = true,
     doctest = false,
     linkcheck = true,
     warnonly = [:docs_block, :missing_docs],
-    format = Documenter.HTML(assets = ["assets/favicon.ico"],
-        canonical = "https://docs.sciml.ai/BaseModelica/stable/"),
-    pages = pages)
+    format = Documenter.HTML(
+        assets = ["assets/favicon.ico"],
+        canonical = "https://docs.sciml.ai/BaseModelica/stable/"
+    ),
+    pages = pages
+)
 
 deploydocs(repo = "github.com/SciML/BaseModelica.jl"; push_preview = true)

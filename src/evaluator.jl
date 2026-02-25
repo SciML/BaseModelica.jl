@@ -324,7 +324,7 @@ function eval_AST(model::BaseModelicaModel)
     # Pass 3: Substitute parameter cross-references to get concrete values.
     # e.g. V.signalSource.startTime = V.startTime, V.startTime = 1.0
     # After substitution: V.signalSource.startTime = 1.0
-    # TODO: this could probably be replaced with the bindings system? 
+    # TODO: this could probably be replaced with the bindings system?
     for (param, value) in parameter_val_map
         parameter_val_map[param] = substitute(value, parameter_val_map)
     end
@@ -362,7 +362,7 @@ function eval_AST(model::BaseModelicaModel)
 
     # Apply initial equations as setdefault on the respective variables.
     # The key in each dict is the symbolic variable, the value is the initial condition.
-    # Might be able to use the bindings mechanism here in the future? 
+    # Might be able to use the bindings mechanism here in the future?
     for dictionary in [eval_AST(eq) for eq in initial_equations]
         for (var, value) in dictionary
             for (name, sym) in variable_map
