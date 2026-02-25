@@ -284,14 +284,17 @@ function eval_AST(model::BaseModelicaModel)
         declaration = comp.component_list[1].declaration
 
         if type_prefix == "parameter" || type_prefix == "constant"
-            # Extract parameter value and apply via setdefault directly.
-            # MTK resolves symbolic defaults lazily, so parameters referencing other
-            # parameters (e.g. c2 = 1/(k * l1)) just work without manual substitution.
+            # Collect into parameter_val_map; setdefault is applied in pass 3 below.
+            # We cannot call setdefault here because setdefault returns a NEW symbol
+            # object. A forward reference (e.g. V.signalSource.startTime = V.startTime
+            # where V.startTime is declared later) would embed the OLD stale symbol in
+            # the expression — MTK cannot resolve it. Pass 3 substitutes all references
+            # to concrete values first, then setdefault is called once with clean values.
             if !isnothing(declaration.modification) && !isempty(declaration.modification)
                 modification = declaration.modification[1]
                 if !isnothing(modification.expr) && !isempty(modification.expr)
                     value_expr = modification.expr[end]
-                    variable_map[name] = ModelingToolkit.setdefault(variable_map[name], eval_AST(value_expr))
+                    parameter_val_map[variable_map[name]] = eval_AST(value_expr)
                 end
             end
         elseif isnothing(type_prefix)
@@ -315,6 +318,25 @@ function eval_AST(model::BaseModelicaModel)
                     vars[idx] = variable_map[name]
                 end
             end
+        end
+    end
+
+    # Pass 3: Substitute parameter cross-references to get concrete values.
+    # e.g. V.signalSource.startTime = V.startTime, V.startTime = 1.0
+    # After substitution: V.signalSource.startTime = 1.0
+    # TODO: this could probably be replaced with the bindings system? 
+    for (param, value) in parameter_val_map
+        parameter_val_map[param] = substitute(value, parameter_val_map)
+    end
+
+    # Pass 3.5: Apply concrete parameter values via setdefault.
+    # Done after pass 3 so we always call setdefault with a resolved concrete value,
+    # never with an expression containing a stale pre-setdefault symbol reference.
+    for name in collect(keys(variable_map))
+        sym = variable_map[name]
+        val = get(parameter_val_map, sym, nothing)
+        if !isnothing(val)
+            variable_map[name] = ModelingToolkit.setdefault(sym, val)
         end
     end
 
