@@ -322,6 +322,17 @@ function eval_AST(model::BaseModelicaModel)
         parameter_val_map[param] = substitute(value, parameter_val_map)
     end
 
+    # Pass 3.5: Apply concrete parameter values via setdefault (MTK v11 proper API).
+    # This replaces __legacy_defaults__ for parameters — same pattern already used for
+    # variables with start/fixed above.
+    for name in collect(keys(variable_map))
+        sym = variable_map[name]
+        val = get(parameter_val_map, sym, nothing)
+        if !isnothing(val)
+            variable_map[name] = ModelingToolkit.setdefault(sym, val)
+        end
+    end
+
     # Flatten equations - some equations (like if-equations) return lists
     eqs_raw = [eval_AST(eq) for eq in equations]
     real_eqs_raw = [eq for eq in eqs_raw] # Weird type stuff
@@ -342,24 +353,26 @@ function eval_AST(model::BaseModelicaModel)
     #println(vars_and_pars)
     #eqs = [substitute(x,vars_and_pars) for x in eqs]
 
-    init_eqs = [eval_AST(eq) for eq in initial_equations]
-    init_eqs_dict = Dict()
-
-    # quick and dumb kind of
-    for dictionary in init_eqs
-        for (key, value) in dictionary
-            init_eqs_dict[key] = value
+    # Apply initial equations as setdefault on the respective variables.
+    # The key in each dict is the symbolic variable, the value is the initial condition.
+    # Might be able to use the bindings mechanism here in the future? 
+    for dictionary in [eval_AST(eq) for eq in initial_equations]
+        for (var, value) in dictionary
+            value = substitute(value, parameter_val_map)
+            for (name, sym) in variable_map
+                if isequal(sym, var)
+                    new_sym = ModelingToolkit.setdefault(sym, value)
+                    variable_map[name] = new_sym
+                    idx = findfirst(v -> isequal(v, sym), vars)
+                    !isnothing(idx) && (vars[idx] = new_sym)
+                    break
+                end
+            end
         end
     end
-    for (key, value) in init_eqs_dict
-        init_eqs_dict[key] = substitute(value, parameter_val_map)
-    end
 
-    #vars,pars,eqs, init_eqs_dict
-
-    defs = merge(init_eqs_dict, parameter_val_map)
     real_eqs = [eq for eq in eqs] # Weird type stuff
-    @named sys = System(real_eqs, t; __legacy_defaults__ = defs)
+    @named sys = System(real_eqs, t)
     return mtkcompile(sys)
 end
 

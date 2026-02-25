@@ -12,9 +12,9 @@ include("antlr_parser.jl")
 include("evaluator.jl")
 
 """
-    parse_basemodelica(filename::String; parser::Symbol=:julia)::ODESystem
+    parse_basemodelica(filename::String; parser::Symbol=:julia)::System
 
-Parses a BaseModelica .mo file into a ModelingToolkit ODESystem.
+Parses a BaseModelica .mo file into a ModelingToolkit System.
 
 ## Arguments
 - `filename::String`: Path to the .mo file to parse
@@ -136,7 +136,7 @@ If an experiment annotation is present, StartTime, StopTime, and Tolerance are a
 - `kwargs...`: Additional keyword arguments passed to ODEProblem
 
 ## Returns
-- A tuple `(prob, sys)` where `prob` is the ODEProblem and `sys` is the ODESystem
+- A tuple `(prob, sys)` where `prob` is the ODEProblem and `sys` is the System
 
 ## Example
 ```julia
@@ -192,13 +192,12 @@ function create_odeproblem(filename::String; parser::Symbol=:antlr, u0=[], kwarg
         end
 
         # Merge annotation defaults with user kwargs (user kwargs take precedence)
-        # MTK v11 requires build_initializeprob=false when using legacy defaults
-        prob = ODEProblem(sys, u0, tspan; build_initializeprob=false, annotation_kwargs..., kwargs...)
+        prob = ODEProblem(sys, u0, tspan; annotation_kwargs..., kwargs...)
         return prob
     else
         # Default time span if no annotation
         tspan = (0.0, 1.0)
-        prob = ODEProblem(sys, u0, tspan; build_initializeprob=false, kwargs...)
+        prob = ODEProblem(sys, u0, tspan; kwargs...)
         return prob
     end
 end
