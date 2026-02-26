@@ -243,6 +243,9 @@ function eval_AST(component::BaseModelicaComponentClause)
 end
 
 function eval_AST(model::BaseModelicaModel)
+    empty!(variable_map)
+    empty!(parameter_val_map)
+
     class_specifier = model.long_class_specifier
     model_name = class_specifier.name
     description = class_specifier.description
@@ -252,6 +255,7 @@ function eval_AST(model::BaseModelicaModel)
     components = composition.components
     equations = composition.equations
     initial_equations = composition.initial_equations
+    parameter_equations = composition.parameter_equations
 
     # Two-pass approach for components:
     # Pass 1: Create all symbols in variable_map (without evaluating parameter values)
@@ -375,6 +379,16 @@ function eval_AST(model::BaseModelicaModel)
                 end
             end
         end
+    end
+
+    # Pass 4: Apply explicit guess values from parameter equations.
+    for param_eq in parameter_equations
+        name = Symbol(param_eq.component_reference.ref_list[1].name)
+        var = variable_map[name]
+        value = eval_AST(param_eq.expression)
+        variable_map[name] = ModelingToolkit.setguess(var, value)
+        idx = findfirst(v -> ModelingToolkit.getname(v) == name, vars)
+        !isnothing(idx) && (vars[idx] = variable_map[name])
     end
 
     real_eqs = [eq for eq in eqs] # Weird type stuff

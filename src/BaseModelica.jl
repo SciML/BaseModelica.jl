@@ -192,12 +192,12 @@ function create_odeproblem(filename::String; parser::Symbol = :antlr, u0 = [], k
         end
 
         # Merge annotation defaults with user kwargs (user kwargs take precedence)
-        prob = ODEProblem(sys, u0, tspan; annotation_kwargs..., kwargs...)
+        prob = ODEProblem(sys, u0, tspan; missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0), annotation_kwargs..., kwargs...)
         return prob
     else
         # Default time span if no annotation
         tspan = (0.0, 1.0)
-        prob = ODEProblem(sys, u0, tspan; kwargs...)
+        prob = ODEProblem(sys, u0, tspan; missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0), kwargs...)
         return prob
     end
 end

@@ -250,13 +250,13 @@ end
 function visit_shortClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
     # For now, return a placeholder - can be expanded later
     name = get_text(ctx.IDENT())
-    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], nothing))
+    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], [], nothing))
 end
 
 function visit_derClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
     # For now, return a placeholder - can be expanded later
     name = get_text(ctx.IDENT(0))
-    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], nothing))
+    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], [], nothing))
 end
 
 function visit_globalConstant(visitor::ASTBuilderVisitor, ctx::Py)
@@ -289,12 +289,18 @@ function visit_composition(visitor::ASTBuilderVisitor, ctx::Py)
     components = []
     equations = []
     initial_equations = []
+    parameter_equations = []
 
-    # Get generic elements (components)
+    # Get generic elements (components and parameter equations)
     generic_elems = ctx.genericElement()
     if !is_null(generic_elems)
         for elem_ctx in generic_elems
-            push!(components, visit_genericElement(visitor, elem_ctx))
+            elem = visit_genericElement(visitor, elem_ctx)
+            if elem isa BaseModelicaParameterEquation
+                push!(parameter_equations, elem)
+            else
+                push!(components, elem)
+            end
         end
     end
 
@@ -336,7 +342,7 @@ function visit_composition(visitor::ASTBuilderVisitor, ctx::Py)
         end
     end
 
-    return BaseModelicaComposition(components, equations, initial_equations, annotation)
+    return BaseModelicaComposition(components, equations, initial_equations, parameter_equations, annotation)
 end
 
 function visit_genericElement(visitor::ASTBuilderVisitor, ctx::Py)
