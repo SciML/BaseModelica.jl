@@ -1,0 +1,9 @@
+//! base 0.1.0
+package 'DeclarationEquation'
+  model 'DeclarationEquation'
+    Boolean 'y' = time >= 0.5;
+    Boolean 'myBooleanSignal';
+  equation
+    'y' = 'myBooleanSignal';
+  end 'DeclarationEquation';
+end 'DeclarationEquation';

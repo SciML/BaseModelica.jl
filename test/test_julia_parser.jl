@@ -141,6 +141,16 @@ PC = BM.ParserCombinator
         @test parse_basemodelica(noelse_path, parser = :julia) isa System
     end
 
+    @testset "Declaration Equation" begin
+        decl_eq_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "DeclarationEquation.bmo"
+        )
+        decl_eq_package = BM.parse_file_julia(decl_eq_path)
+        @test decl_eq_package isa BM.BaseModelicaPackage
+        decl_eq_system = BM.baseModelica_to_ModelingToolkit(decl_eq_package)
+        @test decl_eq_system isa System
+    end
+
     @testset "Create ODEProblem" begin
         # Test create_odeproblem with Experiment annotation
         experiment_path = joinpath(

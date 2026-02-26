@@ -263,6 +263,7 @@ function eval_AST(model::BaseModelicaModel)
 
     vars = Num[]
     pars = Num[]
+    declaration_eqs = []
 
     # Pass 1: Create all variables and parameters in variable_map
     for comp in components
@@ -320,6 +321,19 @@ function eval_AST(model::BaseModelicaModel)
                     variable_map[name] = ModelingToolkit.setguess(var, start_value)
                     idx = findfirst(v -> ModelingToolkit.getname(v) == name, vars)
                     vars[idx] = variable_map[name]
+                end
+            end
+
+            # Check for declaration equation (e.g. Boolean 'y' = time >= 0.5)
+            # A direct expression in the modification (not a named class attribute) is a
+            # binding equation that must become an explicit MTK equation.
+            if !isnothing(declaration.modification) && !isempty(declaration.modification)
+                mod = declaration.modification[1]
+                if !isnothing(mod.expr) && !isempty(mod.expr)
+                    decl_val = eval_AST(mod.expr[end])
+                    if !isnothing(decl_val)
+                        push!(declaration_eqs, variable_map[name] ~ decl_val)
+                    end
                 end
             end
         end
@@ -391,7 +405,7 @@ function eval_AST(model::BaseModelicaModel)
         !isnothing(idx) && (vars[idx] = variable_map[name])
     end
 
-    real_eqs = [eq for eq in eqs] # Weird type stuff
+    real_eqs = [declaration_eqs..., eqs...] # Weird type stuff
     @named sys = System(real_eqs, t)
     return mtkcompile(sys)
 end
