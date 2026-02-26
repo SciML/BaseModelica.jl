@@ -37,15 +37,17 @@ function init_antlr_parser()
         return
     end
 
-    try
+    return try
         # Get the path to the generated parser directory
         base_dir = dirname(dirname(@__FILE__))
         parser_dir = joinpath(base_dir, "src", "antlr_generated")
 
         # Check if generated parser exists
         if !isdir(parser_dir)
-            error("Generated parser not found at: $parser_dir\n" *
-                  "Please run: ./build_parser.sh")
+            error(
+                "Generated parser not found at: $parser_dir\n" *
+                    "Please run: ./build_parser.sh"
+            )
         end
 
         # Import ANTLR4 runtime
@@ -172,7 +174,7 @@ function get_text(ctx::Py)
     text = pyconvert(String, ctx.getText())
     # Strip surrounding single quotes for quoted identifiers (Q_IDENT)
     if startswith(text, "'") && endswith(text, "'") && length(text) > 2
-        return text[2:end-1]
+        return text[2:(end - 1)]
     end
     return text
 end
@@ -248,13 +250,13 @@ end
 function visit_shortClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
     # For now, return a placeholder - can be expanded later
     name = get_text(ctx.IDENT())
-    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], nothing))
+    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], [], nothing))
 end
 
 function visit_derClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
     # For now, return a placeholder - can be expanded later
     name = get_text(ctx.IDENT(0))
-    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], nothing))
+    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], [], nothing))
 end
 
 function visit_globalConstant(visitor::ASTBuilderVisitor, ctx::Py)
@@ -287,12 +289,18 @@ function visit_composition(visitor::ASTBuilderVisitor, ctx::Py)
     components = []
     equations = []
     initial_equations = []
+    parameter_equations = []
 
-    # Get generic elements (components)
+    # Get generic elements (components and parameter equations)
     generic_elems = ctx.genericElement()
     if !is_null(generic_elems)
         for elem_ctx in generic_elems
-            push!(components, visit_genericElement(visitor, elem_ctx))
+            elem = visit_genericElement(visitor, elem_ctx)
+            if elem isa BaseModelicaParameterEquation
+                push!(parameter_equations, elem)
+            else
+                push!(components, elem)
+            end
         end
     end
 
@@ -334,7 +342,7 @@ function visit_composition(visitor::ASTBuilderVisitor, ctx::Py)
         end
     end
 
-    return BaseModelicaComposition(components, equations, initial_equations, annotation)
+    return BaseModelicaComposition(components, equations, initial_equations, parameter_equations, annotation)
 end
 
 function visit_genericElement(visitor::ASTBuilderVisitor, ctx::Py)
@@ -765,7 +773,7 @@ function visit_ifExpression(visitor::ASTBuilderVisitor, ctx::Py)
     num_exprs = pyconvert(Int, pybuiltins.len(expr_ctxs))
 
     # Process pairs: condition, then-expression
-    
+
     idx = 0
     while idx < num_exprs - 1
         # Condition
@@ -1005,7 +1013,7 @@ function visit_primary(visitor::ASTBuilderVisitor, ctx::Py)
     elseif !is_null(ctx.STRING())
         str_text = get_text(ctx.STRING())
         # Remove quotes
-        str_val = str_text[2:end-1]
+        str_val = str_text[2:(end - 1)]
         return BaseModelicaString(str_val)
     elseif get_text(ctx) == "false"
         return BaseModelicaBool(false)
@@ -1114,7 +1122,7 @@ function collect_functionArgumentsNonFirst!(visitor::ASTBuilderVisitor, ctx::Py,
 
     # Recurse into remaining arguments
     non_first_ctx = ctx.functionArgumentsNonFirst()
-    if !is_null(non_first_ctx)
+    return if !is_null(non_first_ctx)
         collect_functionArgumentsNonFirst!(visitor, non_first_ctx, args)
     end
 end
@@ -1196,7 +1204,7 @@ function visit_stringComment(visitor::ASTBuilderVisitor, ctx::Py)
             break
         end
         str_text = get_text(string_token)
-        push!(result, str_text[2:end-1])  # Remove quotes
+        push!(result, str_text[2:(end - 1)])  # Remove quotes
         idx += 1
     end
 

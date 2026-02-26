@@ -268,11 +268,14 @@ function BaseModelicaComposition(input_list)
     equations = []
     initial_equations = []
     components = []
+    parameter_equations = []
     annotation = nothing
 
     for input in input_list
         if input isa BaseModelicaComponentClause
             push!(components, input)
+        elseif input isa BaseModelicaParameterEquation
+            push!(parameter_equations, input)
         elseif input isa BaseModelicaInitialEquation
             push!(initial_equations, input)
         elseif input isa BaseModelicaAnyEquation
@@ -281,7 +284,7 @@ function BaseModelicaComposition(input_list)
             annotation = input
         end
     end
-    return BaseModelicaComposition(components, equations, initial_equations, annotation)
+    return BaseModelicaComposition(components, equations, initial_equations, parameter_equations, annotation)
 end
 
 function BaseModelicaPackage(input_list)

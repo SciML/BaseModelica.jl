@@ -243,6 +243,9 @@ function eval_AST(component::BaseModelicaComponentClause)
 end
 
 function eval_AST(model::BaseModelicaModel)
+    empty!(variable_map)
+    empty!(parameter_val_map)
+
     class_specifier = model.long_class_specifier
     model_name = class_specifier.name
     description = class_specifier.description
@@ -252,6 +255,7 @@ function eval_AST(model::BaseModelicaModel)
     components = composition.components
     equations = composition.equations
     initial_equations = composition.initial_equations
+    parameter_equations = composition.parameter_equations
 
     # Two-pass approach for components:
     # Pass 1: Create all symbols in variable_map (without evaluating parameter values)
@@ -284,7 +288,12 @@ function eval_AST(model::BaseModelicaModel)
         declaration = comp.component_list[1].declaration
 
         if type_prefix == "parameter" || type_prefix == "constant"
-            # Extract parameter value from modification
+            # Collect into parameter_val_map; setdefault is applied in pass 3 below.
+            # We cannot call setdefault here because setdefault returns a NEW symbol
+            # object. A forward reference (e.g. V.signalSource.startTime = V.startTime
+            # where V.startTime is declared later) would embed the OLD stale symbol in
+            # the expression — MTK cannot resolve it. Pass 3 substitutes all references
+            # to concrete values first, then setdefault is called once with clean values.
             if !isnothing(declaration.modification) && !isempty(declaration.modification)
                 modification = declaration.modification[1]
                 if !isnothing(modification.expr) && !isempty(modification.expr)
@@ -316,10 +325,23 @@ function eval_AST(model::BaseModelicaModel)
         end
     end
 
-    # Pass 3: Substitute parameter values to resolve symbolic references
-    # This ensures parameters that reference other parameters get concrete numeric values
+    # Pass 3: Substitute parameter cross-references to get concrete values.
+    # e.g. V.signalSource.startTime = V.startTime, V.startTime = 1.0
+    # After substitution: V.signalSource.startTime = 1.0
+    # TODO: this could probably be replaced with the bindings system?
     for (param, value) in parameter_val_map
         parameter_val_map[param] = substitute(value, parameter_val_map)
+    end
+
+    # Pass 3.5: Apply concrete parameter values via setdefault.
+    # Done after pass 3 so we always call setdefault with a resolved concrete value,
+    # never with an expression containing a stale pre-setdefault symbol reference.
+    for name in collect(keys(variable_map))
+        sym = variable_map[name]
+        val = get(parameter_val_map, sym, nothing)
+        if !isnothing(val)
+            variable_map[name] = ModelingToolkit.setdefault(sym, val)
+        end
     end
 
     # Flatten equations - some equations (like if-equations) return lists
@@ -342,24 +364,35 @@ function eval_AST(model::BaseModelicaModel)
     #println(vars_and_pars)
     #eqs = [substitute(x,vars_and_pars) for x in eqs]
 
-    init_eqs = [eval_AST(eq) for eq in initial_equations]
-    init_eqs_dict = Dict()
-
-    # quick and dumb kind of
-    for dictionary in init_eqs
-        for (key, value) in dictionary
-            init_eqs_dict[key] = value
+    # Apply initial equations as setdefault on the respective variables.
+    # The key in each dict is the symbolic variable, the value is the initial condition.
+    # Might be able to use the bindings mechanism here in the future?
+    for dictionary in [eval_AST(eq) for eq in initial_equations]
+        for (var, value) in dictionary
+            for (name, sym) in variable_map
+                if isequal(sym, var)
+                    new_sym = ModelingToolkit.setdefault(sym, value)
+                    variable_map[name] = new_sym
+                    idx = findfirst(v -> isequal(v, sym), vars)
+                    !isnothing(idx) && (vars[idx] = new_sym)
+                    break
+                end
+            end
         end
     end
-    for (key, value) in init_eqs_dict
-        init_eqs_dict[key] = substitute(value, parameter_val_map)
+
+    # Pass 4: Apply explicit guess values from parameter equations.
+    for param_eq in parameter_equations
+        name = Symbol(param_eq.component_reference.ref_list[1].name)
+        var = variable_map[name]
+        value = eval_AST(param_eq.expression)
+        variable_map[name] = ModelingToolkit.setguess(var, value)
+        idx = findfirst(v -> ModelingToolkit.getname(v) == name, vars)
+        !isnothing(idx) && (vars[idx] = variable_map[name])
     end
 
-    #vars,pars,eqs, init_eqs_dict
-
-    defs = merge(init_eqs_dict, parameter_val_map)
     real_eqs = [eq for eq in eqs] # Weird type stuff
-    @named sys = System(real_eqs, t; __legacy_defaults__ = defs)
+    @named sys = System(real_eqs, t)
     return mtkcompile(sys)
 end
 

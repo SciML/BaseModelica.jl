@@ -10,12 +10,12 @@ using ParserCombinator
     # Test that error messages include line and column information
     @testset "Basic Error Location" begin
         invalid_modelica = """package Test
-  model TestModel
-    Real x;
-  equation
-    x = invalid syntax here;
-  end TestModel;
-end Test;"""
+          model TestModel
+            Real x;
+          equation
+            x = invalid syntax here;
+          end TestModel;
+        end Test;"""
 
         # This should throw an error during parsing
         error_thrown = false
@@ -36,13 +36,13 @@ end Test;"""
     # Test with annotation parsing (from issue #45 - now fixed, should parse successfully)
     @testset "Annotation Parsing" begin
         annotation_modelica = """package 'Experiment'
-  model 'Experiment'
-    Real 'x';
-  equation
-    der('x') = 'x';
-    annotation(experiment(StartTime = 0, StopTime = 2.0, Tolerance = 1e-06, Interval = 0.004));
-  end 'Experiment';
-end 'Experiment';"""
+          model 'Experiment'
+            Real 'x';
+          equation
+            der('x') = 'x';
+            annotation(experiment(StartTime = 0, StopTime = 2.0, Tolerance = 1e-06, Interval = 0.004));
+          end 'Experiment';
+        end 'Experiment';"""
 
         # This should now parse successfully since annotation support was added
         result = BaseModelica.julia_parse_str(annotation_modelica)
@@ -52,11 +52,11 @@ end 'Experiment';"""
     # Test error at the beginning of file
     @testset "Error at Beginning" begin
         beginning_error = """invalid_start
-package Test
-  model TestModel
-    Real x;
-  end TestModel;
-end Test;"""
+        package Test
+          model TestModel
+            Real x;
+          end TestModel;
+        end Test;"""
 
         error_thrown = false
         try
@@ -71,13 +71,13 @@ end Test;"""
     # Test error in equation section
     @testset "Equation Section Error" begin
         equation_error = """package Test
-  model TestModel
-    Real x;
-    Real y;
-  equation
-    x = y +;  // Missing right operand
-  end TestModel;
-end Test;"""
+          model TestModel
+            Real x;
+            Real y;
+          equation
+            x = y +;  // Missing right operand
+          end TestModel;
+        end Test;"""
 
         error_thrown = false
         try
@@ -98,12 +98,14 @@ end Test;"""
         error_thrown = false
         try
             open(temp_file, "w") do f
-                write(f, """package Test
-  model TestModel
-    Real x
-    // Missing semicolon above
-  end TestModel;
-end Test;""")
+                write(
+                    f, """package Test
+                      model TestModel
+                        Real x
+                        // Missing semicolon above
+                      end TestModel;
+                    end Test;"""
+                )
             end
 
             try
@@ -115,7 +117,7 @@ end Test;""")
             end
             @test error_thrown
         finally
-            rm(temp_file, force=true)
+            rm(temp_file, force = true)
         end
     end
 
@@ -143,12 +145,12 @@ end Test;""")
     # Test that valid code doesn't trigger error messages
     @testset "Valid Code Parsing" begin
         valid_modelica = """package Test
-  model TestModel
-    Real x;
-  equation
-    der(x) = -x;
-  end TestModel;
-end Test;"""
+          model TestModel
+            Real x;
+          equation
+            der(x) = -x;
+          end TestModel;
+        end Test;"""
 
         # Should not throw any exceptions
         result = BaseModelica.julia_parse_str(valid_modelica)
