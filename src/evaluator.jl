@@ -199,6 +199,46 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     return result_equations
 end
 
+function to_zero_crossing(cond)
+    inner = Symbolics.unwrap(cond)
+    op = SymbolicUtils.operation(inner)
+    args = SymbolicUtils.arguments(inner)
+    if op === (>=) || op === (>)
+        return args[1] - args[2]
+    elseif op === (<=) || op === (<)
+        return args[2] - args[1]
+    elseif op === (==)
+        return args[1] - args[2]
+    else
+        error(
+            "Unsupported when-condition operator: $op. " *
+            "Only simple comparisons (>=, >, <=, <, ==) are supported.",
+        )
+    end
+end
+
+function eval_AST(when_eq::BaseModelicaWhenEquation)
+    callbacks = []
+    for (condition_ast, body_eqs) in zip(when_eq.whens, when_eq.thens)
+        condition_sym = eval_AST(condition_ast)
+        crossing = to_zero_crossing(condition_sym)
+
+        affects = Equation[]
+        body_eq_list = isa(body_eqs, AbstractArray) ? body_eqs : [body_eqs]
+        for eq in body_eq_list
+            eq_obj = eval_AST(eq)
+            if !isnothing(eq_obj) && isa(eq_obj, Equation)
+                push!(affects, eq_obj)
+            end
+        end
+
+        # Pair shorthand: [condition ~ 0] => affect_eqs
+        # Fires on positive zero-crossing (condition becomes true) → Modelica edge semantics
+        push!(callbacks, [crossing ~ 0] => affects)
+    end
+    return callbacks
+end
+
 function eval_AST(x::String)
     return x
 end
@@ -358,8 +398,26 @@ function eval_AST(model::BaseModelicaModel)
         end
     end
 
-    # Flatten equations - some equations (like if-equations) return lists
-    eqs_raw = [eval_AST(eq) for eq in equations]
+    # Split equations into when-equations (→ continuous callbacks) and regular equations.
+    # The Julia parser wraps all equation types in BaseModelicaSimpleEquation via |>,
+    # with the inner type in .lhs. The ANTLR parser produces bare types without that
+    # wrapper, so guard with hasproperty before touching .equation.
+    when_equation_list = [
+        eq for eq in equations if
+        hasproperty(eq, :equation) &&
+        eq.equation isa BaseModelicaSimpleEquation &&
+        eq.equation.lhs isa BaseModelicaWhenEquation
+    ]
+    regular_equations = [
+        eq for eq in equations if !(
+            hasproperty(eq, :equation) &&
+            eq.equation isa BaseModelicaSimpleEquation &&
+            eq.equation.lhs isa BaseModelicaWhenEquation
+        )
+    ]
+
+    # Flatten regular equations - some (like if-equations) return lists
+    eqs_raw = [eval_AST(eq) for eq in regular_equations]
     real_eqs_raw = [eq for eq in eqs_raw] # Weird type stuff
     eqs = []
     for eq in real_eqs_raw
@@ -372,6 +430,12 @@ function eval_AST(model::BaseModelicaModel)
                 push!(eqs, eq)
             end
         end
+    end
+
+    # Build continuous callbacks from when-equations
+    when_callbacks = []
+    for eq in when_equation_list
+        append!(when_callbacks, eval_AST(eq.equation.lhs))
     end
 
     #vars_and_pars = merge(Dict(vars .=> vars), Dict(pars .=> pars))
@@ -405,8 +469,29 @@ function eval_AST(model::BaseModelicaModel)
         !isnothing(idx) && (vars[idx] = variable_map[name])
     end
 
-    real_eqs = [declaration_eqs..., eqs...] # Weird type stuff
-    @named sys = System(real_eqs, t)
+    real_eqs = Equation[declaration_eqs..., eqs...]
+
+    # Variables that only appear in when-equation bodies need D(v) ~ 0 hold dynamics
+    # so they are proper ODE states between events (constant until an event fires).
+    if !isempty(when_callbacks)
+        continuous_syms = Set(Iterators.flatten(Symbolics.get_variables.(real_eqs)))
+        seen = Set()
+        for cb in when_callbacks, affect_eq in last(cb)
+            var_sym = Symbolics.unwrap(affect_eq.lhs)
+            if var_sym ∉ seen
+                push!(seen, var_sym)
+                der_sym = Symbolics.unwrap(D(affect_eq.lhs))
+                if !any(isequal(var_sym, s) || isequal(der_sym, s) for s in continuous_syms)
+                    push!(real_eqs, D(affect_eq.lhs) ~ 0)
+                end
+            end
+        end
+    end
+
+    # Use only() to extract the runtime-typed Pair from Vector{Any} for single events;
+    # pass the vector directly for multiple events.
+    events = length(when_callbacks) == 1 ? only(when_callbacks) : when_callbacks
+    @named sys = System(real_eqs, t; continuous_events = events)
     return mtkcompile(sys)
 end
 

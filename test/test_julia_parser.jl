@@ -141,6 +141,17 @@ PC = BM.ParserCombinator
         @test parse_basemodelica(noelse_path, parser = :julia) isa System
     end
 
+    @testset "When Equation" begin
+        when_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "WhenEquation.bmo"
+        )
+        when_package = BM.parse_file_julia(when_path)
+        @test when_package isa BM.BaseModelicaPackage
+        when_system = BM.baseModelica_to_ModelingToolkit(when_package)
+        @test when_system isa System
+        @test !isempty(ModelingToolkit.continuous_events(when_system))
+    end
+
     @testset "Declaration Equation" begin
         decl_eq_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "DeclarationEquation.bmo"
