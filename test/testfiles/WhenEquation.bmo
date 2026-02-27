@@ -1,0 +1,10 @@
+//! base 0.1.0
+package 'WhenEquation'
+  model 'WhenEquation'
+    Real 'T_start'(fixed = true, start = 0.0);
+  equation
+    when time >= 0.5 then
+      'T_start' = time;
+    end when;
+  end 'WhenEquation';
+end 'WhenEquation';
