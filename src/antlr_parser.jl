@@ -250,13 +250,13 @@ end
 function visit_shortClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
     # For now, return a placeholder - can be expanded later
     name = get_text(ctx.IDENT())
-    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], [], nothing))
+    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], [], nothing, []))
 end
 
 function visit_derClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
     # For now, return a placeholder - can be expanded later
     name = get_text(ctx.IDENT(0))
-    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], [], nothing))
+    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], [], nothing, []))
 end
 
 function visit_globalConstant(visitor::ASTBuilderVisitor, ctx::Py)
@@ -342,7 +342,91 @@ function visit_composition(visitor::ASTBuilderVisitor, ctx::Py)
         end
     end
 
-    return BaseModelicaComposition(components, equations, initial_equations, parameter_equations, annotation)
+    # Get clock base partitions
+    base_partitions = []
+    partition_ctxs = ctx.basePartition()
+    if !is_null(partition_ctxs)
+        if pyconvert(Bool, pybuiltins.hasattr(partition_ctxs, "__iter__"))
+            for partition_ctx in partition_ctxs
+                partition = visit_basePartition(visitor, partition_ctx)
+                if !isnothing(partition)
+                    push!(base_partitions, partition)
+                end
+            end
+        else
+            partition = visit_basePartition(visitor, partition_ctxs)
+            if !isnothing(partition)
+                push!(base_partitions, partition)
+            end
+        end
+    end
+
+    return BaseModelicaComposition(components, equations, initial_equations, parameter_equations, annotation, base_partitions)
+end
+
+function visit_basePartition(visitor::ASTBuilderVisitor, ctx::Py)
+    # basePartition: 'partition' stringComment (annotationComment ';')? (clockClause ';')* subPartition*
+    clock_clauses = []
+    clock_clause_ctxs = ctx.clockClause()
+    if !is_null(clock_clause_ctxs)
+        if pyconvert(Bool, pybuiltins.hasattr(clock_clause_ctxs, "__iter__"))
+            for cc_ctx in clock_clause_ctxs
+                push!(clock_clauses, visit_clockClause(visitor, cc_ctx))
+            end
+        else
+            push!(clock_clauses, visit_clockClause(visitor, clock_clause_ctxs))
+        end
+    end
+
+    sub_partitions = []
+    sub_partition_ctxs = ctx.subPartition()
+    if !is_null(sub_partition_ctxs)
+        if pyconvert(Bool, pybuiltins.hasattr(sub_partition_ctxs, "__iter__"))
+            for sp_ctx in sub_partition_ctxs
+                push!(sub_partitions, visit_subPartition(visitor, sp_ctx))
+            end
+        else
+            push!(sub_partitions, visit_subPartition(visitor, sub_partition_ctxs))
+        end
+    end
+
+    return BaseModelicaBasePartition(clock_clauses, sub_partitions)
+end
+
+function visit_clockClause(visitor::ASTBuilderVisitor, ctx::Py)
+    # clockClause: decoration? 'Clock' IDENT '=' expression comment
+    name = get_text(ctx.IDENT())
+    expr = visit_expression(visitor, ctx.expression())
+    return BaseModelicaClockClause(name, expr)
+end
+
+function visit_subPartition(visitor::ASTBuilderVisitor, ctx::Py)
+    # subPartition: 'subpartition' '(' argumentList ')' stringComment (annotationComment ';')?
+    #               ('equation' (equation ';')* | 'algorithm' (statement ';')*)*
+    clock_args = []
+    if !is_null(ctx.argumentList())
+        clock_args = visit_argumentList(visitor, ctx.argumentList())
+    end
+
+    equations = []
+    eq_ctxs = ctx.equation()
+    if !is_null(eq_ctxs)
+        if pyconvert(Bool, pybuiltins.hasattr(eq_ctxs, "__iter__"))
+            for eq_ctx in eq_ctxs
+                eq = visit_equation(visitor, eq_ctx)
+                if !isnothing(eq)
+                    push!(equations, eq)
+                end
+            end
+        else
+            eq = visit_equation(visitor, eq_ctxs)
+            if !isnothing(eq)
+                push!(equations, eq)
+            end
+        end
+    end
+
+    return BaseModelicaSubPartition(clock_args, equations)
 end
 
 function visit_genericElement(visitor::ASTBuilderVisitor, ctx::Py)
@@ -1022,20 +1106,13 @@ function visit_primary(visitor::ASTBuilderVisitor, ctx::Py)
     elseif get_text(ctx) == "end"
         return BaseModelicaIdentifier("end")
     elseif !is_null(ctx.functionCallArgs()) && is_null(ctx.componentReference())
-        # Check for der, initial, or pure function calls
-        # These appear as: ('der' | 'initial' | 'pure') functionCallArgs
+        # Check for der, initial, pure, Clock function calls (keywords that can also be function names)
+        # These appear as: ('der' | 'initial' | 'pure' | 'Clock') functionCallArgs
         full_text = get_text(ctx)
-        if startswith(full_text, "der") || startswith(full_text, "initial") || startswith(full_text, "pure")
-            # Determine which function it is
-            func_name_str = if startswith(full_text, "der")
-                "der"
-            elseif startswith(full_text, "initial")
-                "initial"
-            else
-                "pure"
-            end
-
-            func_name = BaseModelicaIdentifier(func_name_str)
+        keyword_funcs = ("der", "initial", "pure", "Clock")
+        matched = findfirst(kw -> startswith(full_text, kw), keyword_funcs)
+        if !isnothing(matched)
+            func_name = BaseModelicaIdentifier(keyword_funcs[matched])
             args = visit_functionCallArgs(visitor, ctx.functionCallArgs())
             return BaseModelicaFunctionCall(func_name, args)
         end

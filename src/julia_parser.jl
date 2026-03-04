@@ -284,7 +284,7 @@ function BaseModelicaComposition(input_list)
             annotation = input
         end
     end
-    return BaseModelicaComposition(components, equations, initial_equations, parameter_equations, annotation)
+    return BaseModelicaComposition(components, equations, initial_equations, parameter_equations, annotation, [])
 end
 
 function BaseModelicaPackage(input_list)

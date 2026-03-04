@@ -1,0 +1,13 @@
+//! base 0.1.0
+package 'RealSample'
+  model 'RealSample'
+    Real 'y'(fixed = true, start = 0.0);
+  equation
+  partition /* Beginning of base-partition */
+    Clock 'c' = Clock(0.1) "Rational interval clock Operator 16.2";
+
+  subpartition (clock = 'c')
+  equation
+      'y' = previous('y') + 1.0;
+  end 'RealSample';
+end 'RealSample';
