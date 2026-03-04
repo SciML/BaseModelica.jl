@@ -310,7 +310,7 @@ primary
     | STRING
     | 'false'
     | 'true'
-    | ('der' | 'initial' | 'pure') functionCallArgs
+    | ('der' | 'initial' | 'pure' | 'Clock') functionCallArgs
     | componentReference functionCallArgs?
     | '(' outputExpressionList ')' arraySubscripts?
     | '[' expressionList (';' expressionList)* ']'

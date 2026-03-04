@@ -232,9 +232,10 @@ function eval_AST(when_eq::BaseModelicaWhenEquation)
             end
         end
 
-        # Pair shorthand: [condition ~ 0] => affect_eqs
-        # Fires on positive zero-crossing (condition becomes true) → Modelica edge semantics
-        push!(callbacks, [crossing ~ 0] => affects)
+        # Only fire on positive zero-crossing (condition becomes true) → Modelica edge semantics
+        push!(callbacks, ModelingToolkit.SymbolicContinuousCallback(
+            [crossing ~ 0], affects; affect_neg = nothing
+        ))
     end
     return callbacks
 end
@@ -282,9 +283,54 @@ function eval_AST(component::BaseModelicaComponentClause)
     end
 end
 
+function eval_clocked_rhs(expr_ast, k)
+    # Recursively evaluate a clocked RHS, mapping previous(x) → x(k-1).
+    if expr_ast isa BaseModelicaFunctionCall
+        func_name = expr_ast.func_name
+        fname = if func_name isa BaseModelicaIdentifier
+            func_name.name
+        elseif func_name isa BaseModelicaComponentReference
+            func_name.ref_list[1].name
+        else
+            ""
+        end
+        if fname == "previous"
+            arg = eval_AST(expr_ast.args.args[1])
+            return arg(k - 1)
+        else
+            return eval_AST(expr_ast)
+        end
+    elseif expr_ast isa BaseModelicaSum
+        return eval_clocked_rhs(expr_ast.left, k) + eval_clocked_rhs(expr_ast.right, k)
+    elseif expr_ast isa BaseModelicaMinus
+        return eval_clocked_rhs(expr_ast.left, k) - eval_clocked_rhs(expr_ast.right, k)
+    elseif expr_ast isa BaseModelicaProd
+        return eval_clocked_rhs(expr_ast.left, k) * eval_clocked_rhs(expr_ast.right, k)
+    elseif expr_ast isa BaseModelicaDivide
+        return eval_clocked_rhs(expr_ast.left, k) / eval_clocked_rhs(expr_ast.right, k)
+    elseif expr_ast isa BaseModelicaUnaryMinus
+        return -eval_clocked_rhs(expr_ast.operand, k)
+    else
+        return eval_AST(expr_ast)
+    end
+end
+
+function eval_clocked_equation(eq_ast, k)
+    # Evaluate a simple equation inside a clock partition.
+    # LHS variable becomes var(k); RHS evaluates with previous(x) → x(k-1).
+    inner = eq_ast isa BaseModelicaAnyEquation ? eq_ast.equation : eq_ast
+    if inner isa BaseModelicaSimpleEquation
+        lhs_var = eval_AST(inner.lhs)
+        rhs = eval_clocked_rhs(inner.rhs, k)
+        return lhs_var(k) ~ rhs
+    end
+    return nothing
+end
+
 function eval_AST(model::BaseModelicaModel)
     empty!(variable_map)
     empty!(parameter_val_map)
+    empty!(clock_map)
 
     class_specifier = model.long_class_specifier
     model_name = class_specifier.name
@@ -399,22 +445,20 @@ function eval_AST(model::BaseModelicaModel)
     end
 
     # Split equations into when-equations (→ continuous callbacks) and regular equations.
-    # The Julia parser wraps all equation types in BaseModelicaSimpleEquation via |>,
-    # with the inner type in .lhs. The ANTLR parser produces bare types without that
-    # wrapper, so guard with hasproperty before touching .equation.
-    when_equation_list = [
-        eq for eq in equations if
-        hasproperty(eq, :equation) &&
-        eq.equation isa BaseModelicaSimpleEquation &&
-        eq.equation.lhs isa BaseModelicaWhenEquation
-    ]
-    regular_equations = [
-        eq for eq in equations if !(
-            hasproperty(eq, :equation) &&
-            eq.equation isa BaseModelicaSimpleEquation &&
-            eq.equation.lhs isa BaseModelicaWhenEquation
-        )
-    ]
+    # Julia parser: wrapped as BaseModelicaAnyEquation { equation: BaseModelicaSimpleEquation { lhs: BaseModelicaWhenEquation } }
+    # ANTLR parser: bare BaseModelicaWhenEquation (visit_whenEquation returns directly)
+    when_equation_list = []
+    regular_equations = []
+    for eq in equations
+        if eq isa BaseModelicaWhenEquation ||
+                (hasproperty(eq, :equation) &&
+                 eq.equation isa BaseModelicaSimpleEquation &&
+                 eq.equation.lhs isa BaseModelicaWhenEquation)
+            push!(when_equation_list, eq)
+        else
+            push!(regular_equations, eq)
+        end
+    end
 
     # Flatten regular equations - some (like if-equations) return lists
     eqs_raw = [eval_AST(eq) for eq in regular_equations]
@@ -435,7 +479,8 @@ function eval_AST(model::BaseModelicaModel)
     # Build continuous callbacks from when-equations
     when_callbacks = []
     for eq in when_equation_list
-        append!(when_callbacks, eval_AST(eq.equation.lhs))
+        when_eq = eq isa BaseModelicaWhenEquation ? eq : eq.equation.lhs
+        append!(when_callbacks, eval_AST(when_eq))
     end
 
     #vars_and_pars = merge(Dict(vars .=> vars), Dict(pars .=> pars))
@@ -469,14 +514,51 @@ function eval_AST(model::BaseModelicaModel)
         !isnothing(idx) && (vars[idx] = variable_map[name])
     end
 
-    real_eqs = Equation[declaration_eqs..., eqs...]
+    # Process clock partitions: register clocks then evaluate clocked equations.
+    clocked_eqs = []
+    for partition in composition.base_partitions
+        for cc in partition.clock_clauses
+            clock_name = Symbol(cc.name)
+            clock_map[clock_name] = eval_AST(cc.expression)
+        end
+        for sp in partition.sub_partitions
+            clock_sym = nothing
+            for arg in sp.clock_args
+                arg_name = arg.name isa BaseModelicaIdentifier ? arg.name.name : arg.name
+                if arg_name == "clock"
+                    if !isnothing(arg.modification) &&
+                            !isnothing(arg.modification.expr) &&
+                            !isempty(arg.modification.expr)
+                        ref = arg.modification.expr[end]
+                        ref_name = ref isa BaseModelicaComponentReference ?
+                            Symbol(ref.ref_list[1].name) : Symbol(ref.name)
+                        clock_sym = clock_map[ref_name]
+                    end
+                end
+            end
+
+            if isnothing(clock_sym)
+                error("Could not resolve clock for subpartition")
+            end
+
+            k = ModelingToolkit.ShiftIndex(clock_sym)
+            for eq in sp.equations
+                ceq = eval_clocked_equation(eq, k)
+                if !isnothing(ceq)
+                    push!(clocked_eqs, ceq)
+                end
+            end
+        end
+    end
+
+    real_eqs = Equation[declaration_eqs..., eqs..., clocked_eqs...]
 
     # Variables that only appear in when-equation bodies need D(v) ~ 0 hold dynamics
     # so they are proper ODE states between events (constant until an event fires).
     if !isempty(when_callbacks)
         continuous_syms = Set(Iterators.flatten(Symbolics.get_variables.(real_eqs)))
         seen = Set()
-        for cb in when_callbacks, affect_eq in last(cb)
+        for cb in when_callbacks, affect_eq in cb.affect.affect
             var_sym = Symbolics.unwrap(affect_eq.lhs)
             if var_sym ∉ seen
                 push!(seen, var_sym)
@@ -488,10 +570,7 @@ function eval_AST(model::BaseModelicaModel)
         end
     end
 
-    # Use only() to extract the runtime-typed Pair from Vector{Any} for single events;
-    # pass the vector directly for multiple events.
-    events = length(when_callbacks) == 1 ? only(when_callbacks) : when_callbacks
-    @named sys = System(real_eqs, t; continuous_events = events)
+    @named sys = System(real_eqs, t; continuous_events = when_callbacks)
     return mtkcompile(sys)
 end
 

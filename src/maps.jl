@@ -100,6 +100,12 @@ function_map = Dict(
     # ── Assertion and termination (Spec 8.3.7-8.3.8) ─────────────────────────
     :assert => x -> nothing,
     :terminate => x -> nothing,
+
+    # -- Clocked Variables --
+    :pre => x -> ModelingToolkit.Pre(x...),
+    :sample => x -> ModelingToolkit.Sample(x...),
+    :hold => x -> ModelingToolkit.Hold(x...),
+    :Clock => x -> ModelingToolkit.Clock(x...),
 )
 
 # holds variables, populated by evaluating component_clause
@@ -109,3 +115,6 @@ variable_map = Dict()
 parameter_val_map = Dict()
 
 initial_value_map = Dict()
+
+# holds named clocks for clocked partitions, populated during partition evaluation
+clock_map = Dict{Symbol, Any}()
