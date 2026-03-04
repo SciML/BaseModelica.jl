@@ -304,6 +304,23 @@ BM = BaseModelica
         @test prob_override.tspan[2] == 2.0  # Still from annotation
     end
 
+    @testset "When Equations (WhenEquation)" begin
+        when_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "WhenEquation.bmo"
+        )
+        when_package = BM.parse_file_antlr(when_path)
+        @test when_package isa BM.BaseModelicaPackage
+
+        # Verify the when-equation was parsed into the AST
+        # ANTLR parser returns bare BaseModelicaWhenEquation (not wrapped)
+        composition = when_package.model.long_class_specifier.composition
+        @test any(eq -> eq isa BM.BaseModelicaWhenEquation, composition.equations)
+
+        when_system = BM.baseModelica_to_ModelingToolkit(when_package)
+        @test when_system isa System
+        @test parse_basemodelica(when_path, parser = :antlr) isa System
+    end
+
     @testset "Clocked Variables (RealSample)" begin
         real_sample_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "RealSample.bmo"
