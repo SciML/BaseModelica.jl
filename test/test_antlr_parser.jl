@@ -303,4 +303,42 @@ BM = BaseModelica
         @test prob_override.kwargs[:saveat] == 0.01  # User override
         @test prob_override.tspan[2] == 2.0  # Still from annotation
     end
+
+    @testset "When Equations (WhenEquation)" begin
+        when_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "WhenEquation.bmo"
+        )
+        when_package = BM.parse_file_antlr(when_path)
+        @test when_package isa BM.BaseModelicaPackage
+
+        # Verify the when-equation was parsed into the AST
+        # ANTLR parser returns bare BaseModelicaWhenEquation (not wrapped)
+        composition = when_package.model.long_class_specifier.composition
+        @test any(eq -> eq isa BM.BaseModelicaWhenEquation, composition.equations)
+
+        when_system = BM.baseModelica_to_ModelingToolkit(when_package)
+        @test when_system isa System
+        @test parse_basemodelica(when_path, parser = :antlr) isa System
+    end
+
+    @testset "Clocked Variables (RealSample)" begin
+        real_sample_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "RealSample.bmo"
+        )
+        real_sample_package = BM.parse_file_antlr(real_sample_path)
+        @test real_sample_package isa BM.BaseModelicaPackage
+
+        # Verify the base partition was parsed
+        composition = real_sample_package.model.long_class_specifier.composition
+        @test length(composition.base_partitions) == 1
+        partition = composition.base_partitions[1]
+        @test partition isa BM.BaseModelicaBasePartition
+        @test length(partition.clock_clauses) == 1
+        @test partition.clock_clauses[1].name == "c"
+        @test length(partition.sub_partitions) == 1
+
+        real_sample_system = BM.baseModelica_to_ModelingToolkit(real_sample_package)
+        @test real_sample_system isa System
+        @test parse_basemodelica(real_sample_path, parser = :antlr) isa System
+    end
 end
