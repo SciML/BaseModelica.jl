@@ -232,9 +232,10 @@ function eval_AST(when_eq::BaseModelicaWhenEquation)
             end
         end
 
-        # Pair shorthand: [condition ~ 0] => affect_eqs
-        # Fires on positive zero-crossing (condition becomes true) → Modelica edge semantics
-        push!(callbacks, [crossing ~ 0] => affects)
+        # Only fire on positive zero-crossing (condition becomes true) → Modelica edge semantics
+        push!(callbacks, ModelingToolkit.SymbolicContinuousCallback(
+            [crossing ~ 0], affects; affect_neg = nothing
+        ))
     end
     return callbacks
 end
@@ -399,22 +400,20 @@ function eval_AST(model::BaseModelicaModel)
     end
 
     # Split equations into when-equations (→ continuous callbacks) and regular equations.
-    # The Julia parser wraps all equation types in BaseModelicaSimpleEquation via |>,
-    # with the inner type in .lhs. The ANTLR parser produces bare types without that
-    # wrapper, so guard with hasproperty before touching .equation.
-    when_equation_list = [
-        eq for eq in equations if
-        hasproperty(eq, :equation) &&
-        eq.equation isa BaseModelicaSimpleEquation &&
-        eq.equation.lhs isa BaseModelicaWhenEquation
-    ]
-    regular_equations = [
-        eq for eq in equations if !(
-            hasproperty(eq, :equation) &&
-            eq.equation isa BaseModelicaSimpleEquation &&
-            eq.equation.lhs isa BaseModelicaWhenEquation
-        )
-    ]
+    # Julia parser: wrapped as BaseModelicaAnyEquation { equation: BaseModelicaSimpleEquation { lhs: BaseModelicaWhenEquation } }
+    # ANTLR parser: bare BaseModelicaWhenEquation (visit_whenEquation returns directly)
+    when_equation_list = []
+    regular_equations = []
+    for eq in equations
+        if eq isa BaseModelicaWhenEquation ||
+                (hasproperty(eq, :equation) &&
+                 eq.equation isa BaseModelicaSimpleEquation &&
+                 eq.equation.lhs isa BaseModelicaWhenEquation)
+            push!(when_equation_list, eq)
+        else
+            push!(regular_equations, eq)
+        end
+    end
 
     # Flatten regular equations - some (like if-equations) return lists
     eqs_raw = [eval_AST(eq) for eq in regular_equations]
@@ -435,7 +434,8 @@ function eval_AST(model::BaseModelicaModel)
     # Build continuous callbacks from when-equations
     when_callbacks = []
     for eq in when_equation_list
-        append!(when_callbacks, eval_AST(eq.equation.lhs))
+        when_eq = eq isa BaseModelicaWhenEquation ? eq : eq.equation.lhs
+        append!(when_callbacks, eval_AST(when_eq))
     end
 
     #vars_and_pars = merge(Dict(vars .=> vars), Dict(pars .=> pars))
@@ -476,7 +476,7 @@ function eval_AST(model::BaseModelicaModel)
     if !isempty(when_callbacks)
         continuous_syms = Set(Iterators.flatten(Symbolics.get_variables.(real_eqs)))
         seen = Set()
-        for cb in when_callbacks, affect_eq in last(cb)
+        for cb in when_callbacks, affect_eq in cb.affect.affect
             var_sym = Symbolics.unwrap(affect_eq.lhs)
             if var_sym ∉ seen
                 push!(seen, var_sym)
