@@ -30,9 +30,9 @@ function eval_AST(expr::BaseModelicaExpr)
             BaseModelicaUnaryMinus(operand) => -f(operand)
             BaseModelicaProd(left, right) => f(left) * f(right)
             BaseModelicaDivide(left, right) => f(left) / f(right)
-            BaseModelicaNot(relation) => !(f(relation))
-            BaseModelicaAnd(left, right) => f(left) && f(right)
-            BaseModelicaOr(left, right) => f(left) || f(right)
+            BaseModelicaNot(relation) => ~f(relation)
+            BaseModelicaAnd(left, right) => f(left) & f(right)
+            BaseModelicaOr(left, right) => f(left) | f(right)
             BaseModelicaLEQ(left, right) => f(left) <= f(right)
             BaseModelicaGEQ(left, right) => f(left) >= f(right)
             BaseModelicaLessThan(left, right) => f(left) < f(right)
@@ -210,25 +210,125 @@ function to_zero_crossing(cond)
     end
 end
 
+function eval_when_rhs(expr_ast; in_body = false)
+    # Evaluate a when-equation expression.
+    # in_body=false (condition): pre(x) → x (use current/pre-event value for crossing condition)
+    # in_body=true (affect): pre(x) → Pre(x) (MTK's Pre operator for discrete parameter updates)
+    if expr_ast isa BaseModelicaFunctionCall
+        func_name = expr_ast.func_name
+        fname = if func_name isa BaseModelicaIdentifier
+            func_name.name
+        elseif func_name isa BaseModelicaComponentReference
+            func_name.ref_list[1].name
+        else
+            ""
+        end
+        if fname == "pre"
+            arg = eval_AST(expr_ast.args.args[1])
+            if in_body
+                return ModelingToolkit.Pre(arg)
+            else
+                return arg
+            end
+        else
+            return eval_AST(expr_ast)
+        end
+    elseif expr_ast isa BaseModelicaSum
+        return eval_when_rhs(expr_ast.left; in_body) + eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaMinus
+        return eval_when_rhs(expr_ast.left; in_body) - eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaProd
+        return eval_when_rhs(expr_ast.left; in_body) * eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaDivide
+        return eval_when_rhs(expr_ast.left; in_body) / eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaUnaryMinus
+        return -eval_when_rhs(expr_ast.operand; in_body)
+    elseif expr_ast isa BaseModelicaGEQ
+        return eval_when_rhs(expr_ast.left; in_body) >= eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaLEQ
+        return eval_when_rhs(expr_ast.left; in_body) <= eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaGreaterThan
+        return eval_when_rhs(expr_ast.left; in_body) > eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaLessThan
+        return eval_when_rhs(expr_ast.left; in_body) < eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaEQ
+        return eval_when_rhs(expr_ast.left; in_body) == eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaNEQ
+        return eval_when_rhs(expr_ast.left; in_body) != eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaAnd
+        return eval_when_rhs(expr_ast.left; in_body) & eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaOr
+        return eval_when_rhs(expr_ast.left; in_body) | eval_when_rhs(expr_ast.right; in_body)
+    elseif expr_ast isa BaseModelicaNot
+        return ~eval_when_rhs(expr_ast.relation; in_body)
+    else
+        return eval_AST(expr_ast)
+    end
+end
+
+function eval_when_equation(eq_ast)
+    inner = eq_ast isa BaseModelicaAnyEquation ? eq_ast.equation : eq_ast
+    if inner isa BaseModelicaSimpleEquation
+        lhs = eval_AST(inner.lhs)
+        rhs = eval_when_rhs(inner.rhs; in_body = true)
+        return lhs ~ rhs
+    end
+    return nothing
+end
+
+function collect_when_body_var_names(equations)
+    names = Set{Symbol}()
+    for eq in equations
+        when_eq = nothing
+        if eq isa BaseModelicaWhenEquation
+            when_eq = eq
+        elseif hasproperty(eq, :equation) &&
+                eq.equation isa BaseModelicaSimpleEquation &&
+                eq.equation.lhs isa BaseModelicaWhenEquation
+            when_eq = eq.equation.lhs
+        end
+        if !isnothing(when_eq)
+            for body_eqs in when_eq.thens
+                eq_list = isa(body_eqs, AbstractArray) ? body_eqs : [body_eqs]
+                for body_eq in eq_list
+                    inner = body_eq isa BaseModelicaAnyEquation ? body_eq.equation : body_eq
+                    if inner isa BaseModelicaSimpleEquation &&
+                            inner.lhs isa BaseModelicaComponentReference
+                        push!(names, Symbol(inner.lhs.ref_list[1].name))
+                    end
+                end
+            end
+        end
+    end
+    return names
+end
+
 function eval_AST(when_eq::BaseModelicaWhenEquation)
     callbacks = []
     for (condition_ast, body_eqs) in zip(when_eq.whens, when_eq.thens)
-        condition_sym = eval_AST(condition_ast)
+        condition_sym = eval_when_rhs(condition_ast; in_body = false)
         crossing = to_zero_crossing(condition_sym)
 
         affects = Equation[]
+        discrete_params_for_cb = []
         body_eq_list = isa(body_eqs, AbstractArray) ? body_eqs : [body_eqs]
         for eq in body_eq_list
-            eq_obj = eval_AST(eq)
+            eq_obj = eval_when_equation(eq)
             if !isnothing(eq_obj) && isa(eq_obj, Equation)
                 push!(affects, eq_obj)
+                lhs_name = ModelingToolkit.getname(eq_obj.lhs)
+                if lhs_name in discrete_variable_names
+                    push!(discrete_params_for_cb, eq_obj.lhs)
+                end
             end
         end
 
         # Only fire on positive zero-crossing (condition becomes true) → Modelica edge semantics
         push!(
             callbacks, ModelingToolkit.SymbolicContinuousCallback(
-                [crossing ~ 0], affects; affect_neg = nothing
+                [crossing ~ 0], affects;
+                affect_neg = nothing,
+                discrete_parameters = discrete_params_for_cb
             )
         )
     end
@@ -285,10 +385,9 @@ end
 function eval_AST(model::BaseModelicaModel)
     empty!(variable_map)
     empty!(parameter_val_map)
+    empty!(discrete_variable_names)
 
     class_specifier = model.long_class_specifier
-    model_name = class_specifier.name
-    description = class_specifier.description
 
     composition = class_specifier.composition
 
@@ -296,6 +395,10 @@ function eval_AST(model::BaseModelicaModel)
     equations = composition.equations
     initial_equations = composition.initial_equations
     parameter_equations = composition.parameter_equations
+
+    # Pre-scan when-equation bodies to find variables that should be discrete parameters.
+    # These variables only change at events and must not have continuous ODE equations.
+    union!(discrete_variable_names, collect_when_body_var_names(equations))
 
     # Two-pass approach for components:
     # Pass 1: Create all symbols in variable_map (without evaluating parameter values)
@@ -317,12 +420,17 @@ function eval_AST(model::BaseModelicaModel)
             variable_map[name] = only(@parameters($name))
             push!(pars, variable_map[name])
         elseif isnothing(type_prefix)
-            if comp.type_specifier.type == "Boolean"
+            if name in discrete_variable_names
+                # Discrete variables only change at events; declare as discretes
+                # so MTK can track them between events without needing D(x)~0.
+                variable_map[name] = only(@discretes($name(t)))
+            elseif comp.type_specifier.type == "Boolean"
                 variable_map[name] = only(@variables($name(t)::Bool))
+                push!(vars, variable_map[name])
             else
                 variable_map[name] = only(@variables($name(t)))
+                push!(vars, variable_map[name])
             end
-            push!(vars, variable_map[name])
         end
     end
 
@@ -331,6 +439,11 @@ function eval_AST(model::BaseModelicaModel)
         type_prefix = comp.type_prefix.dpc
         name = Symbol(comp.component_list[1].declaration.ident[1].name)
         declaration = comp.component_list[1].declaration
+
+        if name in discrete_variable_names
+            # Discrete parameters are managed by the when-equation callback; skip.
+            continue
+        end
 
         if type_prefix == "parameter" || type_prefix == "constant"
             # Collect into parameter_val_map; setdefault is applied in pass 3 below.
@@ -476,27 +589,16 @@ function eval_AST(model::BaseModelicaModel)
 
     real_eqs = Equation[declaration_eqs..., eqs...]
 
-    # Variables that only appear in when-equation bodies need D(v) ~ 0 hold dynamics
-    # so they are proper ODE states between events (constant until an event fires).
-    if !isempty(when_callbacks)
-        continuous_syms = Set(Iterators.flatten(Symbolics.get_variables.(real_eqs)))
-        seen = Set()
-        for cb in when_callbacks, affect_eq in cb.affect.affect
-            var_sym = Symbolics.unwrap(affect_eq.lhs)
-            if var_sym ∉ seen
-                push!(seen, var_sym)
-                der_sym = Symbolics.unwrap(D(affect_eq.lhs))
-                if !any(isequal(var_sym, s) || isequal(der_sym, s) for s in continuous_syms)
-                    push!(real_eqs, D(affect_eq.lhs) ~ 0)
-                end
-            end
-        end
-    end
+    # Collect all parameters from variable_map after all passes have applied defaults.
+    # Both regular @parameters and @discretes symbols have PARAMETER type, so this
+    # captures them all — including discrete variables that only appear in callbacks
+    # and would be missed by auto-detection from equations.
+    all_pars = Num[sym for (_, sym) in variable_map if ModelingToolkitBase.isparameter(sym)]
 
     # Use only() to extract the runtime-typed Pair from Vector{Any} for single events;
     # pass the vector directly for multiple events.
     events = length(when_callbacks) == 1 ? only(when_callbacks) : when_callbacks
-    @named sys = System(real_eqs, t; continuous_events = events)
+    @named sys = System(real_eqs, t, vars, all_pars; continuous_events = events)
     return mtkcompile(sys)
 end
 

@@ -341,4 +341,24 @@ BM = BaseModelica
         @test when_system isa System
         @test parse_basemodelica(when_path, parser = :antlr) isa System
     end
+
+    @testset "Simple Triac Circuit (when-equation with discrete parameters)" begin
+        triac_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "SimpleTriacCircuit.bmo"
+        )
+        triac_package = BM.parse_file_antlr(triac_path)
+        @test triac_package isa BM.BaseModelicaPackage
+
+        # Verify the when-equation was parsed
+        composition = triac_package.model.long_class_specifier.composition
+        @test any(eq -> eq isa BM.BaseModelicaWhenEquation, composition.equations)
+
+        triac_system = BM.baseModelica_to_ModelingToolkit(triac_package)
+        @test triac_system isa System
+
+        # Verify the when-equation produces a continuous callback
+        @test !isempty(ModelingToolkit.continuous_events(triac_system))
+
+        @test parse_basemodelica(triac_path, parser = :antlr) isa System
+    end
 end

@@ -9,7 +9,7 @@
 # Functions NOT YET SUPPORTED (need deeper ModelingToolkit integration):
 #   - delay(expr, delayTime[, delayMax])       — variable delay
 #   - spatialDistribution(...)                  — transport PDE approximation
-#   - pre(y), edge(b), change(v), reinit(x, e) — discrete event semantics
+#   - edge(b), change(v), reinit(x, e)          — discrete event semantics
 #   - initial(), terminal()                     — event phase booleans
 #   - sample(start, interval)                   — periodic event generation
 #   - String(...)                               — string conversion (not relevant for ODE)
@@ -70,6 +70,9 @@ function_map = Dict(
     :homotopy => x -> x[1],
 
     # ── Event-related functions (Spec 3.7.5) ──────────────────────────────────
+    # pre: value of discrete variable at the previous event instant
+    :pre => x -> ModelingToolkit.Pre(x...),
+
     # noEvent: suppress event generation — in symbolic context, pass through
     :noEvent => x -> x[1],
 
@@ -109,3 +112,6 @@ variable_map = Dict()
 parameter_val_map = Dict()
 
 initial_value_map = Dict()
+
+# names of variables that only appear in when-equation bodies (declared as discrete parameters)
+discrete_variable_names = Set{Symbol}()
