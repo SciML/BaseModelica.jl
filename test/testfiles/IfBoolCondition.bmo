@@ -1,0 +1,10 @@
+//! base 0.1.0
+package 'IfBoolCondition'
+  model 'IfBoolCondition' "Minimal model to reproduce ArgumentError: Condition of ifelse must be a Bool"
+    Boolean 'active'(fixed = true, start = false) "Discrete Boolean variable";
+    Real 'y' "Real output that switches based on the Boolean condition";
+  equation
+    'active' = time >= 0.5;
+    'y' = if 'active' then 1.0 else 0.0;
+  end 'IfBoolCondition';
+end 'IfBoolCondition';

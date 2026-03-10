@@ -729,12 +729,16 @@ function visit_whenEquation(visitor::ASTBuilderVisitor, ctx::Py)
         push!(whens, visit_expression(visitor, expr_ctx))
     end
 
-    # Get all equation lists (simplified)
+    # All body equations go into a single branch (elsewhen not yet supported)
     eq_ctxs = ctx.equation()
-    for expr_ctx in expr_ctxs
-        branch_equations = []
-        push!(thens, branch_equations)
+    branch_equations = []
+    for eq_ctx in eq_ctxs
+        eq = visit_equation(visitor, eq_ctx)
+        if !isnothing(eq)
+            push!(branch_equations, eq)
+        end
     end
+    push!(thens, branch_equations)
 
     return BaseModelicaWhenEquation(whens, thens)
 end

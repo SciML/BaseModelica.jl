@@ -304,6 +304,27 @@ BM = BaseModelica
         @test prob_override.tspan[2] == 2.0  # Still from annotation
     end
 
+    @testset "Boolean Variable in If Expression (IfBoolCondition)" begin
+        if_bool_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "IfBoolCondition.bmo"
+        )
+        if_bool_package = BM.parse_file_antlr(if_bool_path)
+        @test if_bool_package isa BM.BaseModelicaPackage
+
+        # Verify the Boolean variable was declared with ::Bool type
+        composition = if_bool_package.model.long_class_specifier.composition
+        bool_comp = first(
+            c for c in composition.components if
+                c.component_list[1].declaration.ident[1].name == "active"
+        )
+        @test bool_comp.type_specifier.type == "Boolean"
+
+        # The model is purely algebraic (no ODEs), so mtkcompile produces no unknowns
+        if_bool_system = BM.baseModelica_to_ModelingToolkit(if_bool_package)
+        @test if_bool_system isa System
+        @test isempty(ModelingToolkit.unknowns(if_bool_system))
+    end
+
     @testset "When Equations (WhenEquation)" begin
         when_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "WhenEquation.bmo"
@@ -319,5 +340,25 @@ BM = BaseModelica
         when_system = BM.baseModelica_to_ModelingToolkit(when_package)
         @test when_system isa System
         @test parse_basemodelica(when_path, parser = :antlr) isa System
+    end
+
+    @testset "Simple Triac Circuit (when-equation with discrete parameters)" begin
+        triac_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "SimpleTriacCircuit.bmo"
+        )
+        triac_package = BM.parse_file_antlr(triac_path)
+        @test triac_package isa BM.BaseModelicaPackage
+
+        # Verify the when-equation was parsed
+        composition = triac_package.model.long_class_specifier.composition
+        @test any(eq -> eq isa BM.BaseModelicaWhenEquation, composition.equations)
+
+        triac_system = BM.baseModelica_to_ModelingToolkit(triac_package)
+        @test triac_system isa System
+
+        # Verify the when-equation produces a continuous callback
+        @test !isempty(ModelingToolkit.continuous_events(triac_system))
+
+        @test parse_basemodelica(triac_path, parser = :antlr) isa System
     end
 end
