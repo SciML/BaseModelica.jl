@@ -44,25 +44,18 @@ function eval_AST(expr::BaseModelicaExpr)
     end
 end
 
-function eval_AST(if_expr::BaseModelicaIfExpression)
-    # Convert if-expression to nested ifelse calls
-    # Structure: conditions[i] with expressions[i] for if/elseif
-    #           expressions[end] is the else value (no condition)
-
-    # Build nested ifelse from right to left
-    function build_nested_ifelse(idx = 1)
-        if idx > length(if_expr.conditions)
-            # We've gone past all conditions, return the else value
-            return eval_AST(if_expr.expressions[end])
-        end
-
-        condition = eval_AST(if_expr.conditions[idx])
-        then_value = eval_AST(if_expr.expressions[idx])
-        else_value = build_nested_ifelse(idx + 1)
-        return ifelse(condition, then_value, else_value)
+function build_nested_ifelse(if_expr::BaseModelicaIfExpression, idx = 1)
+    if idx > length(if_expr.conditions)
+        return eval_AST(if_expr.expressions[end])
     end
+    condition = eval_AST(if_expr.conditions[idx])
+    then_value = eval_AST(if_expr.expressions[idx])
+    else_value = build_nested_ifelse(if_expr, idx + 1)
+    return ifelse(condition, then_value, else_value)
+end
 
-    return build_nested_ifelse()
+function eval_AST(if_expr::BaseModelicaIfExpression)
+    return build_nested_ifelse(if_expr)
 end
 
 include("maps.jl")
@@ -318,7 +311,11 @@ function eval_AST(model::BaseModelicaModel)
             variable_map[name] = only(@parameters($name))
             push!(pars, variable_map[name])
         elseif isnothing(type_prefix)
-            variable_map[name] = only(@variables($name(t)))
+            if comp.type_specifier.type == "Boolean"
+                variable_map[name] = only(@variables($name(t)::Bool))
+            else
+                variable_map[name] = only(@variables($name(t)))
+            end
             push!(vars, variable_map[name])
         end
     end
