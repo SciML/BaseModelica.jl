@@ -205,7 +205,7 @@ function to_zero_crossing(cond)
     else
         error(
             "Unsupported when-condition operator: $op. " *
-            "Only simple comparisons (>=, >, <=, <, ==) are supported.",
+                "Only simple comparisons (>=, >, <=, <, ==) are supported.",
         )
     end
 end
@@ -226,9 +226,11 @@ function eval_AST(when_eq::BaseModelicaWhenEquation)
         end
 
         # Only fire on positive zero-crossing (condition becomes true) → Modelica edge semantics
-        push!(callbacks, ModelingToolkit.SymbolicContinuousCallback(
-            [crossing ~ 0], affects; affect_neg = nothing
-        ))
+        push!(
+            callbacks, ModelingToolkit.SymbolicContinuousCallback(
+                [crossing ~ 0], affects; affect_neg = nothing
+            )
+        )
     end
     return callbacks
 end
@@ -407,9 +409,11 @@ function eval_AST(model::BaseModelicaModel)
     regular_equations = []
     for eq in equations
         if eq isa BaseModelicaWhenEquation ||
-                (hasproperty(eq, :equation) &&
-                 eq.equation isa BaseModelicaSimpleEquation &&
-                 eq.equation.lhs isa BaseModelicaWhenEquation)
+                (
+                hasproperty(eq, :equation) &&
+                    eq.equation isa BaseModelicaSimpleEquation &&
+                    eq.equation.lhs isa BaseModelicaWhenEquation
+            )
             push!(when_equation_list, eq)
         else
             push!(regular_equations, eq)

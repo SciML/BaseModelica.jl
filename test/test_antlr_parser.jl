@@ -315,7 +315,7 @@ BM = BaseModelica
         composition = if_bool_package.model.long_class_specifier.composition
         bool_comp = first(
             c for c in composition.components if
-            c.component_list[1].declaration.ident[1].name == "active"
+                c.component_list[1].declaration.ident[1].name == "active"
         )
         @test bool_comp.type_specifier.type == "Boolean"
 
