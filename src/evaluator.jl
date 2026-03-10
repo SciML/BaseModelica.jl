@@ -237,6 +237,10 @@ function eval_AST(x::String)
     return x
 end
 
+function eval_AST(x::BaseModelicaString)
+    return x.string
+end
+
 function eval_AST(::Nothing)
     return nothing
 end

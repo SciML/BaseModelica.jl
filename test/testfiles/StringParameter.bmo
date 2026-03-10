@@ -1,0 +1,9 @@
+//! base 0.1.0
+package 'StringParameter'
+  model 'StringParameter'
+    parameter String 'label' = "my_label" "A string parameter";
+    Real 'x';
+  equation
+    'x' = 1.0;
+  end 'StringParameter';
+end 'StringParameter';
