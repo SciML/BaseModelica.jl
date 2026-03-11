@@ -386,6 +386,7 @@ function eval_AST(model::BaseModelicaModel)
     empty!(variable_map)
     empty!(parameter_val_map)
     empty!(discrete_variable_names)
+    empty!(free_parameter_names)
 
     class_specifier = model.long_class_specifier
 
@@ -446,17 +447,30 @@ function eval_AST(model::BaseModelicaModel)
         end
 
         if type_prefix == "parameter" || type_prefix == "constant"
-            # Collect into parameter_val_map; setdefault is applied in pass 3 below.
-            # We cannot call setdefault here because setdefault returns a NEW symbol
-            # object. A forward reference (e.g. V.signalSource.startTime = V.startTime
-            # where V.startTime is declared later) would embed the OLD stale symbol in
-            # the expression — MTK cannot resolve it. Pass 3 substitutes all references
-            # to concrete values first, then setdefault is called once with clean values.
-            if !isnothing(declaration.modification) && !isempty(declaration.modification)
-                modification = declaration.modification[1]
-                if !isnothing(modification.expr) && !isempty(modification.expr)
-                    value_expr = modification.expr[end]
-                    parameter_val_map[variable_map[name]] = eval_AST(value_expr)
+            # Check for fixed = false (parameter to be solved during initialization)
+            fixed_value = get_class_modification_value(declaration.modification, "fixed")
+            is_free = !isnothing(fixed_value) && fixed_value === false
+
+            if is_free
+                push!(free_parameter_names, name)
+                # start value is an initial guess, not a default
+                start_value = get_class_modification_value(declaration.modification, "start")
+                if !isnothing(start_value)
+                    variable_map[name] = ModelingToolkit.setguess(variable_map[name], start_value)
+                end
+            else
+                # Collect into parameter_val_map; setdefault is applied in pass 3 below.
+                # We cannot call setdefault here because setdefault returns a NEW symbol
+                # object. A forward reference (e.g. V.signalSource.startTime = V.startTime
+                # where V.startTime is declared later) would embed the OLD stale symbol in
+                # the expression — MTK cannot resolve it. Pass 3 substitutes all references
+                # to concrete values first, then setdefault is called once with clean values.
+                if !isnothing(declaration.modification) && !isempty(declaration.modification)
+                    modification = declaration.modification[1]
+                    if !isnothing(modification.expr) && !isempty(modification.expr)
+                        value_expr = modification.expr[end]
+                        parameter_val_map[variable_map[name]] = eval_AST(value_expr)
+                    end
                 end
             end
         elseif isnothing(type_prefix)
@@ -560,19 +574,33 @@ function eval_AST(model::BaseModelicaModel)
     #println(vars_and_pars)
     #eqs = [substitute(x,vars_and_pars) for x in eqs]
 
-    # Apply initial equations as setdefault on the respective variables.
-    # The key in each dict is the symbolic variable, the value is the initial condition.
-    # Might be able to use the bindings mechanism here in the future?
+    # Apply initial equations:
+    # When free parameters are present, ALL initial equations must go into initialization_eqs
+    # so they collectively constrain the initialization system that solves for the free params.
+    # When no free parameters exist, regular variables use setdefault (simpler, more efficient).
+    # Derivative LHS like der(x) always go to initialization_eqs (can't be setdefault).
+    initialization_eqs = Equation[]
+    has_free_params = !isempty(free_parameter_names)
     for dictionary in [eval_AST(eq) for eq in initial_equations]
         for (var, value) in dictionary
+            found = false
             for (name, sym) in variable_map
                 if isequal(sym, var)
-                    new_sym = ModelingToolkit.setdefault(sym, value)
-                    variable_map[name] = new_sym
-                    idx = findfirst(v -> isequal(v, sym), vars)
-                    !isnothing(idx) && (vars[idx] = new_sym)
+                    found = true
+                    if has_free_params
+                        push!(initialization_eqs, sym ~ value)
+                    else
+                        new_sym = ModelingToolkit.setdefault(sym, value)
+                        variable_map[name] = new_sym
+                        idx = findfirst(v -> isequal(v, sym), vars)
+                        !isnothing(idx) && (vars[idx] = new_sym)
+                    end
                     break
                 end
+            end
+            if !found
+                # LHS not in variable_map (e.g. der(x)) → initialization constraint
+                push!(initialization_eqs, var ~ value)
             end
         end
     end
@@ -595,10 +623,19 @@ function eval_AST(model::BaseModelicaModel)
     # and would be missed by auto-detection from equations.
     all_pars = Num[sym for (_, sym) in variable_map if ModelingToolkitBase.isparameter(sym)]
 
+    # Build bindings for free parameters (fixed=false): p => missing signals MTK to
+    # solve for p during initialization using initialization_eqs.
+    bindings = [variable_map[name] => missing for name in free_parameter_names]
+
     # Use only() to extract the runtime-typed Pair from Vector{Any} for single events;
     # pass the vector directly for multiple events.
     events = length(when_callbacks) == 1 ? only(when_callbacks) : when_callbacks
-    @named sys = System(real_eqs, t, vars, all_pars; continuous_events = events)
+    @named sys = System(
+        real_eqs, t, vars, all_pars;
+        continuous_events = events,
+        initialization_eqs = initialization_eqs,
+        bindings = bindings,
+    )
     return mtkcompile(sys)
 end
 

@@ -342,6 +342,27 @@ BM = BaseModelica
         @test parse_basemodelica(when_path, parser = :antlr) isa System
     end
 
+    @testset "Unknown Parameter (fixed = false)" begin
+        unknown_param_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "UnknownParameter.bmo"
+        )
+        unknown_param_package = BM.parse_file_antlr(unknown_param_path)
+        @test unknown_param_package isa BM.BaseModelicaPackage
+
+        unknown_param_system = BM.baseModelica_to_ModelingToolkit(unknown_param_package)
+        @test unknown_param_system isa System
+
+        # Verify p is a parameter (fixed=false makes it a free parameter solved at init)
+        param_names = ModelingToolkit.getname.(ModelingToolkit.parameters(unknown_param_system))
+        @test :p in param_names
+
+        # Verify initialization equations were generated (from der(x)=0 and y=5 initial eqs)
+        init_eqs = ModelingToolkit.initialization_equations(unknown_param_system)
+        @test !isempty(init_eqs)
+
+        @test parse_basemodelica(unknown_param_path, parser = :antlr) isa System
+    end
+
     @testset "Simple Triac Circuit (when-equation with discrete parameters)" begin
         triac_path = joinpath(
             dirname(dirname(pathof(BM))), "test", "testfiles", "SimpleTriacCircuit.bmo"
