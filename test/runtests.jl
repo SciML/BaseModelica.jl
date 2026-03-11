@@ -1,8 +1,11 @@
-using Test, SafeTestsets
+using Pkg, Test, SafeTestsets
 
 const GROUP = get(ENV, "GROUP", "All")
 
-if GROUP == "All" || GROUP == "Quality"
+if (GROUP == "NoPre" || GROUP == "Quality") && isempty(VERSION.prerelease)
+    Pkg.activate(joinpath(@__DIR__, "nopre"))
+    Pkg.develop(PackageSpec(path = dirname(@__DIR__)))
+    Pkg.instantiate()
     @testset "Quality Assurance" begin
         @safetestset "Quality Assurance" include("qa.jl")
         @safetestset "JET Static Analysis" include("test_jet.jl")
