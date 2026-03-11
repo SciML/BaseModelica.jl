@@ -1,0 +1,14 @@
+//! base 0.1.0
+package 'UnknownParameter'
+  model 'UnknownParameter'
+    parameter Real 'p'(fixed = false, start = 2.0);
+    Real 'x';
+    Real 'y';
+  initial equation
+    der('x') = 0.0;
+    'y' = 5.0;
+  equation
+    der('x') = sin('p') - 'x' + (if time < 0.1 then 0.0 else 1.0);
+    'y' = 10.0 * 'x';
+  end 'UnknownParameter';
+end 'UnknownParameter';
