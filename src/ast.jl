@@ -28,6 +28,7 @@
     BaseModelicaClassModificationArg(name, modification)
     #Class types
     BaseModelicaClassDefinition(class_type, class)
+    BaseModelicaEnumeration(name, values)  # name: String, values: Vector{String}
 end
 
 @data BaseModelicaExpr <: BaseModelicaASTNode begin

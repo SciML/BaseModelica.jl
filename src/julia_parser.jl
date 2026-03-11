@@ -330,7 +330,7 @@ spc = Drop(Star(Space()))
     IDENT = (((NONDIGIT + Star(DIGIT | NONDIGIT)) |> list2string) | Q_IDENT) >
         BaseModelicaIdentifier
     STRING = E"\"" + Star(S_CHAR | S_ESCAPE) + E"\"" |> list2string
-    EXPONENT = (e"e" | e"E") + (e"+" | e"-")[0:1] + DIGIT[1:end]
+    EXPONENT = (e"e" | e"E") + p"[+-]"[0:1] + DIGIT[1:end]
     UNSIGNED_NUMBER = (
         DIGIT[1:end] + (e"." + Star(DIGIT))[0:1] + EXPONENT[0:1] |>
             list2string
@@ -367,8 +367,8 @@ spc = Drop(Star(Space()))
     #modification
     string_comment = (STRING + spc + Star(spc + E"+" + spc + STRING))[0:1] |>
         BaseModelicaString
-    element_modification = name + modification[0:1] + Drop(string_comment) >
-        BaseModelicaClassModificationArg
+    element_modification = name + modification[0:1] + Drop(string_comment) |>
+        (args -> BaseModelicaClassModificationArg(args[1], length(args) > 1 ? args[2] : nothing))
     element_modification_or_replaceable = element_modification
     decoration = E"@" + UNSIGNED_INTEGER
     argument = decoration[0:1] + element_modification_or_replaceable
@@ -487,9 +487,18 @@ spc = Drop(Star(Space()))
     base_prefix = e"input" | e"output"
     long_class_specifier = IDENT + spc + string_comment + spc + composition + spc + E"end" +
         spc + Drop(IDENT) > BaseModelicaLongClass
-    short_class_specifier = IDENT + spc + E"=" + spc +
-        (base_prefix[0:1] + type_specifier + class_modification[0:1])
-    (e"enumeration" + E"(" + (enum_list[0:1] | E":") + E")") + comment
+    short_class_enum = IDENT + spc + E"=" + spc +
+        e"enumeration" + E"(" + (enum_list[0:1] | E":") + E")" + comment |>
+        function(input_list)
+            name = input_list[1].name
+            values = [x.name for x in input_list[2:end] if x isa BaseModelicaIdentifier]
+            return BaseModelicaEnumeration(name, values)
+        end
+    short_class_specifier = short_class_enum |
+        (IDENT + spc + E"=" + spc +
+        (base_prefix[0:1] + type_specifier + class_modification[0:1]) + comment |>
+        (input_list -> BaseModelicaLongClass(
+            input_list[1].name, "", BaseModelicaComposition([], [], [], [], nothing))))
     class_prefixes = e"type" | e"record" |
         ((e"pure constant")[0:1] | ((e"impure")[0:1]) + e"function")
     der_class_specifier = IDENT + E"=" + E" "[0:1] + E"der" + E" " + E"(" + type_specifier +

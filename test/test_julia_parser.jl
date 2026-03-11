@@ -248,4 +248,23 @@ PC = BM.ParserCombinator
         @test cauer_sine_noassert_system isa System
         @test parse_basemodelica(cauer_sine_noassert_path, parser = :julia) isa System
     end
+
+    @testset "PID Controller (enumeration types)" begin
+        pid_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "PID_Controller.bmo"
+        )
+        pid_package = BM.parse_file_julia(pid_path)
+        @test pid_package isa BM.BaseModelicaPackage
+
+        enum_defs = [
+            cd.class for cd in pid_package.class_defs
+            if cd isa BM.BaseModelicaClassDefinition && cd.class isa BM.BaseModelicaEnumeration
+        ]
+        enum_names = [e.name for e in enum_defs]
+        @test "Modelica.Blocks.Types.SimpleController" in enum_names
+        @test "Modelica.Blocks.Types.Init" in enum_names
+        @test "Modelica.Blocks.Types.LimiterHomotopy" in enum_names
+
+        @test parse_basemodelica(pid_path, parser = :julia) isa System
+    end
 end
