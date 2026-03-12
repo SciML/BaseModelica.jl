@@ -258,7 +258,7 @@ PC = BM.ParserCombinator
 
         enum_defs = [
             cd.class for cd in pid_package.class_defs
-            if cd isa BM.BaseModelicaClassDefinition && cd.class isa BM.BaseModelicaEnumeration
+                if cd isa BM.BaseModelicaClassDefinition && cd.class isa BM.BaseModelicaEnumeration
         ]
         enum_names = [e.name for e in enum_defs]
         @test "Modelica.Blocks.Types.SimpleController" in enum_names

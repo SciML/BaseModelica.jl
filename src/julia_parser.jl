@@ -340,11 +340,11 @@ spc = Drop(Star(Space()))
     name = Not(Lookahead(e"end")) + Not(Lookahead(E"equation")) +
         Not(Lookahead(E"initial equation")) + (IDENT + Star(e"." + IDENT)) |> list2string # Not(Lookahead(foo)) tells it that names can't be foo
     type_specifier = E"."[0:1] + name |>
-        function(input)
-            n = last(input)  # name result, possibly after "."
-            s = n isa BaseModelicaIdentifier ? n.name : string(n)
-            return BaseModelicaTypeSpecifier(s)
-        end
+        function (input)
+        n = last(input)  # name result, possibly after "."
+        s = n isa BaseModelicaIdentifier ? n.name : string(n)
+        return BaseModelicaTypeSpecifier(s)
+    end
     type_prefix = (
         (e"final")[0:1] + spc + (e"discrete" | e"parameter" | e"constant")[0:1] +
             spc +
@@ -494,16 +494,21 @@ spc = Drop(Star(Space()))
         spc + Drop(IDENT) > BaseModelicaLongClass
     short_class_enum = IDENT + spc + E"=" + spc +
         e"enumeration" + E"(" + (enum_list[0:1] | E":") + E")" + comment |>
-        function(input_list)
-            name = input_list[1].name
-            values = [x.name for x in input_list[2:end] if x isa BaseModelicaIdentifier]
-            return BaseModelicaEnumeration(name, values)
-        end
+        function (input_list)
+        name = input_list[1].name
+        values = [x.name for x in input_list[2:end] if x isa BaseModelicaIdentifier]
+        return BaseModelicaEnumeration(name, values)
+    end
     short_class_specifier = short_class_enum |
-        (IDENT + spc + E"=" + spc +
-        (base_prefix[0:1] + type_specifier + class_modification[0:1]) + comment |>
-        (input_list -> BaseModelicaLongClass(
-            input_list[1].name, "", BaseModelicaComposition([], [], [], [], nothing))))
+        (
+        IDENT + spc + E"=" + spc +
+            (base_prefix[0:1] + type_specifier + class_modification[0:1]) + comment |>
+            (
+            input_list -> BaseModelicaLongClass(
+                input_list[1].name, "", BaseModelicaComposition([], [], [], [], nothing)
+            )
+        )
+    )
     class_prefixes = e"type" | e"record" |
         ((e"pure constant")[0:1] | ((e"impure")[0:1]) + e"function")
     der_class_specifier = IDENT + E"=" + E" "[0:1] + E"der" + E" " + E"(" + type_specifier +
