@@ -382,4 +382,5 @@ BM = BaseModelica
 
         @test parse_basemodelica(triac_path, parser = :antlr) isa System
     end
+
 end

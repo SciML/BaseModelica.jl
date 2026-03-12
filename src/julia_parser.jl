@@ -330,7 +330,7 @@ spc = Drop(Star(Space()))
     IDENT = (((NONDIGIT + Star(DIGIT | NONDIGIT)) |> list2string) | Q_IDENT) >
         BaseModelicaIdentifier
     STRING = E"\"" + Star(S_CHAR | S_ESCAPE) + E"\"" |> list2string
-    EXPONENT = (e"e" | e"E") + (e"+" | e"-")[0:1] + DIGIT[1:end]
+    EXPONENT = (e"e" | e"E") + p"[+-]"[0:1] + DIGIT[1:end]
     UNSIGNED_NUMBER = (
         DIGIT[1:end] + (e"." + Star(DIGIT))[0:1] + EXPONENT[0:1] |>
             list2string
@@ -339,7 +339,12 @@ spc = Drop(Star(Space()))
     #component clauses
     name = Not(Lookahead(e"end")) + Not(Lookahead(E"equation")) +
         Not(Lookahead(E"initial equation")) + (IDENT + Star(e"." + IDENT)) |> list2string # Not(Lookahead(foo)) tells it that names can't be foo
-    type_specifier = E"."[0:1] + name > BaseModelicaTypeSpecifier
+    type_specifier = E"."[0:1] + name |>
+        function (input)
+        n = last(input)  # name result, possibly after "."
+        s = n isa BaseModelicaIdentifier ? n.name : string(n)
+        return BaseModelicaTypeSpecifier(s)
+    end
     type_prefix = (
         (e"final")[0:1] + spc + (e"discrete" | e"parameter" | e"constant")[0:1] +
             spc +
@@ -367,8 +372,8 @@ spc = Drop(Star(Space()))
     #modification
     string_comment = (STRING + spc + Star(spc + E"+" + spc + STRING))[0:1] |>
         BaseModelicaString
-    element_modification = name + modification[0:1] + Drop(string_comment) >
-        BaseModelicaClassModificationArg
+    element_modification = name + modification[0:1] + Drop(string_comment) |>
+        (args -> BaseModelicaClassModificationArg(args[1], length(args) > 1 ? args[2] : nothing))
     element_modification_or_replaceable = element_modification
     decoration = E"@" + UNSIGNED_INTEGER
     argument = decoration[0:1] + element_modification_or_replaceable
@@ -447,7 +452,7 @@ spc = Drop(Star(Space()))
     )
 
     enumeration_literal = IDENT + comment
-    enum_list = enumeration_literal + Star(E"," + enumeration_literal)
+    enum_list = enumeration_literal + Star(E"," + spc + enumeration_literal)
 
     guess_value = E"guess" + E"(" + component_reference + E")"
     prioritize_expression = Delayed()
@@ -487,9 +492,23 @@ spc = Drop(Star(Space()))
     base_prefix = e"input" | e"output"
     long_class_specifier = IDENT + spc + string_comment + spc + composition + spc + E"end" +
         spc + Drop(IDENT) > BaseModelicaLongClass
-    short_class_specifier = IDENT + spc + E"=" + spc +
-        (base_prefix[0:1] + type_specifier + class_modification[0:1])
-    (e"enumeration" + E"(" + (enum_list[0:1] | E":") + E")") + comment
+    short_class_enum = IDENT + spc + E"=" + spc +
+        e"enumeration" + E"(" + (enum_list[0:1] | E":") + E")" + comment |>
+        function (input_list)
+        name = input_list[1].name
+        values = [x.name for x in input_list[2:end] if x isa BaseModelicaIdentifier]
+        return BaseModelicaEnumeration(name, values)
+    end
+    short_class_specifier = short_class_enum |
+        (
+        IDENT + spc + E"=" + spc +
+            (base_prefix[0:1] + type_specifier + class_modification[0:1]) + comment |>
+            (
+            input_list -> BaseModelicaLongClass(
+                input_list[1].name, "", BaseModelicaComposition([], [], [], [], nothing)
+            )
+        )
+    )
     class_prefixes = e"type" | e"record" |
         ((e"pure constant")[0:1] | ((e"impure")[0:1]) + e"function")
     der_class_specifier = IDENT + E"=" + E" "[0:1] + E"der" + E" " + E"(" + type_specifier +
@@ -537,18 +556,20 @@ spc = Drop(Star(Space()))
     output_expression_list.matcher = expression[0:1] + Star(E"," + expression[0:1])
     expression_list.matcher = expression + Star(E"," + expression)
 
-    # if_expression: conditions/then-values use simple_expression,
-    # else-value uses expression (Delayed) to support nested if-expressions
+    # if_expression: then/else values use spc + expression to support nested
+    # if-expressions as then-values (e.g. `if A then if B then C else D else E`)
+    # spc before keywords handles whitespace when then-value is an if_expression
+    # (which doesn't consume trailing whitespace unlike simple_expression)
     if_expression = e"if" + simple_expression + e"then" +
-        simple_expression +
+        spc + expression +
         Star(
-        e"elseif" + simple_expression + e"then" +
-            simple_expression
+        spc + e"elseif" + simple_expression + e"then" +
+            spc + expression
     ) +
-        e"else" + spc + expression |> BaseModelicaIfExpression
+        spc + e"else" + spc + expression |> BaseModelicaIfExpression
     expression_no_decoration = if_expression | simple_expression
 
-    expression.matcher = expression_no_decoration + decoration[0:1]
+    expression.matcher = spc + expression_no_decoration + decoration[0:1]
 
     # Guarded equation for if-equation blocks: consume whitespace, then check
     # that we're not at a block-ending keyword before trying to match an equation.

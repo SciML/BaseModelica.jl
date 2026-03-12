@@ -62,7 +62,13 @@ include("maps.jl")
 
 function eval_AST(eq::BaseModelicaInitialEquation)
     inner_eq = eq.equation.equation
-    return Dict(eval_AST(inner_eq.lhs) => eval_AST(inner_eq.rhs))
+    # Skip tuple-return assignments like (a, b, , ) = func(...) — not supported
+    inner_eq.lhs isa Vector && return Dict()
+    lhs = eval_AST(inner_eq.lhs)
+    isnothing(lhs) && return Dict()
+    rhs = eval_AST(inner_eq.rhs)
+    isnothing(rhs) && return Dict()
+    return Dict(lhs => rhs)
 end
 
 function eval_AST(eq::BaseModelicaAnyEquation)
@@ -414,7 +420,7 @@ function eval_AST(model::BaseModelicaModel)
         name = Symbol(comp.component_list[1].declaration.ident[1].name)
         type_prefix = comp.type_prefix.dpc
 
-        if type_prefix == "parameter"
+        if type_prefix == "parameter" || haskey(enum_map, comp.type_specifier.type)
             variable_map[name] = only(@parameters($name))
             push!(pars, variable_map[name])
         elseif type_prefix == "constant"
@@ -446,7 +452,8 @@ function eval_AST(model::BaseModelicaModel)
             continue
         end
 
-        if type_prefix == "parameter" || type_prefix == "constant"
+        if type_prefix == "parameter" || type_prefix == "constant" ||
+                haskey(enum_map, comp.type_specifier.type)
             # Check for fixed = false (parameter to be solved during initialization)
             fixed_value = get_class_modification_value(declaration.modification, "fixed")
             is_free = !isnothing(fixed_value) && fixed_value === false
@@ -640,6 +647,13 @@ function eval_AST(model::BaseModelicaModel)
 end
 
 function eval_AST(package::BaseModelicaPackage)
+    empty!(enum_map)
+    for class_def in package.class_defs
+        if class_def isa BaseModelicaClassDefinition && class_def.class isa BaseModelicaEnumeration
+            enum = class_def.class
+            enum_map[enum.name] = Dict(Symbol(v) => i for (i, v) in enumerate(enum.values))
+        end
+    end
     model = package.model
     return eval_AST(model)
 end
@@ -676,9 +690,18 @@ function eval_AST(comp_reference::BaseModelicaComponentReference)
     end
     if ref_name == :AssertionLevel
         return nothing
-    else
-        return variable_map[ref_name]
     end
+
+    # Handle enum value references: EnumType.ValueName → integer
+    if length(comp_reference.ref_list) >= 2
+        type_name = comp_reference.ref_list[1].name
+        value_name = Symbol(comp_reference.ref_list[2].name)
+        if haskey(enum_map, type_name) && haskey(enum_map[type_name], value_name)
+            return enum_map[type_name][value_name]
+        end
+    end
+
+    return get(variable_map, ref_name, nothing)
 end
 
 function baseModelica_to_ModelingToolkit(package::BaseModelicaPackage)

@@ -248,9 +248,17 @@ function visit_longClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
 end
 
 function visit_shortClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
-    # For now, return a placeholder - can be expanded later
+    # shortClassSpecifier: IDENT '=' (basePrefix? typeSpecifier classModification?
+    #                                 | 'enumeration' '(' (enumList? | ':') ')') comment
     name = get_text(ctx.IDENT())
-    return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], [], nothing))
+    enum_list_ctx = ctx.enumList()
+    if !is_null(enum_list_ctx)
+        values = [get_text(lit.IDENT()) for lit in enum_list_ctx.enumerationLiteral()]
+        return BaseModelicaEnumeration(name, values)
+    else
+        # Type alias — return placeholder for now
+        return BaseModelicaLongClass(name, "", BaseModelicaComposition([], [], [], [], nothing))
+    end
 end
 
 function visit_derClassSpecifier(visitor::ASTBuilderVisitor, ctx::Py)
