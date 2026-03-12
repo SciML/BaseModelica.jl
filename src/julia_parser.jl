@@ -339,7 +339,12 @@ spc = Drop(Star(Space()))
     #component clauses
     name = Not(Lookahead(e"end")) + Not(Lookahead(E"equation")) +
         Not(Lookahead(E"initial equation")) + (IDENT + Star(e"." + IDENT)) |> list2string # Not(Lookahead(foo)) tells it that names can't be foo
-    type_specifier = E"."[0:1] + name > BaseModelicaTypeSpecifier
+    type_specifier = E"."[0:1] + name |>
+        function(input)
+            n = last(input)  # name result, possibly after "."
+            s = n isa BaseModelicaIdentifier ? n.name : string(n)
+            return BaseModelicaTypeSpecifier(s)
+        end
     type_prefix = (
         (e"final")[0:1] + spc + (e"discrete" | e"parameter" | e"constant")[0:1] +
             spc +
@@ -447,7 +452,7 @@ spc = Drop(Star(Space()))
     )
 
     enumeration_literal = IDENT + comment
-    enum_list = enumeration_literal + Star(E"," + enumeration_literal)
+    enum_list = enumeration_literal + Star(E"," + spc + enumeration_literal)
 
     guess_value = E"guess" + E"(" + component_reference + E")"
     prioritize_expression = Delayed()
@@ -546,18 +551,20 @@ spc = Drop(Star(Space()))
     output_expression_list.matcher = expression[0:1] + Star(E"," + expression[0:1])
     expression_list.matcher = expression + Star(E"," + expression)
 
-    # if_expression: conditions/then-values use simple_expression,
-    # else-value uses expression (Delayed) to support nested if-expressions
+    # if_expression: then/else values use spc + expression to support nested
+    # if-expressions as then-values (e.g. `if A then if B then C else D else E`)
+    # spc before keywords handles whitespace when then-value is an if_expression
+    # (which doesn't consume trailing whitespace unlike simple_expression)
     if_expression = e"if" + simple_expression + e"then" +
-        simple_expression +
+        spc + expression +
         Star(
-        e"elseif" + simple_expression + e"then" +
-            simple_expression
+        spc + e"elseif" + simple_expression + e"then" +
+            spc + expression
     ) +
-        e"else" + spc + expression |> BaseModelicaIfExpression
+        spc + e"else" + spc + expression |> BaseModelicaIfExpression
     expression_no_decoration = if_expression | simple_expression
 
-    expression.matcher = expression_no_decoration + decoration[0:1]
+    expression.matcher = spc + expression_no_decoration + decoration[0:1]
 
     # Guarded equation for if-equation blocks: consume whitespace, then check
     # that we're not at a block-ending keyword before trying to match an equation.
