@@ -132,6 +132,12 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
 
     has_else = length(if_eq.thens) > length(if_eq.ifs)
 
+    # Collect tstops from time-based conditions (e.g. time < 1e-5)
+    for cond in if_eq.ifs
+        threshold = extract_time_threshold(cond)
+        isnothing(threshold) || push!(tstops_collection, threshold)
+    end
+
     # Helper to extract RHS for a specific variable from a branch's equation list
     function get_rhs_for_var(var_lhs, branch_equations)
         equations_to_check = isa(branch_equations, AbstractArray) ? branch_equations :
@@ -388,11 +394,26 @@ function eval_AST(component::BaseModelicaComponentClause)
     end
 end
 
+function extract_time_threshold(cond_ast)
+    is_time_ref(x) = x isa BaseModelicaComponentReference &&
+                     length(x.ref_list) == 1 &&
+                     x.ref_list[1].name == "time"
+    if (cond_ast isa BaseModelicaLessThan || cond_ast isa BaseModelicaLEQ) &&
+            is_time_ref(cond_ast.left) && cond_ast.right isa BaseModelicaNumber
+        return Float64(cond_ast.right.val)
+    elseif (cond_ast isa BaseModelicaGEQ || cond_ast isa BaseModelicaGreaterThan) &&
+            is_time_ref(cond_ast.left) && cond_ast.right isa BaseModelicaNumber
+        return Float64(cond_ast.right.val)
+    end
+    return nothing
+end
+
 function eval_AST(model::BaseModelicaModel)
     empty!(variable_map)
     empty!(parameter_val_map)
     empty!(discrete_variable_names)
     empty!(free_parameter_names)
+    empty!(tstops_collection)
 
     class_specifier = model.long_class_specifier
 

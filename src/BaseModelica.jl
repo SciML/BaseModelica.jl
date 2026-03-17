@@ -159,6 +159,10 @@ function create_odeproblem(filename::String; parser::Symbol = :antlr, u0 = [], k
     # Convert to ModelingToolkit
     sys = baseModelica_to_ModelingToolkit(package)
 
+    # Collect tstops from time-based if-equation conditions (e.g. `if time < 1e-5`)
+    # so the ODE solver stops exactly at each discontinuity.
+    model_tstops = isempty(tstops_collection) ? nothing : sort!(collect(tstops_collection))
+
     # Extract experiment annotation from the model's composition
     annotation = nothing
     if package.model isa BaseModelicaModel
