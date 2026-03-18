@@ -414,6 +414,8 @@ function eval_AST(model::BaseModelicaModel)
     empty!(discrete_variable_names)
     empty!(free_parameter_names)
     empty!(tstops_collection)
+    bool_comparison_names = Set{Symbol}()       # Original names (e.g. Symbol("Ideal.off"))
+    bool_comparison_sanitized = Set{Symbol}()   # Sanitized names used for MTK symbols (e.g. :Ideal_off)
 
     class_specifier = model.long_class_specifier
 
@@ -453,8 +455,22 @@ function eval_AST(model::BaseModelicaModel)
                 # so MTK can track them between events without needing D(x)~0.
                 variable_map[name] = only(@discretes($name(t)))
             elseif comp.type_specifier.type == "Boolean"
-                variable_map[name] = only(@variables($name(t)::Bool))
-                push!(vars, variable_map[name])
+                # Bool comparison vars (e.g. `off = s < 0`) become discrete parameters.
+                # They hold their value between events and are updated by a zero-crossing
+                # callback. Sanitize the name (dots → underscores) to avoid an MTK codegen
+                # bug where dotted names produce invalid Julia like `Ideal.offₜ₋₁`.
+                push!(bool_comparison_names, name)
+                sanitized = Symbol(replace(string(name), '.' => '_'))
+                push!(bool_comparison_sanitized, sanitized)
+                disc_sym = only(@discretes($sanitized(t)::Bool))
+                # Apply start value if declared (sets the initial discrete state)
+                start_val = get_class_modification_value(
+                    comp.component_list[1].declaration.modification, "start")
+                if !isnothing(start_val)
+                    disc_sym = ModelingToolkit.setdefault(disc_sym, start_val)
+                end
+                variable_map[name] = disc_sym
+                # Don't push to vars — discrete parameters appear in all_pars
             else
                 variable_map[name] = only(@variables($name(t)))
                 push!(vars, variable_map[name])
@@ -468,8 +484,8 @@ function eval_AST(model::BaseModelicaModel)
         name = Symbol(comp.component_list[1].declaration.ident[1].name)
         declaration = comp.component_list[1].declaration
 
-        if name in discrete_variable_names
-            # Discrete parameters are managed by the when-equation callback; skip.
+        if name in discrete_variable_names || name in bool_comparison_names
+            # Discrete/Bool-comparison vars are handled separately; skip pass-2 processing.
             continue
         end
 
@@ -643,6 +659,52 @@ function eval_AST(model::BaseModelicaModel)
         !isnothing(idx) && (vars[idx] = variable_map[name])
     end
 
+    # Build discrete callbacks for Bool comparison variables (e.g. `off = s < 0`).
+    # `off` is a discrete parameter (constant between events) so the Jacobian is
+    # smooth between events — no Dirac delta at the switching point.
+    # The callback detects s=0 crossings and updates `off`:
+    #   s goes positive→negative: off becomes true  (affect, diode starts blocking)
+    #   s goes negative→positive: off becomes false (affect_neg, diode starts conducting)
+    # The sanitized name (dots → underscores) avoids an MTK codegen bug where
+    # dotted parameter names produce invalid Julia like `Ideal.offₜ₋₁`.
+    bool_crossing_callbacks = ModelingToolkit.SymbolicContinuousCallback[]
+    filtered_eqs = Equation[]
+    for eq in eqs
+        lhs_name = try
+            ModelingToolkit.getname(eq.lhs)
+        catch
+            nothing
+        end
+        if isa(eq, Equation) && lhs_name in bool_comparison_sanitized
+            off_sym = eq.lhs
+            try
+                crossing = to_zero_crossing(eq.rhs)
+                # Use ImperativeAffect to bypass ImplicitDiscreteFunction codegen,
+                # which has a bug with discrete parameter names containing subscripts.
+                affect = ModelingToolkitBase.ImperativeAffect(
+                    (m, o, ctx, integ) -> (; off = true);
+                    modified = (; off = off_sym))
+                affect_neg = ModelingToolkitBase.ImperativeAffect(
+                    (m, o, ctx, integ) -> (; off = false);
+                    modified = (; off = off_sym))
+                cb = ModelingToolkit.SymbolicContinuousCallback(
+                    [crossing ~ 0],
+                    affect;
+                    affect_neg = affect_neg,
+                    reinitializealg = BrownFullBasicInit(),
+                )
+                push!(bool_crossing_callbacks, cb)
+            catch
+                # Not a simple comparison — skip
+            end
+            # Omit the definition equation: `off` is updated by the callback, not by
+            # an algebraic equation in the DAE.
+        else
+            push!(filtered_eqs, eq)
+        end
+    end
+    eqs = filtered_eqs
+
     real_eqs = Equation[declaration_eqs..., eqs...]
 
     # Collect all parameters from variable_map after all passes have applied defaults.
@@ -655,12 +717,11 @@ function eval_AST(model::BaseModelicaModel)
     # solve for p during initialization using initialization_eqs.
     bindings = [variable_map[name] => missing for name in free_parameter_names]
 
-    # Use only() to extract the runtime-typed Pair from Vector{Any} for single events;
-    # pass the vector directly for multiple events.
-    events = length(when_callbacks) == 1 ? only(when_callbacks) : when_callbacks
+    # Merge when-equation callbacks with Bool zero-crossing callbacks.
+    all_events = vcat(when_callbacks, bool_crossing_callbacks)
     @named sys = System(
         real_eqs, t, vars, all_pars;
-        continuous_events = events,
+        continuous_events = all_events,
         initialization_eqs = initialization_eqs,
         bindings = bindings,
     )

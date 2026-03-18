@@ -396,7 +396,7 @@ BM = BaseModelica
 
         prob = ODEProblem(diode_system, [], (0.0, 1.0);
             missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0))
-        sol = solve(prob, Rodas5P())
+        sol = solve(prob)
         @test sol.retcode == ReturnCode.Success
     end
 
