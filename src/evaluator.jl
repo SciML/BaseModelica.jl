@@ -414,8 +414,7 @@ function eval_AST(model::BaseModelicaModel)
     empty!(discrete_variable_names)
     empty!(free_parameter_names)
     empty!(tstops_collection)
-    bool_comparison_names = Set{Symbol}()       # Original names (e.g. Symbol("Ideal.off"))
-    bool_comparison_sanitized = Set{Symbol}()   # Sanitized names used for MTK symbols (e.g. :Ideal_off)
+    bool_comparison_names = Set{Symbol}()  # Names of Boolean comparison variables
 
     class_specifier = model.long_class_specifier
 
@@ -461,12 +460,11 @@ function eval_AST(model::BaseModelicaModel)
             elseif comp.type_specifier.type == "Boolean"
                 # Bool comparison vars (e.g. `off = s < 0`) become discrete parameters.
                 # They hold their value between events and are updated by a zero-crossing
-                # callback. Sanitize the name (dots → underscores) to avoid an MTK codegen
-                # bug where dotted names produce invalid Julia like `Ideal.offₜ₋₁`.
+                # callback. ImperativeAffect is used (not discrete_parameters), so dotted
+                # names like `Ideal.off` are fine — Symbolics wraps them in var"..." in
+                # generated code, avoiding any parse issues.
                 push!(bool_comparison_names, name)
-                sanitized = Symbol(replace(string(name), '.' => '_'))
-                push!(bool_comparison_sanitized, sanitized)
-                disc_sym = only(@discretes($sanitized(t)::Bool))
+                disc_sym = only(@discretes($name(t)::Bool))
                 # Apply start value if declared (sets the initial discrete state)
                 start_val = get_class_modification_value(
                     comp.component_list[1].declaration.modification, "start")
@@ -693,7 +691,7 @@ function eval_AST(model::BaseModelicaModel)
         catch
             nothing
         end
-        if isa(eq, Equation) && lhs_name in bool_comparison_sanitized
+        if isa(eq, Equation) && lhs_name in bool_comparison_names
             off_sym = eq.lhs
             try
                 crossing = to_zero_crossing(eq.rhs)
@@ -713,7 +711,22 @@ function eval_AST(model::BaseModelicaModel)
                 )
                 push!(bool_crossing_callbacks, cb)
             catch
-                # Not a simple comparison — skip
+                # Not a comparison expression (e.g. `local_reset = false`).
+                # If the RHS is a concrete Bool constant, use it as the default
+                # value for the discrete parameter and drop the equation.
+                # Otherwise, keep the equation so the DAE can still use it.
+                concrete_val = try
+                    b = Symbolics.value(eq.rhs)
+                    b isa Bool ? b : nothing
+                catch
+                    nothing
+                end
+                if !isnothing(concrete_val)
+                    variable_map[lhs_name] =
+                        ModelingToolkit.setdefault(off_sym, concrete_val)
+                else
+                    push!(filtered_eqs, eq)
+                end
             end
             # Omit the definition equation: `off` is updated by the callback, not by
             # an algebraic equation in the DAE.
