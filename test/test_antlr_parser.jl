@@ -1,6 +1,7 @@
 using Test
 using BaseModelica
 using ModelingToolkit
+using OrdinaryDiffEq
 
 BM = BaseModelica
 
@@ -381,6 +382,22 @@ BM = BaseModelica
         @test !isempty(ModelingToolkit.continuous_events(triac_system))
 
         @test parse_basemodelica(triac_path, parser = :antlr) isa System
+    end
+
+    @testset "Characteristic Ideal Diodes" begin
+        diode_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "CharacteristicIdealDiodes.bmo"
+        )
+        diode_package = BM.parse_file_antlr(diode_path)
+        @test diode_package isa BM.BaseModelicaPackage
+
+        diode_system = BM.baseModelica_to_ModelingToolkit(diode_package)
+        @test diode_system isa System
+
+        prob = ODEProblem(diode_system, [], (0.0, 1.0);
+            missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0))
+        sol = solve(prob)
+        @test sol.retcode == ReturnCode.Success
     end
 
 end
