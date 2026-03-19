@@ -63,7 +63,7 @@ function_map = Dict(
     :integer => x -> Base.floor(x...),
 
     # ── Delay operator (Spec 3.7.2.1) ──────────────────────────────────────
-    :delay => x -> ModelingToolkit.EvalAt(t - x[2])(x[1])
+    :delay => x -> ModelingToolkit.EvalAt(t - x[2])(x[1]),
 
     # ── Special operators (Spec 3.7.4) ────────────────────────────────────────
     # semiLinear: smooth(0, if x >= 0 then k_pos*x else k_neg*x)

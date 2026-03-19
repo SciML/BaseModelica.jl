@@ -1,5 +1,6 @@
 # function to convert "AST" to ModelingToolkit
 using ModelingToolkit: t_nounits as t, D_nounits as D
+using DiffEqBase: BrownFullBasicInit
 
 @data BaseModelicaRuntimeTypes begin
     RTRecord()
@@ -693,8 +694,12 @@ function eval_AST(model::BaseModelicaModel)
         end
         if isa(eq, Equation) && lhs_name in bool_comparison_names
             off_sym = eq.lhs
-            try
-                crossing = to_zero_crossing(eq.rhs)
+            crossing = try
+                to_zero_crossing(eq.rhs)
+            catch
+                nothing
+            end
+            if !isnothing(crossing)
                 # Use ImperativeAffect to bypass ImplicitDiscreteFunction codegen,
                 # which has a bug with discrete parameter names containing subscripts.
                 affect = ModelingToolkitBase.ImperativeAffect(
@@ -710,13 +715,10 @@ function eval_AST(model::BaseModelicaModel)
                     reinitializealg = BrownFullBasicInit(),
                 )
                 push!(bool_crossing_callbacks, cb)
-            catch
-                # Not a comparison expression (e.g. `local_reset = false`).
-                # If the RHS is a concrete Bool constant, use it as the default
-                # value for the discrete parameter and drop the equation.
-                # Otherwise, keep the equation so the DAE can still use it.
+            else
+                # Not a comparison expression — treat as a constant Bool assignment.
                 concrete_val = try
-                    b = Symbolics.value(eq.rhs)
+                    b = ModelingToolkitBase.Symbolics.value(eq.rhs)
                     b isa Bool ? b : nothing
                 catch
                     nothing
@@ -724,9 +726,8 @@ function eval_AST(model::BaseModelicaModel)
                 if !isnothing(concrete_val)
                     variable_map[lhs_name] =
                         ModelingToolkit.setdefault(off_sym, concrete_val)
-                else
-                    push!(filtered_eqs, eq)
                 end
+                # Either way, don't add to filtered_eqs: `off` is a discrete parameter.
             end
             # Omit the definition equation: `off` is updated by the callback, not by
             # an algebraic equation in the DAE.
