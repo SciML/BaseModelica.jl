@@ -150,8 +150,8 @@ uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 version = "1.11.0"
 
 [[deps.BaseModelica]]
-deps = ["CondaPkg", "MLStyle", "ModelingToolkit", "ModelingToolkitBase", "ParserCombinator", "PythonCall"]
-path = "/home/chrisrackauckas/github-runners/deepsea4-16/_work/BaseModelica.jl/BaseModelica.jl"
+deps = ["CondaPkg", "DiffEqBase", "MLStyle", "ModelingToolkit", "ModelingToolkitBase", "ParserCombinator", "PythonCall"]
+path = "/home/runner/work/BaseModelica.jl/BaseModelica.jl"
 uuid = "a17d5099-185d-4ff5-b5d3-51aa4569e56d"
 version = "1.6.0"
 
