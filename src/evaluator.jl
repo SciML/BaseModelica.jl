@@ -414,6 +414,10 @@ function eval_AST(model::BaseModelicaModel)
     vars = Num[]
     pars = Num[]
     declaration_eqs = []
+    # Collects stateSelect values keyed by variable name, populated in Pass 2.
+    # Keyed by name (Symbol) rather than the symbol itself so the final state_priorities
+    # dict can be built after Pass 3.5 when variable_map symbols are fully resolved.
+    state_select_raw = Dict{Symbol, Int}()
 
     # Pass 1: Create all variables and parameters in variable_map
     for comp in components
@@ -502,6 +506,12 @@ function eval_AST(model::BaseModelicaModel)
                 end
             end
 
+            # stateSelect attribute: StateSelect.never/avoid/default/prefer/always → Int 1–5
+            ss_value = get_class_modification_value(declaration.modification, "stateSelect")
+            if !isnothing(ss_value) && ss_value isa Int
+                state_select_raw[name] = ss_value
+            end
+
             # Check for declaration equation (e.g. Boolean 'y' = time >= 0.5)
             # A direct expression in the modification (not a named class attribute) is a
             # binding equation that must become an explicit MTK equation.
@@ -535,6 +545,14 @@ function eval_AST(model::BaseModelicaModel)
             variable_map[name] = ModelingToolkit.setdefault(sym, val)
         end
     end
+
+    # Build state_priorities from stateSelect attributes collected in Pass 2.
+    # variable_map is now fully resolved (after Pass 3.5), so symbol keys are stable.
+    state_priorities = Dict(
+        variable_map[name] => val
+        for (name, val) in state_select_raw
+        if haskey(variable_map, name) && val != Int(StateSelectDefault)
+    )
 
     # Split equations into when-equations (→ continuous callbacks) and regular equations.
     # Julia parser: wrapped as BaseModelicaAnyEquation { equation: BaseModelicaSimpleEquation { lhs: BaseModelicaWhenEquation } }
@@ -642,12 +660,21 @@ function eval_AST(model::BaseModelicaModel)
         continuous_events = events,
         initialization_eqs = initialization_eqs,
         bindings = bindings,
+        state_priorities = state_priorities,
     )
     return mtkcompile(sys)
 end
 
 function eval_AST(package::BaseModelicaPackage)
     empty!(enum_map)
+    # Register built-in StateSelect enumeration so StateSelect.prefer etc. resolve correctly.
+    enum_map["StateSelect"] = Dict(
+        :never   => Int(StateSelectNever),
+        :avoid   => Int(StateSelectAvoid),
+        :default => Int(StateSelectDefault),
+        :prefer  => Int(StateSelectPrefer),
+        :always  => Int(StateSelectAlways),
+    )
     for class_def in package.class_defs
         if class_def isa BaseModelicaClassDefinition && class_def.class isa BaseModelicaEnumeration
             enum = class_def.class
