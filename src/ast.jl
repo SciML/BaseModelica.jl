@@ -1,3 +1,15 @@
+# Typed representation of Modelica's built-in StateSelect enumeration.
+# Spec: Modelica Language Specification §8.2.1 (stateSelect attribute).
+# Values are ordered by increasing preference for state selection:
+#   never < avoid < default < prefer < always
+@enum StateSelectValue begin
+    StateSelectNever   = -100
+    StateSelectAvoid   = -10
+    StateSelectDefault = 0
+    StateSelectPrefer  = 10
+    StateSelectAlways  = 100
+end
+
 @data BaseModelicaASTNode begin
     BaseModelicaType(name, fields)
     BaseModelicaPackage(name, class_defs, model)
