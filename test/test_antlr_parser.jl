@@ -400,4 +400,15 @@ BM = BaseModelica
         @test sol.retcode == ReturnCode.Success
     end
 
+    @testset "Parameter String" begin
+        param_string_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "ParameterString.bmo"
+        )
+        param_string_package = BM.parse_file_antlr(param_string_path)
+        @test param_string_package isa BM.BaseModelicaPackage
+        param_string_system = BM.baseModelica_to_ModelingToolkit(param_string_package)
+        @test param_string_system isa System
+        @test parse_basemodelica(param_string_path, parser = :antlr) isa System
+    end
+
 end

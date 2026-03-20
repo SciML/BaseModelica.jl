@@ -1,0 +1,9 @@
+//! base 0.1.0
+package 'ParameterString'
+  model 'ParameterString'
+    parameter String 'directMass.forceToPosition.Name_p' = "s" "Name of potential variable";
+    Real 'x';
+  equation
+    'x' = 1.0;
+  end 'ParameterString';
+end 'ParameterString';
