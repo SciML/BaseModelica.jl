@@ -487,9 +487,8 @@ function eval_AST(model::BaseModelicaModel)
                 # Apply start value if declared (sets the initial discrete state)
                 start_val = get_class_modification_value(
                     comp.component_list[1].declaration.modification, "start")
-                if !isnothing(start_val)
-                    disc_sym = ModelingToolkit.setdefault(disc_sym, start_val)
-                end
+                default_val = !isnothing(start_val) ? start_val : false
+                disc_sym = ModelingToolkit.setdefault(disc_sym, default_val)
                 variable_map[name] = disc_sym
                 # Don't push to vars — discrete parameters appear in all_pars
             else
