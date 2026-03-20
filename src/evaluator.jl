@@ -13,6 +13,18 @@ using DiffEqBase: BrownFullBasicInit
     RTString()
 end
 
+function modelica_type_to_julia(type_str::String)
+    if type_str == "Integer"
+        return Int
+    elseif type_str == "Boolean"
+        return Bool
+    elseif haskey(enum_map, type_str)
+        return Int
+    else  # "Real" or other
+        return Float64
+    end
+end
+
 function eval_AST(expr::BaseModelicaExpr)
     return let f = eval_AST
         @match expr begin
@@ -370,7 +382,9 @@ function eval_AST(component::BaseModelicaComponentClause)
     declaration = list[1].declaration
     name = Symbol(declaration.ident[1].name)
     if type_prefix == "parameter"
-        variable_map[name] = only(@parameters($name))
+        component.type_specifier.type == "String" && return nothing
+        julia_type = modelica_type_to_julia(component.type_specifier.type)
+        variable_map[name] = only(@parameters($name::julia_type))
 
         # Extract parameter value from modification
         # Modifications can be:
@@ -448,10 +462,14 @@ function eval_AST(model::BaseModelicaModel)
         type_prefix = comp.type_prefix.dpc
 
         if type_prefix == "parameter" || haskey(enum_map, comp.type_specifier.type)
-            variable_map[name] = only(@parameters($name))
+            comp.type_specifier.type == "String" && continue
+            julia_type = modelica_type_to_julia(comp.type_specifier.type)
+            variable_map[name] = only(@parameters($name::julia_type))
             push!(pars, variable_map[name])
         elseif type_prefix == "constant"
-            variable_map[name] = only(@parameters($name))
+            comp.type_specifier.type == "String" && continue
+            julia_type = modelica_type_to_julia(comp.type_specifier.type)
+            variable_map[name] = only(@parameters($name::julia_type))
             push!(pars, variable_map[name])
         elseif isnothing(type_prefix)
             if name in discrete_variable_names
@@ -494,6 +512,7 @@ function eval_AST(model::BaseModelicaModel)
 
         if type_prefix == "parameter" || type_prefix == "constant" ||
                 haskey(enum_map, comp.type_specifier.type)
+            comp.type_specifier.type == "String" && continue
             # Check for fixed = false (parameter to be solved during initialization)
             fixed_value = get_class_modification_value(declaration.modification, "fixed")
             is_free = !isnothing(fixed_value) && fixed_value === false
