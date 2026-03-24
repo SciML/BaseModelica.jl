@@ -411,4 +411,15 @@ BM = BaseModelica
         @test parse_basemodelica(param_string_path, parser = :antlr) isa System
     end
 
+    @testset "Boolean Expression" begin
+        bool_expr_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "BooleanExpression.bmo"
+        )
+        bool_expr_package = BM.parse_file_antlr(bool_expr_path)
+        @test bool_expr_package isa BM.BaseModelicaPackage
+        bool_expr_system = BM.baseModelica_to_ModelingToolkit(bool_expr_package)
+        @test bool_expr_system isa System
+        @test parse_basemodelica(bool_expr_path, parser = :antlr) isa System
+    end
+
 end

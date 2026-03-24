@@ -1,0 +1,15 @@
+//! base 0.1.0
+package 'BooleanExpression'
+  model 'BooleanExpression'
+    Boolean 'y';
+    discrete Real 'pulseStart';
+  initial equation
+    'pulseStart' = 0.0;
+  equation
+    when sample(0.0, 1.0) then
+      'pulseStart' = time;
+    end when;
+
+    'y' = time >= 'pulseStart' and time < 'pulseStart' + 0.5;
+  end 'BooleanExpression';
+end 'BooleanExpression';
