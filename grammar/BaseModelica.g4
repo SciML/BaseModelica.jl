@@ -25,8 +25,8 @@ classDefinition
 
 classPrefixes
     : 'type'
-    | 'operator'? 'record'
-    | (('pure' 'constant'?) | 'impure')? 'operator'? 'function'
+    | 'record'
+    | (('pure' 'constant'?) | 'impure')? 'function'
     ;
 
 classSpecifier
