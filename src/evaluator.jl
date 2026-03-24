@@ -328,12 +328,25 @@ function collect_when_body_var_names(equations)
     return names
 end
 
+function get_sample_args(condition_ast)
+    condition_ast isa BaseModelicaFunctionCall || return nothing
+    func_name = condition_ast.func_name
+    fname = if func_name isa BaseModelicaIdentifier
+        func_name.name
+    elseif func_name isa BaseModelicaComponentReference
+        func_name.ref_list[1].name
+    else
+        ""
+    end
+    fname == "sample" || return nothing
+    args = condition_ast.args.args
+    length(args) >= 2 || return nothing
+    return args
+end
+
 function eval_AST(when_eq::BaseModelicaWhenEquation)
     callbacks = []
     for (condition_ast, body_eqs) in zip(when_eq.whens, when_eq.thens)
-        condition_sym = eval_when_rhs(condition_ast; in_body = false)
-        crossing = to_zero_crossing(condition_sym)
-
         affects = Equation[]
         discrete_params_for_cb = []
         body_eq_list = isa(body_eqs, AbstractArray) ? body_eqs : [body_eqs]
@@ -348,14 +361,28 @@ function eval_AST(when_eq::BaseModelicaWhenEquation)
             end
         end
 
-        # Only fire on positive zero-crossing (condition becomes true) → Modelica edge semantics
-        push!(
-            callbacks, ModelingToolkit.SymbolicContinuousCallback(
-                [crossing ~ 0], affects;
-                affect_neg = nothing,
-                discrete_parameters = discrete_params_for_cb
+        sample_args = get_sample_args(condition_ast)
+        if !isnothing(sample_args)
+            # sample(startTime, interval) → PeriodicCallback with the given period
+            interval = Float64(eval_AST(sample_args[2]))
+            push!(
+                callbacks, ModelingToolkit.SymbolicDiscreteCallback(
+                    interval, affects;
+                    discrete_parameters = discrete_params_for_cb
+                )
             )
-        )
+        else
+            # Only fire on positive zero-crossing (condition becomes true) → Modelica edge semantics
+            condition_sym = eval_when_rhs(condition_ast; in_body = false)
+            crossing = to_zero_crossing(condition_sym)
+            push!(
+                callbacks, ModelingToolkit.SymbolicContinuousCallback(
+                    [crossing ~ 0], affects;
+                    affect_neg = nothing,
+                    discrete_parameters = discrete_params_for_cb
+                )
+            )
+        end
     end
     return callbacks
 end
@@ -471,6 +498,10 @@ function eval_AST(model::BaseModelicaModel)
             julia_type = modelica_type_to_julia(comp.type_specifier.type)
             variable_map[name] = only(@parameters($name::julia_type))
             push!(pars, variable_map[name])
+        elseif type_prefix == "discrete"
+            # Explicitly declared discrete variables — treat same as when-body discretes.
+            union!(discrete_variable_names, [name])
+            variable_map[name] = only(@discretes($name(t)))
         elseif isnothing(type_prefix)
             if name in discrete_variable_names
                 # Discrete variables only change at events; declare as discretes
@@ -767,11 +798,14 @@ function eval_AST(model::BaseModelicaModel)
     # solve for p during initialization using initialization_eqs.
     bindings = [variable_map[name] => missing for name in free_parameter_names]
 
-    # Merge when-equation callbacks with Bool zero-crossing callbacks.
-    all_events = vcat(when_callbacks, bool_crossing_callbacks)
+    # Split when-callbacks by type: sample()/periodic → discrete, zero-crossing → continuous.
+    when_continuous = filter(cb -> cb isa ModelingToolkit.SymbolicContinuousCallback, when_callbacks)
+    when_discrete   = filter(cb -> cb isa ModelingToolkit.SymbolicDiscreteCallback,   when_callbacks)
+    all_continuous_events = vcat(when_continuous, bool_crossing_callbacks)
     @named sys = System(
         real_eqs, t, vars, all_pars;
-        continuous_events = all_events,
+        continuous_events = all_continuous_events,
+        discrete_events = when_discrete,
         initialization_eqs = initialization_eqs,
         bindings = bindings,
         state_priorities = state_priorities,
