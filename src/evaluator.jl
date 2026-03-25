@@ -575,22 +575,26 @@ function eval_AST(model::BaseModelicaModel)
             start_value = get_class_modification_value(declaration.modification, "start")
             fixed_value = get_class_modification_value(declaration.modification, "fixed")
 
+            var = variable_map[name]
             if !isnothing(start_value)
-                var = variable_map[name]
                 # If fixed=true, use setdefault for initial condition
                 # Otherwise use setguess for guess value
                 is_fixed = !isnothing(fixed_value) &&
                     (fixed_value === true || fixed_value == true)
                 if is_fixed
                     variable_map[name] = ModelingToolkit.setdefault(var, start_value)
-                    idx = findfirst(v -> ModelingToolkit.getname(v) == name, vars)
-                    vars[idx] = variable_map[name]
                 else
                     variable_map[name] = ModelingToolkit.setguess(var, start_value)
-                    idx = findfirst(v -> ModelingToolkit.getname(v) == name, vars)
-                    vars[idx] = variable_map[name]
                 end
+            else
+                # No explicit start: set a default guess of 0.0 so that all variables
+                # have numeric guesses. Without this, MTK's initialization problem can
+                # end up with symbolic (cyclic) guesses when missing_guess_value is not
+                # forwarded through SCCNonlinearProblem → NonlinearProblem.
+                variable_map[name] = ModelingToolkit.setguess(var, 0.0)
             end
+            idx = findfirst(v -> ModelingToolkit.getname(v) == name, vars)
+            !isnothing(idx) && (vars[idx] = variable_map[name])
 
             # stateSelect attribute: StateSelect.never/avoid/default/prefer/always → Int 1–5
             ss_value = get_class_modification_value(declaration.modification, "stateSelect")

@@ -433,4 +433,15 @@ BM = BaseModelica
         @test parse_basemodelica(broken_when_path, parser = :antlr) isa System
     end
 
+    @testset "OpAmp Adder" begin
+        adder_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "OpAmpAdder.bmo"
+        )
+        adder_package = BM.parse_file_antlr(adder_path)
+        @test adder_package isa BM.BaseModelicaPackage
+        adder_system = BM.baseModelica_to_ModelingToolkit(adder_package)
+        @test adder_system isa System
+        @test parse_basemodelica(adder_path, parser = :antlr) isa System
+    end
+
 end
