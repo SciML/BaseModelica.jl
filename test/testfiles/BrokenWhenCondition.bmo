@@ -1,0 +1,16 @@
+//! base 0.1.0
+package 'BrokenWhenCondition'
+  model 'BrokenWhenCondition'
+    Boolean 'u' "Boolean input signal";
+    discrete Real 'entryTime'(unit = "s", quantity = "Time") "Time instant when u became true";
+    Real 'y' "Timer output";
+  initial equation
+    pre('entryTime') = 0.0;
+  equation
+    when 'u' then
+      'entryTime' = time;
+    end when;
+    'y' = if 'u' then time - 'entryTime' else 0.0;
+    'u' = time > 0.5;
+  end 'BrokenWhenCondition';
+end 'BrokenWhenCondition';

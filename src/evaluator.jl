@@ -219,6 +219,9 @@ end
 
 function to_zero_crossing(cond)
     inner = Symbolics.unwrap(cond)
+    if !SymbolicUtils.iscall(inner)
+        return cond - 0.5
+    end
     op = SymbolicUtils.operation(inner)
     args = SymbolicUtils.arguments(inner)
     if op === (>=) || op === (>)
@@ -228,10 +231,8 @@ function to_zero_crossing(cond)
     elseif op === (==)
         return args[1] - args[2]
     else
-        error(
-            "Unsupported when-condition operator: $op. " *
-                "Only simple comparisons (>=, >, <=, <, ==) are supported.",
-        )
+        # Bare Boolean variable applied to time (e.g. u(t)): `when u` means rising edge
+        return cond - 0.5
     end
 end
 

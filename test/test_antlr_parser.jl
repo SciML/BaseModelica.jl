@@ -422,4 +422,15 @@ BM = BaseModelica
         @test parse_basemodelica(bool_expr_path, parser = :antlr) isa System
     end
 
+    @testset "When condition with bare Boolean variable (issue #111)" begin
+        broken_when_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "BrokenWhenCondition.bmo"
+        )
+        broken_when_package = BM.parse_file_antlr(broken_when_path)
+        @test broken_when_package isa BM.BaseModelicaPackage
+        broken_when_system = BM.baseModelica_to_ModelingToolkit(broken_when_package)
+        @test broken_when_system isa System
+        @test parse_basemodelica(broken_when_path, parser = :antlr) isa System
+    end
+
 end
