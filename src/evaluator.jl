@@ -219,7 +219,7 @@ end
 
 function to_zero_crossing(cond)
     inner = Symbolics.unwrap(cond)
-    if !SymbolicUtils.istree(inner)
+    if !SymbolicUtils.iscall(inner)
         return cond - 0.5
     end
     op = SymbolicUtils.operation(inner)
