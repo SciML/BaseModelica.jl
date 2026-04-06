@@ -24,11 +24,11 @@ import Pkg;
 Pkg.add("BaseModelica");
 ```
 
-# Example
+## Example
 
 A Base Modelica model is in the file `ExampleFirstOrder.mo`. Inside of the file is a Base Modelica model specifying a simple first order linear differential equation:
 
-```
+```modelica
 package 'FirstOrder'
   model 'FirstOrder'
     parameter Real 'x0' = 0 "Initial value for 'x'";
@@ -36,14 +36,13 @@ package 'FirstOrder'
   initial equation
     'x' = 'x0' "Set initial value of 'x' to 'x0'";
   equation
-    der('x') = 1.0 - 'x'; 
+    der('x') = 1.0 - 'x';
   end 'FirstOrder';
 end 'FirstOrder';
 ```
 
 To parse the model in the file to ModelingToolkit, use the `parse_basemodelica` function:
 
-```julia
 ```julia
 using BaseModelica
 
@@ -63,6 +62,7 @@ sol = solve(prob)
 ```
 
 If the model contains an experiment annotation like:
+
 ```modelica
 annotation(experiment(StartTime = 0, StopTime = 2.0, Tolerance = 1e-06, Interval = 0.004))
 ```
