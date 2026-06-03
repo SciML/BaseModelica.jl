@@ -15,7 +15,7 @@ PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 [compat]
 Aqua = "0.8"
 CondaPkg = "0.2.33"
-DiffEqBase = "6.211.0"
+DiffEqBase = "6.211.0, 7.5"
 MLStyle = "0.4.17"
 ModelingToolkit = "11"
 ModelingToolkitBase = "1.16.2"
