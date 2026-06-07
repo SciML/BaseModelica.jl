@@ -439,8 +439,8 @@ end
 
 function extract_time_threshold(cond_ast)
     is_time_ref(x) = x isa BaseModelicaComponentReference &&
-                     length(x.ref_list) == 1 &&
-                     x.ref_list[1].name == "time"
+        length(x.ref_list) == 1 &&
+        x.ref_list[1].name == "time"
     if (cond_ast isa BaseModelicaLessThan || cond_ast isa BaseModelicaLEQ) &&
             is_time_ref(cond_ast.left) && cond_ast.right isa BaseModelicaNumber
         return Float64(cond_ast.right.val)
@@ -518,7 +518,8 @@ function eval_AST(model::BaseModelicaModel)
                 disc_sym = only(@discretes($name(t)::Bool))
                 # Apply start value if declared (sets the initial discrete state)
                 start_val = get_class_modification_value(
-                    comp.component_list[1].declaration.modification, "start")
+                    comp.component_list[1].declaration.modification, "start"
+                )
                 default_val = !isnothing(start_val) ? start_val : false
                 disc_sym = ModelingToolkit.setdefault(disc_sym, default_val)
                 variable_map[name] = disc_sym
@@ -640,8 +641,8 @@ function eval_AST(model::BaseModelicaModel)
     # variable_map is now fully resolved (after Pass 3.5), so symbol keys are stable.
     state_priorities = Dict(
         variable_map[name] => val
-        for (name, val) in state_select_raw
-        if haskey(variable_map, name) && val != Int(StateSelectDefault)
+            for (name, val) in state_select_raw
+            if haskey(variable_map, name) && val != Int(StateSelectDefault)
     )
 
     # Split equations into when-equations (→ continuous callbacks) and regular equations.
@@ -758,10 +759,12 @@ function eval_AST(model::BaseModelicaModel)
                 # which has a bug with discrete parameter names containing subscripts.
                 affect = ModelingToolkitBase.ImperativeAffect(
                     (m, o, ctx, integ) -> (; off = true);
-                    modified = (; off = off_sym))
+                    modified = (; off = off_sym)
+                )
                 affect_neg = ModelingToolkitBase.ImperativeAffect(
                     (m, o, ctx, integ) -> (; off = false);
-                    modified = (; off = off_sym))
+                    modified = (; off = off_sym)
+                )
                 cb = ModelingToolkit.SymbolicContinuousCallback(
                     [crossing ~ 0],
                     affect;
@@ -805,7 +808,7 @@ function eval_AST(model::BaseModelicaModel)
 
     # Split when-callbacks by type: sample()/periodic → discrete, zero-crossing → continuous.
     when_continuous = filter(cb -> cb isa ModelingToolkit.SymbolicContinuousCallback, when_callbacks)
-    when_discrete   = filter(cb -> cb isa ModelingToolkit.SymbolicDiscreteCallback,   when_callbacks)
+    when_discrete = filter(cb -> cb isa ModelingToolkit.SymbolicDiscreteCallback, when_callbacks)
     all_continuous_events = vcat(when_continuous, bool_crossing_callbacks)
     @named sys = System(
         real_eqs, t, vars, all_pars;
@@ -822,11 +825,11 @@ function eval_AST(package::BaseModelicaPackage)
     empty!(enum_map)
     # Register built-in StateSelect enumeration so StateSelect.prefer etc. resolve correctly.
     enum_map["StateSelect"] = Dict(
-        :never   => Int(StateSelectNever),
-        :avoid   => Int(StateSelectAvoid),
+        :never => Int(StateSelectNever),
+        :avoid => Int(StateSelectAvoid),
         :default => Int(StateSelectDefault),
-        :prefer  => Int(StateSelectPrefer),
-        :always  => Int(StateSelectAlways),
+        :prefer => Int(StateSelectPrefer),
+        :always => Int(StateSelectAlways),
     )
     for class_def in package.class_defs
         if class_def isa BaseModelicaClassDefinition && class_def.class isa BaseModelicaEnumeration

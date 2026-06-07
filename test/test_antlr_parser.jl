@@ -394,8 +394,10 @@ BM = BaseModelica
         diode_system = BM.baseModelica_to_ModelingToolkit(diode_package)
         @test diode_system isa System
 
-        prob = ODEProblem(diode_system, [], (0.0, 1.0);
-            missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0))
+        prob = ODEProblem(
+            diode_system, [], (0.0, 1.0);
+            missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0)
+        )
         sol = solve(prob)
         @test sol.retcode == ReturnCode.Success
     end
