@@ -3,11 +3,11 @@
 # Values are ordered by increasing preference for state selection:
 #   never < avoid < default < prefer < always
 @enum StateSelectValue begin
-    StateSelectNever   = -100
-    StateSelectAvoid   = -10
+    StateSelectNever = -100
+    StateSelectAvoid = -10
     StateSelectDefault = 0
-    StateSelectPrefer  = 10
-    StateSelectAlways  = 100
+    StateSelectPrefer = 10
+    StateSelectAlways = 100
 end
 
 @data BaseModelicaASTNode begin
