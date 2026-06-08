@@ -1,0 +1,5 @@
+[Core]
+versions = ["lts", "1", "pre"]
+
+[NoPre]
+versions = ["lts", "1", "pre"]
