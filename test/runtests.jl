@@ -1,29 +1,31 @@
-using Pkg, Test, SafeTestsets
+using Pkg
+using SafeTestsets
+using SciMLTesting
 
-const GROUP = get(ENV, "GROUP", "All")
-
-if (GROUP == "NoPre" || GROUP == "Quality") && isempty(VERSION.prerelease)
-    Pkg.activate(joinpath(@__DIR__, "nopre"))
+# The NoPre group runs Aqua/JET in the test/NoPre sub-env, but only on a non-prerelease
+# Julia: those tools produce spurious reports on prerelease builds, so the whole group
+# (env activation included) is a no-op on a `pre` matrix entry. A folder-discovery body
+# cannot express this guard, so NoPre stays an explicit thunk. "Quality" is a legacy
+# alias for NoPre.
+function nopre_group()
+    isempty(VERSION.prerelease) || return nothing
+    Pkg.activate(joinpath(@__DIR__, "NoPre"))
     Pkg.develop(PackageSpec(path = dirname(@__DIR__)))
     Pkg.instantiate()
-    @testset "Quality Assurance" begin
-        @safetestset "Quality Assurance" include("qa.jl")
-        @safetestset "JET Static Analysis" include("test_jet.jl")
-    end
+    @safetestset "Quality Assurance" include(joinpath(@__DIR__, "NoPre", "qa.jl"))
+    @safetestset "JET Static Analysis" include(joinpath(@__DIR__, "NoPre", "test_jet.jl"))
+    return nothing
 end
 
-if GROUP == "All" || GROUP == "Core"
-    @testset "BaseModelica" begin
-        @safetestset "Julia Parser Tests" begin
-            include("test_julia_parser.jl")
-        end
-
-        @safetestset "ANTLR Parser Tests" begin
-            include("test_antlr_parser.jl")
-        end
-
-        @safetestset "Error Message Tests" begin
-            include("test_error_messages.jl")
-        end
-    end
-end
+run_tests(;
+    core = function ()
+        @safetestset "Julia Parser Tests" include("test_julia_parser.jl")
+        @safetestset "ANTLR Parser Tests" include("test_antlr_parser.jl")
+        return @safetestset "Error Message Tests" include("test_error_messages.jl")
+    end,
+    groups = Dict("NoPre" => nopre_group),
+    umbrellas = Dict("Quality" => ["NoPre"]),
+    # Original runtests ran NoPre/Quality only for those explicit GROUPs, never under
+    # "All"; curate "All" to Core only to preserve that.
+    all = ["Core"],
+)
