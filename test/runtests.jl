@@ -23,7 +23,7 @@ run_tests(;
         @safetestset "ANTLR Parser Tests" include("test_antlr_parser.jl")
         return @safetestset "Error Message Tests" include("test_error_messages.jl")
     end,
-    groups = Dict("QA" => qa_group),
+    qa = qa_group,
     umbrellas = Dict("Quality" => ["QA"]),
     # Original runtests ran QA/Quality only for those explicit GROUPs, never under
     # "All"; curate "All" to Core only to preserve that.
