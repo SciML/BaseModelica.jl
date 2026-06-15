@@ -160,7 +160,7 @@ version = "1.11.0"
 
 [[deps.BaseModelica]]
 deps = ["CondaPkg", "DiffEqBase", "MLStyle", "ModelingToolkit", "ModelingToolkitBase", "ParserCombinator", "PythonCall"]
-path = "/home/runner/_work/BaseModelica.jl/BaseModelica.jl"
+path = "/home/chrisrackauckas/github-runners/arctic1-11/_work/BaseModelica.jl/BaseModelica.jl"
 uuid = "a17d5099-185d-4ff5-b5d3-51aa4569e56d"
 version = "1.9.0"
 
@@ -1633,9 +1633,9 @@ version = "1.1.0"
 
 [[deps.SymbolicUtils]]
 deps = ["AbstractTrees", "ArrayInterface", "Combinatorics", "ConstructionBase", "DataStructures", "DocStringExtensions", "DynamicPolynomials", "EnumX", "ExproniconLite", "Graphs", "LinearAlgebra", "MacroTools", "Moshi", "MultivariatePolynomials", "MutableArithmetics", "NaNMath", "PrecompileTools", "ReadOnlyArrays", "Setfield", "SparseArrays", "SpecialFunctions", "StaticArraysCore", "SymbolicIndexingInterface", "TaskLocalValues", "TermInterface", "WeakCacheSets"]
-git-tree-sha1 = "db2dd7feba95f6d94d52e7a63185449d57f808c5"
+git-tree-sha1 = "a6e3bc627252da68a6aa95746b47c7da4bfd9c39"
 uuid = "d1185830-fcd6-423d-90d6-eec64667417b"
-version = "4.35.0"
+version = "4.35.1"
 
     [deps.SymbolicUtils.extensions]
     SymbolicUtilsChainRulesCoreExt = "ChainRulesCore"
