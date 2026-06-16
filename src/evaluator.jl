@@ -376,9 +376,14 @@ function eval_AST(when_eq::BaseModelicaWhenEquation)
             # Only fire on positive zero-crossing (condition becomes true) → Modelica edge semantics
             condition_sym = eval_when_rhs(condition_ast; in_body = false)
             crossing = to_zero_crossing(condition_sym)
+            # A when-condition is scalar, so `crossing ~ 0` is a single Equation.
+            # Annotate the literal as Equation[...] so it is always Vector{Equation}:
+            # without it inference admits a spurious Vector{Vector{Equation}} arm
+            # (crossing is a Union including a vector case) for which
+            # SymbolicContinuousCallback has no matching method.
             push!(
                 callbacks, ModelingToolkit.SymbolicContinuousCallback(
-                    [crossing ~ 0], affects;
+                    Equation[crossing ~ 0], affects;
                     affect_neg = nothing,
                     discrete_parameters = discrete_params_for_cb
                 )
@@ -766,7 +771,7 @@ function eval_AST(model::BaseModelicaModel)
                     modified = (; off = off_sym)
                 )
                 cb = ModelingToolkit.SymbolicContinuousCallback(
-                    [crossing ~ 0],
+                    Equation[crossing ~ 0],
                     affect;
                     affect_neg = affect_neg,
                     reinitializealg = BrownFullBasicInit(),
