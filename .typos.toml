@@ -1,1 +1,3 @@
 [default.extend-words]
+# Nd is the Modelica LimPID derivative-gain parameter name in the PID_Controller test fixture
+Nd = "Nd"
