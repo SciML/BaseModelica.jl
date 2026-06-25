@@ -6,7 +6,17 @@ run_qa(
     explicit_imports = true,
     # MLStyle's @match expands to ambiguous-looking method tables; the original QA
     # ran ambiguities non-recursively, so keep that.
-    aqua_kwargs = (; ambiguities = (; recursive = false)),
+    #
+    # persistent_tasks is disabled because Aqua's probe loads the package in a
+    # freshly generated wrapper environment built from this Project.toml alone, and
+    # `using BaseModelica` there drives PythonCall's `__init__` -> CondaPkg resolve.
+    # That precompile takes far longer than the probe's load window, so the wrapper
+    # subprocess exits before signalling and Aqua reports "done.log was not created,
+    # but precompilation exited" — a false positive. The package defines no
+    # `__init__`/`@async`/`Timer`, so it leaves no persistent tasks of its own. The
+    # pre-run_qa qa.jl never asserted this check (it only called the non-asserting
+    # `find_persistent_tasks_deps`); this keeps that scope.
+    aqua_kwargs = (; ambiguities = (; recursive = false), persistent_tasks = false),
     ei_kwargs = (;
         all_qualified_accesses_via_owners = (;
             # All re-exported by ModelingToolkit/Symbolics from their base libs
