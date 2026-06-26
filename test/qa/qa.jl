@@ -32,19 +32,8 @@ run_qa(
             ),
         ),
         all_qualified_accesses_are_public = (;
-            # Non-public names of upstream deps; will go public as those base libs
-            # mark their API.
             ignore = (
-                :Constant,                    # ModelingToolkitBase.MissingGuessValue
-                :ImperativeAffect,            # ModelingToolkitBase
-                :isparameter,                 # ModelingToolkitBase
-                :SymbolicContinuousCallback,  # ModelingToolkit (-> ModelingToolkitBase)
-                :SymbolicDiscreteCallback,    # ModelingToolkit (-> ModelingToolkitBase)
-                :getname,                     # ModelingToolkit (-> SymbolicIndexingInterface)
-                :setdefault,                  # ModelingToolkit (-> ModelingToolkitBase)
-                :setguess,                    # ModelingToolkit (-> ModelingToolkitBase)
-                :unwrap,                      # Symbolics (-> SymbolicUtils)
-                :value,                       # Symbolics
+                :getname,                     # ModelingToolkit (re-export of SymbolicIndexingInterface, still non-public)
                 :None,                        # PythonCall.pybuiltins
                 :hasattr,                     # PythonCall.pybuiltins
                 :len,                         # PythonCall.pybuiltins
