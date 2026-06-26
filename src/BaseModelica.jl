@@ -12,22 +12,22 @@ include("antlr_parser.jl")
 include("evaluator.jl")
 
 """
-    parse_basemodelica(filename::String; parser::Symbol=:julia)::System
+    parse_basemodelica(filename::String; parser::Symbol=:antlr)::System
 
 Parses a BaseModelica .mo file into a ModelingToolkit System.
 
 ## Arguments
 - `filename::String`: Path to the .mo file to parse
-- `parser::Symbol=:julia`: Parser to use. Options:
-  - `:julia` - ParserCombinator parser (default)
-  - `:antlr` - ANTLR parser
+- `parser::Symbol=:antlr`: Parser to use. Options:
+  - `:antlr` - ANTLR parser (default)
+  - `:julia` - ParserCombinator parser
 
 ## Example
 
 ```julia
 # Use ANTLR parser (default)
 parse_basemodelica("testfiles/NewtonCoolingBase.bmo")
-parse_basemodelica("testfiles/NewtonCoolingBase.bmo", parser=:antlr)
+parse_basemodelica("testfiles/NewtonCoolingBase.bmo", parser = :antlr)
 # Use ParserCombinator parser
 parse_basemodelica("testfiles/NewtonCoolingBase.bmo", parser = :julia)
 ```
@@ -136,14 +136,16 @@ If an experiment annotation is present, StartTime, StopTime, and Tolerance are a
 - `kwargs...`: Additional keyword arguments passed to ODEProblem
 
 ## Returns
-- A tuple `(prob, sys)` where `prob` is the ODEProblem and `sys` is the System
+- An `ODEProblem`. If an experiment annotation is present, `tspan`, `reltol`, and `saveat`
+  are set from it. Otherwise `tspan` defaults to `(0.0, 1.0)`. User-supplied `kwargs`
+  always take precedence over annotation values.
 
 ## Example
 ```julia
 using BaseModelica
 
-prob, sys = create_odeproblem("testfiles/Experiment.bmo")
-# The tspan and tolerances are automatically set from the annotation
+prob = create_odeproblem("testfiles/Experiment.bmo")
+# tspan, reltol, and saveat are automatically set from the experiment annotation
 ```
 """
 function create_odeproblem(filename::String; parser::Symbol = :antlr, u0 = [], kwargs...)
