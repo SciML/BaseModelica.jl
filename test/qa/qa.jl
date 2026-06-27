@@ -32,6 +32,10 @@ run_qa(
             ),
         ),
         all_qualified_accesses_are_public = (;
+            # Verified on Julia 1.12 (public-API checks active) against the registered
+            # base-lib make-public releases (SciMLBase 3.27, DiffEqBase 7.6,
+            # SciMLTesting 1.7). None of these are SciMLBase-owned; each is a
+            # still-non-public name of a non-SciML dependency, so they stay ignored.
             ignore = (
                 :getname,                     # ModelingToolkit (re-export of SymbolicIndexingInterface, still non-public)
                 :None,                        # PythonCall.pybuiltins
