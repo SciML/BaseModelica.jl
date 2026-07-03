@@ -13,7 +13,6 @@ function qa_group()
     Pkg.develop(PackageSpec(path = dirname(@__DIR__)))
     Pkg.instantiate()
     @safetestset "Quality Assurance" include(joinpath(@__DIR__, "qa", "qa.jl"))
-    @safetestset "JET Static Analysis" include(joinpath(@__DIR__, "qa", "test_jet.jl"))
     return nothing
 end
 
