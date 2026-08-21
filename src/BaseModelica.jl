@@ -10,6 +10,7 @@ using ParserCombinator:
     @E_str, @e_str, @p_str, @with_names, Debug, Delayed, Drop, Lookahead, NoCache, Not, Plus,
     Space, Star, make, once
 import ParserCombinator
+using PrecompileTools: @compile_workload, @setup_workload
 const set_name = ParserCombinator.set_name
 using PythonCall: Py, pyconvert, pyhasattr, pyimport, pylen
 using SciMLBase: ODEProblem
@@ -259,6 +260,8 @@ function create_odeproblem(filename::AbstractString; parser::Symbol = :antlr, u0
         return prob
     end
 end
+
+include("precompilation.jl")
 
 export parse_basemodelica, create_odeproblem, parse_experiment_annotation
 
