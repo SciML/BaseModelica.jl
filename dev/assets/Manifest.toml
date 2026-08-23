@@ -164,7 +164,7 @@ version = "1.11.0"
 deps = ["CondaPkg", "DiffEqBase", "MLStyle", "ModelingToolkit", "ModelingToolkitBase", "ParserCombinator", "PrecompileTools", "PythonCall", "SciMLBase", "SymbolicIndexingInterface", "SymbolicUtils", "Symbolics"]
 path = "/home/runner/_work/BaseModelica.jl/BaseModelica.jl"
 uuid = "a17d5099-185d-4ff5-b5d3-51aa4569e56d"
-version = "1.9.3"
+version = "1.10.0"
 
 [[deps.Bijections]]
 git-tree-sha1 = "a2d308fcd4c2fb90e943cf9cd2fbfa9c32b69733"
