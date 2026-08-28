@@ -145,9 +145,9 @@ version = "2.2.0"
 
 [[deps.BandedMatrices]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra", "PrecompileTools"]
-git-tree-sha1 = "02fa77c70ba84361b9bc9ff28523bd9d78519265"
+git-tree-sha1 = "545a7b37b3ccde0a6a2948f7bb884024609ae368"
 uuid = "aae01518-5342-5314-be14-df237901396f"
-version = "1.11.0"
+version = "1.12.0"
 
     [deps.BandedMatrices.extensions]
     BandedMatricesSparseArraysExt = "SparseArrays"
@@ -476,10 +476,10 @@ uuid = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 version = "1.7.0"
 
 [[deps.DynamicPolynomials]]
-deps = ["LinearAlgebra", "MultivariatePolynomials", "MutableArithmetics", "Reexport", "StarAlgebras", "Test"]
-git-tree-sha1 = "5bfabc3827dfdd164359bad6800c115a81280c00"
+deps = ["LinearAlgebra", "MultivariatePolynomials", "MutableArithmetics", "Reexport", "StarAlgebras"]
+git-tree-sha1 = "52d08670b4630523d027b84c2b888fe958ac82e7"
 uuid = "7c1d4256-1411-5781-91ec-d7bc3513ac07"
-version = "0.6.6"
+version = "0.6.7"
 
 [[deps.EnumX]]
 git-tree-sha1 = "c49898e8438c828577f04b92fc9368c388ac783c"
@@ -777,9 +777,9 @@ version = "1.12.0"
 
 [[deps.JumpProcesses]]
 deps = ["ArrayInterface", "DataStructures", "DiffEqBase", "DiffEqCallbacks", "DocStringExtensions", "FunctionWrappers", "Graphs", "LinearAlgebra", "PoissonRandom", "PrecompileTools", "Random", "RecursiveArrayTools", "SciMLBase", "StaticArrays", "SymbolicIndexingInterface"]
-git-tree-sha1 = "475256ebaaee089ae15a84f2421924595a661aa1"
+git-tree-sha1 = "d3a84e1f7b349b0b7519c2c6e176f140d9080ad8"
 uuid = "ccbc3e58-028d-4f4c-8cd5-9ae44345cda5"
-version = "9.30.0"
+version = "9.30.1"
 
     [deps.JumpProcesses.extensions]
     JumpProcessesKernelAbstractionsExt = ["Adapt", "KernelAbstractions"]
@@ -798,9 +798,9 @@ version = "0.10.9"
 
 [[deps.LHLFactorization]]
 deps = ["LinearAlgebra", "PrecompileTools"]
-git-tree-sha1 = "7b40ce7fd1962d83f252252db61b85827b1d6d2f"
+git-tree-sha1 = "845a138f095475e45d0ead9d1f574a1f7c0d78cd"
 uuid = "2faa5264-e118-4071-8864-e10559f68c7c"
-version = "2.2.0"
+version = "2.2.1"
 
     [deps.LHLFactorization.extensions]
     LHLFactorizationPolyesterExt = "Polyester"
@@ -880,9 +880,9 @@ version = "1.12.0"
 
 [[deps.LinearSolve]]
 deps = ["AMD", "ArrayInterface", "ConcreteStructs", "DocStringExtensions", "EnumX", "GPUArraysCore", "InteractiveUtils", "Krylov", "LHLFactorization", "Libdl", "LinearAlgebra", "MKL_jll", "Markdown", "OpenBLAS_jll", "PrecompileTools", "Preferences", "PureKLU", "RecursiveArrayTools", "Reexport", "SciMLBase", "SciMLLogging", "SciMLOperators", "SciMLStructures", "Setfield", "SparseArrays", "SparseColumnPivotedQR", "StaticArraysCore"]
-git-tree-sha1 = "564a5a4e46230ca643e4422cbf5c2adcba72ae09"
+git-tree-sha1 = "38725d7468ae1147616717a75fdf65a1caa3f196"
 uuid = "7ed4a6bd-45f5-4d41-b270-4a48e9bafcae"
-version = "5.13.1"
+version = "5.14.0"
 
     [deps.LinearSolve.extensions]
     LinearSolveAMDGPUExt = "AMDGPU"
@@ -1148,9 +1148,9 @@ version = "1.3.0"
 
 [[deps.NonlinearSolveBase]]
 deps = ["ADTypes", "Adapt", "ArrayInterface", "CommonSolve", "Compat", "ConcreteStructs", "DifferentiationInterface", "EnumX", "EnzymeCore", "FastClosures", "FunctionWrappers", "FunctionWrappersWrappers", "LinearAlgebra", "LogExpFunctions", "Markdown", "MaybeInplace", "PreallocationTools", "PrecompileTools", "Preferences", "Printf", "RecursiveArrayTools", "RespecializeParams", "SciMLBase", "SciMLJacobianOperators", "SciMLLogging", "SciMLOperators", "SciMLStructures", "Setfield", "StaticArraysCore", "SymbolicIndexingInterface", "TimerOutputs"]
-git-tree-sha1 = "eccf99477b471404368ef816a971fb57ae1234fa"
+git-tree-sha1 = "ab94ab4b25c2776a59aaaadb2a65ccce01f04abb"
 uuid = "be0214bd-f91f-a760-ac4e-3421ce2b2da0"
-version = "2.48.0"
+version = "2.48.1"
 
     [deps.NonlinearSolveBase.extensions]
     NonlinearSolveBaseBandedMatricesExt = "BandedMatrices"
@@ -1281,9 +1281,9 @@ version = "0.4.13"
 
 [[deps.PreallocationTools]]
 deps = ["Adapt", "ArrayInterface", "PrecompileTools", "SciMLPublic"]
-git-tree-sha1 = "64ec7ddf029c70030b313601d5804259310fdbeb"
+git-tree-sha1 = "cd00e28071a75c98664663f87c2ae447d25c0503"
 uuid = "d236fae5-4411-538c-8e31-a6e3d9e00b46"
-version = "1.6.0"
+version = "1.7.1"
 
     [deps.PreallocationTools.extensions]
     PreallocationToolsEnzymeCoreExt = "EnzymeCore"
@@ -1385,9 +1385,9 @@ version = "1.3.4"
 
 [[deps.RecursiveArrayTools]]
 deps = ["Adapt", "ArrayInterface", "GPUArraysCore", "LinearAlgebra", "PrecompileTools", "RecipesBase", "SciMLPublic", "SciMLStructures", "StaticArraysCore", "SymbolicIndexingInterface"]
-git-tree-sha1 = "58c6496ceca7aafbd8534602f9a901c3ffc4b709"
+git-tree-sha1 = "775b6023c34c401e35b9a159568d2f6d051280d5"
 uuid = "731186ca-8d62-57ce-b412-fbd966d074cd"
-version = "4.5.0"
+version = "4.5.1"
 
     [deps.RecursiveArrayTools.extensions]
     RecursiveArrayToolsCUDAExt = "CUDA"
@@ -1464,9 +1464,9 @@ version = "0.7.0"
 
 [[deps.SciMLBase]]
 deps = ["ADTypes", "Accessors", "Adapt", "ArrayInterface", "CommonSolve", "ConstructionBase", "Distributed", "DocStringExtensions", "EnumX", "FindFirstFunctions", "FunctionWrappersWrappers", "IteratorInterfaceExtensions", "LinearAlgebra", "Logging", "LoggingExtras", "Markdown", "PreallocationTools", "PrecompileTools", "Preferences", "Printf", "Random", "RecipesBase", "RecursiveArrayTools", "RuntimeGeneratedFunctions", "SciMLOperators", "SciMLPublic", "SciMLStructures", "StaticArraysCore", "Statistics", "SymbolicIndexingInterface"]
-git-tree-sha1 = "b0f7b7317a89b643e474292ef7b8e4a7ae87a1d1"
+git-tree-sha1 = "9253cb7b62095cd3c9a8a0556dd361543557a913"
 uuid = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
-version = "3.49.2"
+version = "3.50.0"
 
     [deps.SciMLBase.extensions]
     SciMLBaseChainRulesCoreExt = "ChainRulesCore"
@@ -1532,9 +1532,9 @@ version = "2.1.0"
 
 [[deps.SciMLOperators]]
 deps = ["Accessors", "Adapt", "ArrayInterface", "DocStringExtensions", "LinearAlgebra", "PrecompileTools", "SciMLPublic"]
-git-tree-sha1 = "bfc5c186382cc6afa718ca1c228a437d5893e918"
+git-tree-sha1 = "0b5b895913f1269a8c80b59435c61d5a7d79970c"
 uuid = "c0aeaf25-5076-4817-a8d5-81caf7dfa961"
-version = "1.29.0"
+version = "1.30.0"
 
     [deps.SciMLOperators.extensions]
     SciMLOperatorsLoopVectorizationExt = "LoopVectorization"
@@ -1738,10 +1738,10 @@ version = "4.45.0"
     ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
 
 [[deps.Symbolics]]
-deps = ["ADTypes", "AbstractPlutoDingetjes", "ArrayInterface", "Bijections", "CommonWorldInvalidations", "ConstructionBase", "DataStructures", "DiffRules", "DocStringExtensions", "DomainSets", "DynamicPolynomials", "IntervalSets", "Libdl", "LinearAlgebra", "LogExpFunctions", "MacroTools", "Markdown", "Moshi", "MultivariatePolynomials", "MutableArithmetics", "NaNMath", "PrecompileTools", "Preferences", "Primes", "RecipesBase", "Reexport", "RuntimeGeneratedFunctions", "SciMLPublic", "Setfield", "SparseArrays", "SpecialFunctions", "StaticArraysCore", "SymbolicIndexingInterface", "SymbolicLimits", "SymbolicUtils", "TermInterface"]
-git-tree-sha1 = "83ae8cd3decb77ab9bcde0ed19f211a879335a3f"
+deps = ["ADTypes", "AbstractPlutoDingetjes", "ArrayInterface", "Bijections", "CommonWorldInvalidations", "ConstructionBase", "DataStructures", "DiffRules", "DocStringExtensions", "DomainSets", "DynamicPolynomials", "IntervalSets", "Libdl", "LinearAlgebra", "LogExpFunctions", "MacroTools", "Markdown", "Moshi", "MultivariatePolynomials", "MutableArithmetics", "NaNMath", "PrecompileTools", "Preferences", "Primes", "RecipesBase", "RuntimeGeneratedFunctions", "SciMLPublic", "Setfield", "SparseArrays", "SpecialFunctions", "StaticArraysCore", "SymbolicIndexingInterface", "SymbolicLimits", "SymbolicUtils", "TermInterface"]
+git-tree-sha1 = "d0375eb39041b665a329c7f69d8e0dda7a86ee9a"
 uuid = "0c5d862f-8b57-4792-8d23-62f2024744c7"
-version = "7.36.0"
+version = "7.38.0"
 
     [deps.Symbolics.extensions]
     SymbolicsD3TreesExt = "D3Trees"
@@ -1751,7 +1751,6 @@ version = "7.36.0"
     SymbolicsHypergeometricFunctionsExt = "HypergeometricFunctions"
     SymbolicsLatexifyExt = ["Latexify", "LaTeXStrings"]
     SymbolicsNemoExt = "Nemo"
-    SymbolicsPreallocationToolsExt = ["PreallocationTools", "ForwardDiff"]
     SymbolicsSymPyExt = "SymPy"
     SymbolicsSymPyPythonCallExt = "SymPyPythonCall"
 
@@ -1764,7 +1763,6 @@ version = "7.36.0"
     LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
     Latexify = "23fbe1c1-3f47-55db-b15f-69d7ec21a316"
     Nemo = "2edaba10-b0f1-5616-af89-8c11ac63239a"
-    PreallocationTools = "d236fae5-4411-538c-8e31-a6e3d9e00b46"
     SymPy = "24249f21-da20-56a4-8eb1-6a02cf4ae2e6"
     SymPyPythonCall = "bc8888f7-b21e-4b7c-a06a-5d9c9496438c"
 
