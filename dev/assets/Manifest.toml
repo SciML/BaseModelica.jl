@@ -2,7 +2,7 @@
 
 julia_version = "1.13.1"
 manifest_format = "2.1"
-project_hash = "8ef2bdbe44d59d796fba443ef13829dcef8a69ae"
+project_hash = "62ebbd072cc3670fa5cb0f7fd8264105e81a394f"
 
 [[deps.ADTypes]]
 deps = ["PrecompileTools"]
@@ -176,7 +176,7 @@ version = "1.11.0"
 
 [[deps.BaseModelica]]
 deps = ["CondaPkg", "DiffEqBase", "MLStyle", "ModelingToolkit", "ModelingToolkitBase", "ParserCombinator", "PrecompileTools", "PythonCall", "SciMLBase", "SymbolicIndexingInterface", "SymbolicUtils", "Symbolics"]
-path = "/home/runner/work/BaseModelica.jl/BaseModelica.jl"
+path = "/home/runner/_work/BaseModelica.jl/BaseModelica.jl"
 uuid = "a17d5099-185d-4ff5-b5d3-51aa4569e56d"
 version = "1.10.0"
 
