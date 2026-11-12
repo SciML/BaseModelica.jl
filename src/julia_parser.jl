@@ -306,9 +306,27 @@ function build_algorithm_section(input_list)
 end
 
 function build_array_constructor(input_list)
-    any(x -> x isa BaseModelicaForIndex, input_list) &&
-        return BaseModelicaUnsupportedExpression("array comprehension {... for ...}")
+    if any(x -> x isa BaseModelicaForIndex, input_list)
+        expr, index = input_list
+        return BaseModelicaArrayComprehension(expr, index)
+    end
     return BaseModelicaArrayConstructor(collect(input_list))
+end
+
+# `f(expr for i in range)` is `f({expr for i in range})`
+function build_function_args(input_list)
+    if length(input_list) == 2 && input_list[2] isa BaseModelicaForIndex
+        return BaseModelicaFunctionArgs(Any[BaseModelicaArrayComprehension(input_list...)])
+    end
+    return BaseModelicaFunctionArgs(input_list)
+end
+
+# The parse results of `(expr)`, `(expr)[subscripts]` or the tuple `(a, b)`
+function build_parenthesized(input_list)
+    if length(input_list) == 2 && input_list[2] isa BaseModelicaArraySubscripts
+        return Any[BaseModelicaArrayReference(input_list...)]
+    end
+    return input_list
 end
 
 function BaseModelicaComposition(input_list)
@@ -465,12 +483,14 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
         function_partial_application +
             (E"," + function_arguments_non_first)[0:1]
     ) |
-        named_arguments |> BaseModelicaFunctionArgs
+        named_arguments |> build_function_args
     function_call_args = E"(" + function_arguments[0:1] + E")"
     output_expression_list = Delayed()
     expression_list = Delayed()
     # `|` and `+` have the same precedence in Julia, so the `for` alternative needs its own
     # parentheses (without them every array constructor required a for-index).
+    # One row of a matrix constructor, kept together as a single list
+    matrix_row = expression_list |> (row -> collect(Any, row))
     array_arguments = expression + spc +
         (Star(E"," + expression + spc) | (E"for" + spc + for_index))
     primary = UNSIGNED_NUMBER | STRING | (e"false" > BaseModelicaBool) | (e"true" > BaseModelicaBool) |
@@ -482,10 +502,13 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
         (component_reference + function_call_args[0:1]) |>
             component_reference_or_function_call
     ) |
-        (E"(" + spc + output_expression_list + spc + E")" + array_subscripts[0:1]) |
+        ParserCombinator.Transform(
+        E"(" + spc + output_expression_list + spc + E")" + array_subscripts[0:1],
+        build_parenthesized
+    ) |
         (
-        E"[" + spc + expression_list + spc + Star(E";" + spc + expression_list) +
-            spc + E"]" |> (_ -> BaseModelicaUnsupportedExpression("matrix constructor [...]"))
+        E"[" + spc + matrix_row + spc + Star(E";" + spc + matrix_row) +
+            spc + E"]" |> BaseModelicaMatrixConstructor
     ) |
         (E"{" + spc + array_arguments + spc + E"}" |> build_array_constructor) |
         E"end"

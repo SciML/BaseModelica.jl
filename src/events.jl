@@ -127,10 +127,18 @@ function inner_equation(eq)
     return inner
 end
 
+# The variable `ref` refers to, or an array of variables for an array reference
 function resolve_variable(ref::BaseModelicaComponentReference)
-    name = Symbol(ref.ref_list[1].name)
-    haskey(variable_map, name) || unsupported("unknown variable `$name` in when-equation")
-    return variable_map[name]
+    name = reference_name(ref)
+    haskey(variable_map, name) || haskey(array_components, name) ||
+        unsupported("unknown variable `$name` in when-equation")
+    return eval_AST(ref)
+end
+
+# `(target, rhs_ast)` for each scalar target of `target = rhs`
+function scalar_targets(target, rhs)
+    is_array(target) || return [(target, rhs)]
+    return [(target[i], BaseModelicaArrayElement(rhs, Tuple(i))) for i in CartesianIndices(target)]
 end
 
 function when_clauses(when_eq::BaseModelicaWhenEquation)
@@ -144,10 +152,11 @@ function when_clauses(when_eq::BaseModelicaWhenEquation)
             inner = inner_equation(eq)
             if inner isa BaseModelicaSimpleEquation && inner.lhs isa BaseModelicaComponentReference &&
                     !isnothing(inner.rhs)
-                var = resolve_variable(inner.lhs)
-                is_discrete_variable(var) ||
-                    unsupported("assignment to `$(symbol_name(var))` in a when-equation; only discrete variables can be assigned")
-                push!(assignments, (var, inner.rhs))
+                for (var, rhs) in scalar_targets(resolve_variable(inner.lhs), inner.rhs)
+                    is_discrete_variable(var) ||
+                        unsupported("assignment to `$(symbol_name(var))` in a when-equation; only discrete variables can be assigned")
+                    push!(assignments, (var, rhs))
+                end
             elseif inner isa BaseModelicaSimpleEquation && inner.lhs isa BaseModelicaFunctionCall &&
                     isnothing(inner.rhs)
                 fname = function_call_name(inner.lhs)
@@ -155,10 +164,11 @@ function when_clauses(when_eq::BaseModelicaWhenEquation)
                 if fname == "reinit"
                     length(args) == 2 && args[1] isa BaseModelicaComponentReference ||
                         unsupported("reinit expects `reinit(state, expression)`")
-                    state = resolve_variable(args[1])
-                    is_continuous_variable(state) ||
-                        unsupported("reinit target `$(symbol_name(state))` is not a continuous state")
-                    push!(reinits, (state, args[2]))
+                    for (state, rhs) in scalar_targets(resolve_variable(args[1]), args[2])
+                        is_continuous_variable(state) ||
+                            unsupported("reinit target `$(symbol_name(state))` is not a continuous state")
+                        push!(reinits, (state, rhs))
+                    end
                 elseif fname == "assert"
                     continue
                 else
@@ -180,7 +190,18 @@ function sample_args(condition)
         return nothing
     args = condition.args.args
     length(args) == 2 || unsupported("sample() expects `sample(start, interval)`")
-    return (Float64(eval_AST(args[1])), Float64(eval_AST(args[2])))
+    return (sample_argument(args[1], "start"), sample_argument(args[2], "interval"))
+end
+
+# The value of an argument of `sample`: a number, or an expression of parameters, which is
+# evaluated with their values at load. The sampling times are fixed then: changing such a
+# parameter afterwards does not move them.
+function sample_argument(ast, what)
+    value = eval_AST(ast)
+    number = parameter_value(value)
+    isnothing(number) &&
+        unsupported("sample() $what `$value` is neither a constant nor a parameter with a value")
+    return Float64(number)
 end
 
 """

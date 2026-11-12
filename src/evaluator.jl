@@ -37,12 +37,18 @@ function eval_AST(expr::BaseModelicaExpr)
                     val == "true"
                 end
             end
-            BaseModelicaFactor(base, exp) => (f(base))^f(exp)
-            BaseModelicaSum(left, right) => (f(left)) + (f(right))
-            BaseModelicaMinus(left, right) => f(left) - f(right)
+            BaseModelicaFactor(base, exp) => modelica_pow(f(base), f(exp))
+            BaseModelicaSum(left, right) => modelica_add(f(left), f(right))
+            BaseModelicaMinus(left, right) => modelica_sub(f(left), f(right))
             BaseModelicaUnaryMinus(operand) => -f(operand)
-            BaseModelicaProd(left, right) => f(left) * f(right)
-            BaseModelicaDivide(left, right) => f(left) / f(right)
+            BaseModelicaProd(left, right) => modelica_mul(f(left), f(right))
+            BaseModelicaDivide(left, right) => modelica_div(f(left), f(right))
+            BaseModelicaElementWiseSum(left, right) => f(left) .+ f(right)
+            BaseModelicaElementWiseMinus(left, right) => f(left) .- f(right)
+            BaseModelicaElementWiseProd(left, right) => f(left) .* f(right)
+            BaseModelicaElementWiseDivide(left, right) => f(left) ./ f(right)
+            BaseModelicaElementWiseFactor(base, exp) => f(base) .^ f(exp)
+            BaseModelicaParens(inner) => f(inner)
             BaseModelicaNot(relation) => ~f(relation)
             BaseModelicaAnd(left, right) => f(left) & f(right)
             BaseModelicaOr(left, right) => f(left) | f(right)
@@ -65,7 +71,7 @@ function build_nested_ifelse(if_expr::BaseModelicaIfExpression, idx = 1)
     collect_time_events!(condition)
     then_value = eval_AST(if_expr.expressions[idx])
     else_value = build_nested_ifelse(if_expr, idx + 1)
-    return ifelse(condition, then_value, else_value)
+    return modelica_ifelse(condition, then_value, else_value)
 end
 
 function eval_AST(if_expr::BaseModelicaIfExpression)
@@ -82,7 +88,7 @@ function eval_AST(eq::BaseModelicaInitialEquation)
     isnothing(lhs) && return Dict()
     rhs = eval_AST(inner_eq.rhs)
     isnothing(rhs) && return Dict()
-    return Dict(lhs => rhs)
+    return Dict(eq.lhs => eq.rhs for eq in vcat(equate(lhs, rhs)))
 end
 
 function eval_AST(eq::BaseModelicaAnyEquation)
@@ -142,7 +148,21 @@ function eval_AST(eq::BaseModelicaSimpleEquation)
         return nothing
     end
 
-    return lhs ~ rhs
+    return equate(lhs, rhs)
+end
+
+# The equations of a branch of an if-equation, flattened
+function branch_equations(branch)
+    result = Equation[]
+    for eq in (isa(branch, AbstractArray) ? branch : [branch])
+        eq_obj = isa(eq, BaseModelicaAnyEquation) ? eval_AST(eq.equation) : eval_AST(eq)
+        if eq_obj isa Equation
+            push!(result, eq_obj)
+        elseif eq_obj isa AbstractVector
+            append!(result, eq_obj)
+        end
+    end
+    return result
 end
 
 function eval_AST(if_eq::BaseModelicaIfEquation)
@@ -155,29 +175,18 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     # Time events of the conditions (e.g. `time < 1e-5`), see collect_time_events!
     foreach(cond -> collect_time_events!(eval_AST(cond)), if_eq.ifs)
 
+    branches = [branch_equations(branch) for branch in if_eq.thens]
+
     # Helper to extract RHS for a specific variable from a branch's equation list
-    function get_rhs_for_var(var_lhs, branch_equations)
-        equations_to_check = isa(branch_equations, AbstractArray) ? branch_equations :
-            [branch_equations]
-        for eq in equations_to_check
-            eq_obj = isa(eq, BaseModelicaAnyEquation) ? eval_AST(eq.equation) : eval_AST(eq)
-            if !isnothing(eq_obj) && isa(eq_obj, Equation) && isequal(eq_obj.lhs, var_lhs)
-                return eq_obj.rhs
-            end
-        end
-        return nothing
+    function get_rhs_for_var(var_lhs, branch)
+        idx = findfirst(eq -> isequal(eq.lhs, var_lhs), branch)
+        return isnothing(idx) ? nothing : branch[idx].rhs
     end
 
-    # Collect all unique LHS variables across all branches
-    lhs_vars = Set()
-    for eq_list in if_eq.thens
-        equations_to_check = isa(eq_list, AbstractArray) ? eq_list : [eq_list]
-        for eq in equations_to_check
-            eq_obj = isa(eq, BaseModelicaAnyEquation) ? eval_AST(eq.equation) : eval_AST(eq)
-            if !isnothing(eq_obj) && isa(eq_obj, Equation)
-                push!(lhs_vars, eq_obj.lhs)
-            end
-        end
+    # Collect all unique LHS variables across all branches, in order of appearance
+    lhs_vars = []
+    for branch in branches, eq in branch
+        any(v -> isequal(v, eq.lhs), lhs_vars) || push!(lhs_vars, eq.lhs)
     end
 
     # Build nested ifelse for each variable
@@ -185,7 +194,7 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
         if idx > length(if_eq.ifs)
             # Past all conditions
             if has_else
-                rhs = get_rhs_for_var(var_lhs, if_eq.thens[end])
+                rhs = get_rhs_for_var(var_lhs, branches[end])
                 if isnothing(rhs)
                     error("Variable $var_lhs not assigned in else branch")
                 end
@@ -196,7 +205,7 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
         end
 
         condition = eval_AST(if_eq.ifs[idx])
-        rhs = get_rhs_for_var(var_lhs, if_eq.thens[idx])
+        rhs = get_rhs_for_var(var_lhs, branches[idx])
 
         if isnothing(rhs)
             error("Variable $var_lhs not assigned in branch $idx")
@@ -231,7 +240,7 @@ function collect_when_body_var_names(equations)
             inner = inner_equation(body_eq)
             if inner isa BaseModelicaSimpleEquation &&
                     inner.lhs isa BaseModelicaComponentReference && !isnothing(inner.rhs)
-                push!(names, Symbol(inner.lhs.ref_list[1].name))
+                union!(names, element_names(inner.lhs))
             end
         end
     end
@@ -330,7 +339,8 @@ function eval_AST(
 
     composition = class_specifier.composition
 
-    components = composition.components
+    # Array components become one scalar component per element, see arrays.jl
+    components = scalarize_components(composition.components)
     equations = composition.equations
     initial_equations = composition.initial_equations
     parameter_equations = composition.parameter_equations
@@ -361,8 +371,6 @@ function eval_AST(
         type_prefix = comp.type_prefix.dpc
         length(comp.component_list) == 1 ||
             unsupported("component clauses declaring several components are not supported")
-        has_array_subscripts(comp.component_list[1].declaration) &&
-            unsupported("array variable `$name` is not supported")
 
         if type_prefix == "parameter" || haskey(enum_map, comp.type_specifier.type)
             comp.type_specifier.type == "String" && continue
@@ -408,8 +416,11 @@ function eval_AST(
     end
 
     inline_constants!(variable_map, components)
+    # Values cached during pass 1 may refer to constants that are now inlined
+    empty!(ELEMENT_CACHE)
     warn_structural_parameters(
-        class_specifier.name, evaluated_parameter_names, inert_parameter_names(composition)
+        class_specifier.name, evaluated_parameter_names,
+        inert_parameter_names(composition, components)
     )
 
     # Start values of discrete variables (the value of `pre(v)` at the first event).
@@ -635,7 +646,8 @@ function eval_AST(
 
     # Pass 4: Apply explicit guess values from parameter equations.
     for param_eq in parameter_equations
-        name = Symbol(param_eq.component_reference.ref_list[1].name)
+        name = scalar_element_name(param_eq.component_reference)
+        isnothing(name) && unsupported("guess value of an array slice")
         var = variable_map[name]
         value = eval_AST(param_eq.expression)
         variable_map[name] = ModelingToolkitBase.setguess(var, value)
@@ -730,9 +742,12 @@ function initial_algorithm_assignments(sections, annotation)
                 push!(assertions, evaluate_assert(st))
                 continue
             end
-            st isa BaseModelicaAssignment && length(st.target.ref_list) == 1 ||
+            st isa BaseModelicaAssignment ||
                 unsupported("initial algorithm sections may only contain assignments and assert calls")
-            name = Symbol(st.target.ref_list[1].name)
+            length(reference_parts(st.target)[1]) == 1 ||
+                unsupported("initial algorithm assigns record component `$(st.target)`")
+            name = scalar_element_name(st.target)
+            isnothing(name) && unsupported("initial algorithm assigns a whole array or slice")
             haskey(variable_map, name) ||
                 unsupported("initial algorithm assigns unknown variable `$name`")
             scope[name] = eval_AST(st.expression)
@@ -818,7 +833,8 @@ function discrete_initial_target(eq::BaseModelicaInitialEquation)
         lhs = only(lhs.args.args)
     end
     lhs isa BaseModelicaComponentReference || return nothing
-    name = Symbol(lhs.ref_list[1].name)
+    name = scalar_element_name(lhs)
+    isnothing(name) && return nothing
     return name in discrete_variable_names || haskey(relation_boolean_syms, name) ? name :
         nothing
 end
@@ -866,23 +882,31 @@ function eval_AST(function_call::BaseModelicaFunctionCall)
     end
 
     if function_name == :pre
-        return apply_pre(eval_AST(only(function_call.args.args)))
+        arg = eval_AST(only(function_call.args.args))
+        return is_array(arg) ? map(apply_pre, arg) : apply_pre(arg)
     end
 
     haskey(function_map, function_name) ||
         unsupported("function `$function_name` is not supported")
     args = eval_AST(function_call.args)
-    return function_map[function_name](args)
+    return call_builtin(function_name, args)
 end
 
 function eval_AST(comp_reference::BaseModelicaComponentReference)
-    #will need to eventually account for array references and dot references...
-    #for now only does direct references to variables
-    ref_name = Symbol(comp_reference.ref_list[1].name)
+    names, subscripts = reference_parts(comp_reference)
+    value = reference_value(names)
+    isnothing(subscripts) && return value
+    isnothing(value) && unsupported("unknown variable `$(names[1])` in `$(names[1])[...]`")
+    return apply_subscripts(value, subscripts)
+end
+
+# The value of the reference to `names` (`a.b` is `["a", "b"]`), before subscripts
+function reference_value(names)
+    ref_name = Symbol(names[1])
 
     # Function-local variables and for-loop indices
     scope = LOCAL_SCOPE[]
-    if !isnothing(scope) && length(comp_reference.ref_list) == 1 && haskey(scope, ref_name)
+    if !isnothing(scope) && length(names) == 1 && haskey(scope, ref_name)
         return scope[ref_name]
     end
 
@@ -893,14 +917,23 @@ function eval_AST(comp_reference::BaseModelicaComponentReference)
     if ref_name == :AssertionLevel
         return nothing
     end
+    # `end` inside a subscript (the :julia parser reads it as a component reference)
+    if ref_name == :end && length(names) == 1 && !haskey(variable_map, :end)
+        return end_size()
+    end
 
     # Handle enum value references: EnumType.ValueName → integer
-    if length(comp_reference.ref_list) >= 2
-        type_name = comp_reference.ref_list[1].name
-        value_name = Symbol(comp_reference.ref_list[2].name)
+    if length(names) >= 2
+        type_name = names[1]
+        value_name = Symbol(names[2])
         if haskey(enum_map, type_name) && haskey(enum_map[type_name], value_name)
             return enum_map[type_name][value_name]
         end
+    end
+
+    # Array components evaluate to an array of their scalarized elements
+    if length(names) == 1 && haskey(array_components, ref_name)
+        return element_array(ref_name)
     end
 
     return get(variable_map, ref_name, nothing)

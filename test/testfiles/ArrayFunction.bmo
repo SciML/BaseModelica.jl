@@ -1,0 +1,27 @@
+//! base 0.1.0
+package 'ArrayFunction'
+  function 'scale'
+    input Real 'u'[:];
+    input Real 'g';
+    output Real 'y'[size('u', 1)];
+  algorithm
+    for 'i' in 1:size('u', 1) loop
+      'y'['i'] := 'g' * 'u'['i'];
+    end for;
+  end 'scale';
+
+  function 'norm2'
+    input Real 'u'[:];
+    output Real 'r';
+  algorithm
+    'r' := sqrt('u' * 'u');
+  end 'norm2';
+
+  model 'ArrayFunction'
+    Real 'x'[2](start = {3.0, 4.0}, fixed = true);
+    Real 'r';
+  equation
+    der('x') = 'scale'('x', -1.0);
+    'r' = 'norm2'('x');
+  end 'ArrayFunction';
+end 'ArrayFunction';

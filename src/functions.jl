@@ -16,7 +16,8 @@ struct UserFunction
     outputs::Vector{Tuple{Symbol, Any}}
     locals::Vector{Tuple{Symbol, Any}}
     statements::Union{Nothing, Vector{Any}}
-    array_variables::Vector{Symbol}
+    # array variable => subscripts of its declaration
+    array_dims::Dict{Symbol, Vector{Any}}
 end
 
 # function name => UserFunction, populated per package
@@ -60,14 +61,15 @@ function UserFunction(name::String, class::BaseModelicaLongClass)
     inputs = Tuple{Symbol, Any}[]
     outputs = Tuple{Symbol, Any}[]
     locals = Tuple{Symbol, Any}[]
-    array_variables = Symbol[]
+    array_dims = Dict{Symbol, Vector{Any}}()
     composition = class.composition
     for clause in composition.components
         clause isa BaseModelicaComponentClause || continue
         for comp_decl in clause.component_list
             decl = comp_decl.declaration
             var = Symbol(decl.ident[1].name)
-            has_array_subscripts(decl) && push!(array_variables, var)
+            subscripts = declaration_subscripts(decl)
+            isnothing(subscripts) || (array_dims[var] = subscripts)
             entry = (var, declaration_default(decl))
             io = clause.type_prefix.io
             push!(io == "input" ? inputs : io == "output" ? outputs : locals, entry)
@@ -76,7 +78,7 @@ function UserFunction(name::String, class::BaseModelicaLongClass)
     sections = filter(eq -> eq isa BaseModelicaAlgorithmSection, composition.equations)
     statements = isempty(sections) ? nothing :
         reduce(vcat, [collect(section.statements) for section in sections])
-    return UserFunction(name, inputs, outputs, locals, statements, array_variables)
+    return UserFunction(name, inputs, outputs, locals, statements, array_dims)
 end
 
 function register_user_functions!(class_defs)
@@ -101,8 +103,6 @@ caller's scope) and return the symbolic value of its first output.
 function inline_user_function(f::UserFunction, arg_asts)
     isnothing(f.statements) &&
         unsupported("function `$(f.name)` has no algorithm section; external functions are not supported")
-    isempty(f.array_variables) ||
-        unsupported("function `$(f.name)` uses array variables $(f.array_variables), which are not supported")
     isempty(f.outputs) && unsupported("function `$(f.name)` has no output")
     length(arg_asts) > length(f.inputs) &&
         error("function `$(f.name)` takes $(length(f.inputs)) inputs, got $(length(arg_asts))")
@@ -124,7 +124,11 @@ function inline_user_function(f::UserFunction, arg_asts)
                 end
             end
             for (var, default) in Iterators.flatten((f.outputs, f.locals))
-                isnothing(default) || (scope[var] = eval_AST(default))
+                if !isnothing(default)
+                    scope[var] = eval_AST(default)
+                elseif haskey(f.array_dims, var)
+                    allocate_array!(scope, var, f.array_dims[var])
+                end
             end
             run_statements!(scope, f.statements, f)
         end
@@ -133,7 +137,23 @@ function inline_user_function(f::UserFunction, arg_asts)
     end
     output = f.outputs[1][1]
     haskey(scope, output) || error("function `$(f.name)` does not assign its output `$output`")
-    return scope[output]
+    value = scope[output]
+    if is_array(value)
+        any(isnothing, value) &&
+            error("function `$(f.name)` does not assign every element of its output `$output`")
+        value = map(identity, value)
+    end
+    return value
+end
+
+# An output or local array with constant sizes starts with unassigned (`nothing`) elements,
+# so that elements can be assigned one by one. One declared with `:` is created by its
+# first assignment.
+function allocate_array!(scope, var, subscripts)
+    any(sub -> sub isa BMColon, subscripts) && return scope
+    dims = [to_dim(eval_AST(sub)) for sub in subscripts]
+    scope[var] = fill!(Array{Any}(undef, dims...), nothing)
+    return scope
 end
 
 function run_statements!(scope, statements, f)
@@ -144,12 +164,28 @@ function run_statements!(scope, statements, f)
 end
 
 function run_statement!(scope, st::BaseModelicaAssignment, f)
-    length(st.target.ref_list) == 1 ||
+    names, subscripts = reference_parts(st.target)
+    length(names) == 1 ||
         unsupported("function `$(f.name)`: assignment to `$(st.target)` is not supported")
-    var = Symbol(st.target.ref_list[1].name)
+    var = Symbol(names[1])
     any(entry -> entry[1] == var, Iterators.flatten((f.outputs, f.locals))) ||
         error("function `$(f.name)`: cannot assign to `$var`, which is not an output or local variable")
-    scope[var] = eval_AST(st.expression)
+    value = eval_AST(st.expression)
+    if isnothing(subscripts)
+        scope[var] = value
+    else
+        # Assign into a copy: the array may be shared with another scope (if-branches)
+        haskey(scope, var) && is_array(scope[var]) ||
+            unsupported("function `$(f.name)`: element assignment to `$var`, which has no array value yet")
+        array = Array{Any}(scope[var])
+        indices = Any[Colon() for _ in 1:ndims(array)]
+        for (k, sub) in enumerate(subscripts)
+            sub isa BMColon && continue
+            indices[k] = to_index(with_end_size(() -> eval_AST(sub), size(array, k)))
+        end
+        array[indices...] = value
+        scope[var] = array
+    end
     return scope
 end
 
@@ -169,7 +205,7 @@ function run_statement!(scope, st::BaseModelicaIfStatement, f)
         for var in union(keys(then_scope), keys(else_scope))
             if haskey(then_scope, var) && haskey(else_scope, var)
                 a, b = then_scope[var], else_scope[var]
-                scope[var] = a === b ? a : ifelse(cond, a, b)
+                scope[var] = a === b ? a : modelica_ifelse(cond, a, b)
             else
                 unsupported("function `$(f.name)`: `$var` is assigned in only some branches of an if-statement")
             end
@@ -180,7 +216,7 @@ function run_statement!(scope, st::BaseModelicaIfStatement, f)
 end
 
 function run_statement!(scope, st::BaseModelicaForStatement, f)
-    index = Symbol(st.index.ident isa BaseModelicaIdentifier ? st.index.ident.name : st.index.ident)
+    index = loop_index_name(st.index)
     for value in loop_range(st.index)
         scope[index] = value
         run_statements!(scope, st.statements, f)
@@ -233,13 +269,13 @@ function eval_AST(for_eq::BaseModelicaForEquation)
 end
 
 function eval_AST(range::BaseModelicaRange)
-    start, step, stop = eval_AST(range.start), eval_AST(range.step), eval_AST(range.stop)
+    # Bounds may be parameters, e.g. `for i in 1:n`: their values at load are used
+    start, step, stop = map(x -> parameter_value(eval_AST(x)), (range.start, range.step, range.stop))
     all(x -> x isa Number, (start, step, stop)) ||
         unsupported("range with non-constant bounds")
     return start:step:stop
 end
 
-eval_AST(array::BaseModelicaArrayConstructor) = [eval_AST(el) for el in array.elements]
 
 eval_AST(x::BaseModelicaUnsupportedExpression) = unsupported("$(x.description) is not supported")
 

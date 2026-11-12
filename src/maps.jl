@@ -50,8 +50,8 @@ function_map = Dict(
     :abs => x -> Base.abs(x...),
     :sign => x -> Base.sign(x...),
     :sqrt => x -> Base.sqrt(x...),
-    :min => x -> Base.min(x...),
-    :max => x -> Base.max(x...),
+    :min => x -> reduce_or_scalar(Base.min, minimum, x),
+    :max => x -> reduce_or_scalar(Base.max, maximum, x),
 
     # ── Event-triggering mathematical functions (Spec 3.7.2) ──────────────────
     # div: algebraic quotient with truncation toward zero
@@ -83,25 +83,36 @@ function_map = Dict(
     :smooth => x -> x[2],
 
     # ── Array constructor functions (Spec 10.3.3) ─────────────────────────────
-    :zeros => x -> Base.zeros(x...),
-    :ones => x -> Base.ones(x...),
-    :fill => x -> Base.fill(x[1], x[2:end]...),
+    :zeros => x -> Base.zeros(to_dim.(x)...),
+    :ones => x -> Base.ones(to_dim.(x)...),
+    :fill => x -> Base.fill(x[1], to_dim.(x[2:end])...),
+    :identity => x -> identity_matrix(only(x)),
+    :diagonal => x -> diagonal_matrix(only(x)),
     :linspace => x -> collect(range(x[1]; stop = x[2], length = Int(x[3]))),
 
     # ── Array dimension and size (Spec 10.3.1) ───────────────────────────────
     :ndims => x -> Base.ndims(x...),
-    :size => x -> Base.size(x...),
+    :size => x -> length(x) == 1 ? collect(Base.size(x[1])) : Base.size(x[1], to_dim(x[2])),
 
     # ── Array reduction functions (Spec 10.3.4) ──────────────────────────────
     :sum => x -> Base.sum(x...),
     :product => x -> Base.prod(x...),
 
     # ── Matrix and vector algebra (Spec 10.3.5) ──────────────────────────────
-    :transpose => x -> Base.transpose(x...),
+    :transpose => x -> permutedims(only(x)),
+    :outerProduct => x -> x[1] * permutedims(x[2]),
+    :cross => x -> cross_product(x...),
+    :skew => x -> skew_matrix(only(x)),
+    :symmetric => x -> symmetric_matrix(only(x)),
+    :scalar => x -> only(only(x)),
+    :vector => x -> to_vector(only(x)),
+    :matrix => x -> to_matrix(only(x)),
+    # constsize(a, sizes...) only asserts sizes, which are constant here anyway
+    :constsize => x -> x[1],
 
     # ── Array concatenation (Spec 10.4) ──────────────────────────────────────
-    :cat => x -> Base.cat(x[2:end]...; dims = Int(x[1])),
-    :array => x -> [x...],
+    :cat => x -> Base.cat(x[2:end]...; dims = to_dim(x[1])),
+    :array => x -> stack_elements(x),
 
     # ── Assertion and termination (Spec 8.3.7-8.3.8) ─────────────────────────
     :assert => x -> nothing,

@@ -14,6 +14,7 @@ run_tests(;
         @safetestset "Event Tests" include("test_events.jl")
         @safetestset "Discrete Backend Tests" include("test_discrete_backends.jl")
         @safetestset "Function Tests" include("test_functions.jl")
+        @safetestset "Array Tests" include("test_arrays.jl")
         @safetestset "Constants and Structural Parameter Tests" include("test_parameters.jl")
         @safetestset "Precompile Workload Tests" include("test_precompile_workload.jl")
         return nothing

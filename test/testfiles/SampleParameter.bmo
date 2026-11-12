@@ -1,0 +1,12 @@
+//! base 0.1.0
+package 'SampleParameter'
+  model 'SampleParameter'
+    parameter Real 'startTime' = 0.0;
+    parameter Real 'period' = 0.25;
+    discrete Integer 'n'(start = 0, fixed = true);
+  equation
+    when sample('startTime', 'period') then
+      'n' = pre('n') + 1;
+    end when;
+  end 'SampleParameter';
+end 'SampleParameter';

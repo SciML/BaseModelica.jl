@@ -111,7 +111,9 @@ Names of the parameters of `composition` that no equation, binding, start value 
 attribute references. Parameters marked `Evaluate = true` are left out: they already get a
 warning of their own.
 """
-function inert_parameter_names(composition::BaseModelicaComposition)
+function inert_parameter_names(
+        composition::BaseModelicaComposition, components = composition.components
+    )
     referenced = Set{String}()
     for comp in composition.components, decl in comp.component_list
         referenced_names!(referenced, decl.declaration.array_subs)
@@ -121,12 +123,17 @@ function inert_parameter_names(composition::BaseModelicaComposition)
     referenced_names!(referenced, composition.initial_equations)
     referenced_names!(referenced, composition.parameter_equations)
     names = String[]
-    for comp in composition.components
+    for comp in components
         comp.type_prefix.dpc == "parameter" || continue
         comp.type_specifier.type == "String" && continue
         is_evaluate_annotated(comp) && continue
         name = comp.component_list[1].declaration.ident[1].name
-        name in referenced || push!(names, name)
+        # An element of a scalarized array is referenced through its array
+        array_name = get(scalarized_from, name, nothing)
+        array_name in referenced && continue
+        # Report an array once, by its name
+        name = something(array_name, name)
+        name in referenced || name in names || push!(names, name)
     end
     return names
 end

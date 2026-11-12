@@ -1218,7 +1218,11 @@ function visit_primary(visitor::ASTBuilderVisitor, ctx::Py)
     elseif !is_null(ctx.outputExpressionList())
         expr_list = visit_outputExpressionList(visitor, ctx.outputExpressionList())
         if length(expr_list) == 1
-            return expr_list[1]
+            # `(expr)[subscripts]`: Base Modelica allows subscripting a parenthesized expression
+            is_null(ctx.arraySubscripts()) && return expr_list[1]
+            return BaseModelicaArrayReference(
+                expr_list[1], visit_arraySubscripts(visitor, ctx.arraySubscripts())
+            )
         else
             # Tuple
             return expr_list
@@ -1226,26 +1230,36 @@ function visit_primary(visitor::ASTBuilderVisitor, ctx::Py)
     elseif !is_null(ctx.arrayArguments())
         # '{' arrayArguments '}'
         args_ctx = ctx.arrayArguments()
+        elements = [visit_expression(visitor, e) for e in args_ctx.expression()]
         if !is_null(args_ctx.forIndex())
-            return BaseModelicaUnsupportedExpression("array comprehension {... for ...}")
+            return BaseModelicaArrayComprehension(
+                only(elements), visit_forIndex(visitor, args_ctx.forIndex())
+            )
         end
-        return BaseModelicaArrayConstructor(
-            [visit_expression(visitor, e) for e in args_ctx.expression()]
-        )
+        return BaseModelicaArrayConstructor(elements)
     else
         # '[' expressionList (';' expressionList)* ']'
-        return BaseModelicaUnsupportedExpression("matrix constructor [...]")
+        return BaseModelicaMatrixConstructor(
+            [
+                [visit_expression(visitor, e) for e in row.expression()]
+                    for row in ctx.expressionList()
+            ]
+        )
     end
 end
 
 function visit_componentReference(visitor::ASTBuilderVisitor, ctx::Py)
     # componentReference: '.'? IDENT arraySubscripts? ('.' IDENT arraySubscripts?)*
+    # Like the :julia parser, the subscripts of a part follow its identifier in `ref_list`:
+    # `'x'[1]` is [BaseModelicaIdentifier("x"), BaseModelicaArraySubscripts([1])].
     ref_list = []
-
-    idents = ctx.IDENT()
-    for ident_ctx in idents
-        # Create BaseModelicaIdentifier objects, not raw strings
-        push!(ref_list, BaseModelicaIdentifier(get_text(ident_ctx)))
+    for i in 0:(pyconvert(Int, ctx.getChildCount()) - 1)
+        child = ctx.getChild(i)
+        if pyhasattr(child, "subscript")
+            push!(ref_list, visit_arraySubscripts(visitor, child))
+        elseif get_text(child) != "."
+            push!(ref_list, BaseModelicaIdentifier(get_text(child)))
+        end
     end
 
     return BaseModelicaComponentReference(ref_list)
@@ -1271,6 +1285,14 @@ function visit_functionArguments(visitor::ASTBuilderVisitor, ctx::Py)
     expr_ctx = ctx.expression()
     if !is_null(expr_ctx)
         push!(args, visit_expression(visitor, expr_ctx))
+    end
+
+    # `f(expr for i in range)` is `f({expr for i in range})`
+    if !is_null(ctx.forIndex())
+        comprehension = BaseModelicaArrayComprehension(
+            only(args), visit_forIndex(visitor, ctx.forIndex())
+        )
+        return BaseModelicaFunctionArgs(Any[comprehension])
     end
 
     # Collect remaining arguments from functionArgumentsNonFirst (recursive grammar)
