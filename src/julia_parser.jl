@@ -517,7 +517,7 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
     arithmetic_expression = add_operator[0:1] + spc + term + spc +
         Star(add_operator + spc + term) |> create_arithmetic_expression
 
-    subscript = (E":" > BMColon) | expression
+    subscript = (spc + E":" + spc > BMColon) | expression
     array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript) + E"]" |>
         BaseModelicaArraySubscripts
     annotation_comment = E"annotation" + class_modification |>
