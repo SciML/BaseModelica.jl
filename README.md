@@ -36,14 +36,27 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   events and the solver" section of the documentation.
 - User-defined functions with an `algorithm` section (`:=`, `if` and `for` statements over
   constant ranges). They are inlined symbolically into the equations.
-- `{...}` array constructors as arguments of functions such as `sum`.
+- Array variables and parameters (`Real 'x'[3]`, `parameter Real 'A'[2, 2]`), scalarized at
+  load into scalar unknowns named `x[1]`, `A[1,2]`, ... Sizes must be constants or
+  parameters with constant values (`'k'['n'] = fill(1.0, 'n')`). Supported: `der` and the
+  scalar built-ins elementwise, `+ - * /` with Modelica's array semantics (matrix·vector,
+  scalar product), `.+ .- .* ./ .^`, subscripts, slices (`'x'[2:end]`, `'A'[1, :]`,
+  `('A' * 'x')[1]`), `{...}`, `[a, b; c, d]`, `{e for i in r}`, `sum(e for i in r)`,
+  `fill`, `zeros`, `ones`, `size`, `sum`, `product`, `min`/`max` of an array, `cat`,
+  `transpose`, `identity`, `diagonal`, `cross`, `skew`, `outerProduct`, array start
+  values (`start = fill(0.0, 3)`; a scalar attribute applies to every element), array
+  equations, `for`-equations over constant or parameter ranges, and arrays as inputs and
+  outputs of user functions (`output Real 'y'[size('u', 1)]`, element assignment).
+- `sample(start, interval)` with constant or parameter arguments; parameters are evaluated
+  with their values at load.
 - Constants are inlined; parameters whose binding refers to other parameters become
   ModelingToolkit bindings, recomputed by `remake`; `annotation(Evaluate = true)` parameters
   are not tunable. Loading warns about `Evaluate = true` parameters and about parameters
   nothing references, since changing them does not change the model. See the
   "Constants and parameters" section of the documentation.
 
-Not supported: array variables, records, matrix constructors `[...]`, algorithm sections
+Not supported: records, arrays of records, Boolean- or enumeration-indexed dimensions, array
+sizes that depend on a time-varying value, `when`-equations inside `for`-equations, algorithm sections
 in models, `while` loops, multiple-output function calls, external functions, compound
 `when` conditions (`a and b`) and `edge`/`change`/`initial()`. These raise a
 `BaseModelica.UnsupportedFeatureError` instead of producing a different model. Syntax

@@ -15,12 +15,9 @@
 #   - String(...)                               — string conversion (not relevant for ODE)
 #   - Integer(enum), EnumType(i)               — enumeration conversion
 #
-# Array functions with LIMITED support (BaseModelica array evaluation is incomplete):
-#   - identity(n), diagonal(v)                 — need LinearAlgebra
-#   - scalar(A), vector(A), matrix(A)          — dimensionality conversion
-#   - symmetric(A), skew(x)                    — matrix construction
-#   - outerProduct(x, y), cross(x, y)          — need LinearAlgebra
-#   - promote(A, n)                            — dimension promotion
+# Array arguments: the functions listed in `ELEMENTWISE_FUNCTIONS` (arrays.jl) apply
+# elementwise; the array functions below follow Spec 10.3 for arrays of symbolic scalars.
+# `promote` is not supported.
 
 function_map = Dict(
     # ── Derivative operator (Spec 3.7.4) ──────────────────────────────────────
