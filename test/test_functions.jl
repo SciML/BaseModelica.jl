@@ -75,7 +75,8 @@ end
               end 'M';
             """
         )
-        @test_throws BM.UnsupportedFeatureError parse_basemodelica(array_variable; parser)
+        # Array variables are supported now (see test_arrays.jl)
+        @test length(unknowns(parse_basemodelica(array_variable; parser))) == 3
 
         matrix = write_package(
             """
@@ -86,7 +87,8 @@ end
               end 'M';
             """
         )
-        @test_throws BM.UnsupportedFeatureError parse_basemodelica(matrix; parser)
+        # Matrix constructors are supported now
+        @test parse_basemodelica(matrix; parser) isa BM.ModelingToolkitBase.System
 
         model_algorithm = write_package(
             """

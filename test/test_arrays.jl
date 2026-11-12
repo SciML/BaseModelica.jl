@@ -59,8 +59,9 @@ end
     prob = BM.create_odeproblem(testfile("SampleParameter"))
     sol = solve(prob, Tsit5())
     sys = prob.f.sys
-    # Events at 0, 0.25, 0.5, 0.75 and 1.0
-    @test sol.ps[sys.n] == 5
+    # The parameters resolve to sample(0, 0.25), which the :mtk backend fires at 0.25, 0.5
+    # and 0.75 within (0, 1), like the literal form
+    @test sol.ps[sys.n] == [0.0, 1.0, 2.0, 3.0]
 end
 
 @testset "array helpers" begin
