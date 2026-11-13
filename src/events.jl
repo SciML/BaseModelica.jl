@@ -87,6 +87,8 @@ the evaluated [`WhenBlock`](@ref)s instead.
 - `reinits`: `(state, rhs_ast)` for each `reinit(x, expr)` in the body.
 """
 struct WhenClause
+    chain::Int
+    priority::Int
     condition::Any
     sample::Union{Nothing, Tuple{Float64, Float64}}
     assignments::Vector{Tuple{Any, Any}}
@@ -141,11 +143,11 @@ function scalar_targets(target, rhs)
     return [(target[i], BaseModelicaArrayElement(rhs, Tuple(i))) for i in CartesianIndices(target)]
 end
 
-function when_clauses(when_eq::BaseModelicaWhenEquation)
+function when_clauses(when_eq::BaseModelicaWhenEquation, chain::Int)
     length(when_eq.whens) == length(when_eq.thens) ||
         error("Malformed when-equation: $(length(when_eq.whens)) conditions but $(length(when_eq.thens)) bodies")
     clauses = WhenClause[]
-    for (condition, body) in zip(when_eq.whens, when_eq.thens)
+    for (priority, (condition, body)) in enumerate(zip(when_eq.whens, when_eq.thens))
         assignments = Tuple{Any, Any}[]
         reinits = Tuple{Any, Any}[]
         for eq in body_list(body)
@@ -180,7 +182,7 @@ function when_clauses(when_eq::BaseModelicaWhenEquation)
                 unsupported("$(nameof(typeof(inner))) inside a when-equation is not supported")
             end
         end
-        push!(clauses, WhenClause(condition, sample_args(condition), assignments, reinits))
+        push!(clauses, WhenClause(chain, priority, condition, sample_args(condition), assignments, reinits))
     end
     return clauses
 end
@@ -263,7 +265,7 @@ function differentiated_variables(eqs)
             any(isequal(arg), found) || push!(found, arg)
             return
         end
-        foreach(walk, SymbolicUtils.arguments(x))
+        return foreach(walk, SymbolicUtils.arguments(x))
     end
     for eq in eqs
         walk(eq.lhs)
@@ -278,17 +280,19 @@ end
 """
     WhenBlock
 
-The evaluated body of every `when`/`elsewhen` branch that shares one trigger. Branches with
-an identical zero-crossing (or identical `sample(start, interval)`) fire at the same
-instant, so BaseModelica merges them into one block.
+One evaluated `when`/`elsewhen` branch. Branches keep their identity even when their
+triggers coincide: only the first triggering branch of an elsewhen chain executes
+(Modelica 3.6 §8.3.5). Independent chains may execute together.
 
 All expressions are symbolic, built from the symbols of [`DiscreteModel`](@ref):
 
+- `chain::Int`: identity of the when-equation, in model order.
+- `priority::Int`: branch order within that chain (1 for `when`, 2 for its first `elsewhen`).
 - `condition`: the Boolean condition, e.g. `h(t) < 0`, with `pre(x)` evaluated as `x`.
   `nothing` for a `sample` trigger.
 - `crossing`: an expression that crosses zero upwards when `condition` becomes true, e.g.
   `-h(t)` for `h < 0`. The block fires on that rising edge only. `nothing` for a `sample`
-  trigger.
+  trigger or a condition that varies only at events.
 - `sample`: `nothing`, or `(start, interval)` for `when sample(start, interval)`.
 - `assignments`: `v => rhs` for each `v = rhs` in the body; `v` is a discrete variable.
 - `reinits`: `x => rhs` for each `reinit(x, rhs)`; `x` is a continuous state, and no
@@ -300,6 +304,8 @@ discrete `v` means its new value at this event, a plain continuous `x` means its
 the event instant (which equals its pre-event value).
 """
 struct WhenBlock
+    chain::Int
+    priority::Int
     condition::Any
     crossing::Any
     sample::Union{Nothing, Tuple{Float64, Float64}}
@@ -337,7 +343,8 @@ end
 
 """
     LoweredDiscrete(; equations, continuous_events = [], discrete_events = [],
-                    initial_conditions = [], initialization_eqs = [])
+                    initial_conditions = [], initialization_eqs = [], parameters = [],
+                    event_iteration = [])
 
 What [`lower_discrete`](@ref) returns. BaseModelica builds the `System` from it:
 
@@ -346,6 +353,10 @@ What [`lower_discrete`](@ref) returns. BaseModelica builds the `System` from it:
 - `continuous_events`, `discrete_events`: passed to `System`.
 - `initial_conditions`: `variable => value` pairs, passed as `initial_conditions`.
 - `initialization_eqs`: added to the model's own initialization equations.
+- `parameters`: auxiliary parameters used by the backend, including event bookkeeping.
+- `event_iteration`: callbacks checked after the relation-Boolean update in each event
+  iteration. These callbacks must become inactive once their assignments are consistent;
+  clocks belong in `discrete_events` and are checked once.
 """
 Base.@kwdef struct LoweredDiscrete
     equations::Vector{Equation}
@@ -353,7 +364,14 @@ Base.@kwdef struct LoweredDiscrete
     discrete_events::Vector{Any} = Any[]
     initial_conditions::Vector{Pair} = Pair[]
     initialization_eqs::Vector{Equation} = Equation[]
+    parameters::Vector{Num} = Num[]
+    event_iteration::Vector{Any} = Any[]
 end
+
+# Preserve the original positional constructor as new optional backend data is added.
+LoweredDiscrete(equations, continuous_events, discrete_events, initial_conditions, initialization_eqs) =
+    LoweredDiscrete(; equations, continuous_events, discrete_events, initial_conditions, initialization_eqs)
+
 
 """
     AbstractDiscreteBackend
@@ -412,42 +430,293 @@ compile_system(::AbstractDiscreteBackend, sys) = mtkcompile(sys)
     MTKEventsBackend()
 
 The built-in discrete backend, registered as `:mtk` (the default). Discrete variables are
-`@discretes`; each `when` trigger becomes a `SymbolicContinuousCallback` that fires on the
-rising edge, and `sample(0, interval)` becomes a periodic `SymbolicDiscreteCallback`.
-Assignments and `reinit` become affect equations in which continuous variables read their
-pre-event value (`Pre`).
+`@discretes`. Continuous roots, Boolean transitions during event iteration, and periodic
+sample clocks select rising edges together, respecting `elsewhen` priority. Assignments
+and `reinit` become one symbolic affect solve in which continuous variables read their
+pre-event value (`Pre`). Sample clocks include their initial tick.
 """
 struct MTKEventsBackend <: AbstractDiscreteBackend end
+
+# Remove a common numeric scale before comparing roots. A small multiplier of a
+# relation must not make a distant root look simultaneous with the current event.
+function crossing_coefficient(x)
+    value = concrete_value(x)
+    value isa Real && return iszero(value) ? 1.0 : abs(Float64(value))
+    x = Symbolics.unwrap(x)
+    SymbolicUtils.iscall(x) || return 1.0
+    op = SymbolicUtils.operation(x)
+    args = SymbolicUtils.arguments(x)
+    op === (+) && return maximum(crossing_coefficient, args)
+    if op === (*)
+        return prod(args; init = 1.0) do arg
+            c = concrete_value(arg)
+            c isa Real ? abs(Float64(c)) : 1.0
+        end
+    end
+    return 1.0
+end
+
+# Simplification may drop a small additive constant while reducing a ratio. Only
+# group roots after verifying the proposed ratio against the original expressions.
+function proportional_crossing(a, b)
+    ratio = concrete_value(Symbolics.simplify(a / b))
+    ratio isa Real && isfinite(ratio) && !iszero(ratio) || return nothing
+    difference = concrete_value(Symbolics.expand(a - ratio * b))
+    return difference isa Real && iszero(difference) ? ratio : nothing
+end
+
+# Event selection is separate from the symbolic affect solve. All roots and sample
+# clocks at an instant select branches together, then MTK solves their assignments and
+# reinits simultaneously. The bookkeeping is stored in parameters, so separate solves
+# and remakes never share mutable callback state.
+struct WhenSelection
+    blocks::Vector{WhenBlock}
+    root::Int
+    direction::Int
+    root_directions::Vector{Int}
+    nsnapshots::Int
+end
+
+function WhenSelection(blocks, root, direction, nsnapshots)
+    signs = zeros(Int, length(blocks))
+    if root != 0
+        for (i, block) in enumerate(blocks)
+            isnothing(block.crossing) && continue
+            ratio = proportional_crossing(block.crossing, blocks[root].crossing)
+            isnothing(ratio) && continue
+            signs[i] = ratio > 0 ? 1 : -1
+        end
+        signs[root] = 1
+    end
+    return WhenSelection(blocks, root, direction, signs, nsnapshots)
+end
+
+const WHEN_ROOT_TOLERANCE = 64eps(Float64)
+
+same_event_time(a, b) = isfinite(b) && abs(a - b) <= 32eps(Float64) * max(1, abs(a), abs(b))
+
+sample_tick(time, start, interval) = time >= start &&
+    abs((time - start) / interval - round((time - start) / interval)) <= 32eps(Float64) * max(1, abs((time - start) / interval))
+
+function (select::WhenSelection)(modified, observed, ctx, integ)
+    n = length(select.blocks)
+    old = collect(values(modified))
+    time = observed.time
+    previous = old[1:n] .> 0.5
+    # A root and a clock can report the same instant a few floating-point units
+    # apart. Retain the selected branches and the event's pre-values across them.
+    if !same_event_time(time, old[2n + 3])
+        old[(n + 1):(2n)] .= 0.0
+        old[2n + 3] = time
+        old[2n + 4] = 0.0
+        for i in 1:select.nsnapshots
+            old[2n + 4 + i] = observed[Symbol(:snapshot, i)]
+        end
+    end
+    selected_before = old[(n + 1):(2n)] .> 0.5
+    active = copy(selected_before)
+    current = Bool[observed[Symbol(:condition, i)] for i in 1:n]
+    # Root callbacks at the same instant all see the same transition. The first one
+    # handles every coincident crossing, including scaled conditions.
+    if select.root != 0 && !same_event_time(time, old[2n + 1])
+        for (i, block) in enumerate(select.blocks)
+            isnothing(block.crossing) && continue
+            crossing = observed[Symbol(:crossing, i)]
+            if select.root_directions[i] != 0
+                current[i] = select.direction * select.root_directions[i] > 0
+                # A rising root is an edge even if no accepted solver step observed
+                # the false interval (e.g. consecutive bouncing-ball impacts).
+                active[i] |= current[i]
+            elseif abs(crossing) <= WHEN_ROOT_TOLERANCE
+                current[i] = !previous[i]
+            end
+        end
+        old[2n + 1] = time
+    else
+        # At the root the strict relation itself can still have its old value.
+        # Preserve the direction selected by the continuous callback.
+        for (i, block) in enumerate(select.blocks)
+            isnothing(block.crossing) && continue
+            abs(observed[Symbol(:crossing, i)]) <= ROOT_TOLERANCE &&
+                (current[i] = previous[i])
+        end
+    end
+    for (i, block) in enumerate(select.blocks)
+        if isnothing(block.sample)
+            active[i] |= current[i] && !previous[i]
+        else
+            start, interval = block.sample
+            active[i] |= !same_event_time(time, old[2n + 2]) && sample_tick(time, start, interval)
+        end
+    end
+    # The block list is in chain/priority order. Clear lower-priority branches
+    # before any body runs, rather than depending on callback execution order.
+    chosen = Set{Int}()
+    for (i, block) in enumerate(select.blocks)
+        active[i] || continue
+        if block.chain in chosen
+            active[i] = false
+        else
+            push!(chosen, block.chain)
+        end
+    end
+    old[1:n] = Float64.(current)
+    old[(n + 1):(2n)] = Float64.(active)
+    active == selected_before || (old[2n + 4] = 1.0)
+    any(b -> !isnothing(b.sample) && sample_tick(time, b.sample...), select.blocks) &&
+        (old[2n + 2] = time)
+    return NamedTuple{keys(modified)}(Tuple(old))
+end
+
+# A single scheduler puts every sample clock on its absolute Modelica time grid.
+# Public add_tstop! avoids the span-relative phase of numeric periodic callbacks.
+struct SampleSelection
+    select::WhenSelection
+end
+
+function (clock::SampleSelection)(modified, observed, ctx, integ)
+    selected = clock.select(modified, observed, ctx, integ)
+    time = observed.time
+    next_time = minimum(clock.select.blocks) do block
+        isnothing(block.sample) && return Inf
+        start, interval = block.sample
+        ticks = (time - start) / interval
+        k = max(0, floor(ticks + 32eps(Float64) * max(1, abs(ticks))) + 1)
+        return start + k * interval
+    end
+    next_time <= integ.sol.prob.tspan[2] && add_tstop!(integ, next_time)
+    return merge(selected, (; next_sample = next_time))
+end
 
 function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     lowered = LoweredDiscrete(;
         equations = model.equations,
         initial_conditions = Pair[sym => start for (sym, start) in model.discretes]
     )
-    for block in model.when_blocks
-        affects, discretes = mtk_affect(block, model)
-        if isnothing(block.sample)
-            # `affect_neg = nothing`: fire only when the condition becomes true (rising edge).
-            # The reinitialization is that of the Boolean callbacks, so that a root shared
-            # with them fires both (see relation_booleans.jl).
+    blocks = model.when_blocks
+    isempty(blocks) && return lowered
+    n = length(blocks)
+    previous = [only(@discretes($(gensym(:when_previous))(t))) for _ in blocks]
+    active = [only(@discretes($(gensym(:when_active))(t))) for _ in blocks]
+    root_time = only(@discretes($(gensym(:when_root_time))(t)))
+    sample_time = only(@discretes($(gensym(:when_sample_time))(t)))
+    event_time = only(@discretes($(gensym(:when_event_time))(t)))
+    ready = only(@discretes($(gensym(:when_ready))(t)))
+    next_sample = only(@discretes($(gensym(:when_next_sample))(t)))
+    snapshot_sources = unique(vcat(model.variables, first.(model.discretes)))
+    snapshots = [only(@discretes($(gensym(:when_pre))(t))) for _ in snapshot_sources]
+    bookkeeping = vcat(previous, active, [root_time, sample_time, event_time, ready], snapshots)
+    append!(lowered.parameters, vcat(bookkeeping, [next_sample]))
+    append!(lowered.initial_conditions, [p => 0.0 for p in vcat(previous, active, snapshots, [ready])])
+    append!(lowered.initial_conditions, [root_time => -Inf, sample_time => -Inf, event_time => -Inf, next_sample => Inf])
+    modified = NamedTuple{(Tuple(Symbol(:m, i) for i in eachindex(bookkeeping))..., :next_sample)}(
+        Tuple(vcat(bookkeeping, [next_sample]))
+    )
+    obs_names = [:time]
+    obs_values = Any[t]
+    for (i, block) in enumerate(blocks)
+        push!(obs_names, Symbol(:condition, i))
+        push!(obs_values, isnothing(block.condition) ? Num(false) : block.condition)
+        isnothing(block.crossing) && continue
+        push!(obs_names, Symbol(:crossing, i))
+        push!(obs_values, block.crossing)
+    end
+    for (i, var) in enumerate(snapshot_sources)
+        push!(obs_names, Symbol(:snapshot, i))
+        push!(obs_values, var)
+    end
+    observed = NamedTuple{Tuple(obs_names)}(Tuple(obs_values))
+    selection(root = 0, direction = 0) = ModelingToolkitBase.ImperativeAffect(
+        WhenSelection(blocks, root, direction, length(snapshots)); modified, observed
+    )
+    roots = Any[]
+    for (i, block) in enumerate(blocks)
+        if !isnothing(block.crossing)
+            any(roots) do c
+                !isnothing(proportional_crossing(block.crossing, c))
+            end && continue
+            push!(roots, block.crossing)
             push!(
                 lowered.continuous_events, ModelingToolkitBase.SymbolicContinuousCallback(
-                    continuous_conditions([block.crossing], !isempty(model.states)), affects;
-                    affect_neg = nothing, discrete_parameters = discretes,
-                    reinitializealg = EVENT_REINITIALIZATION
-                )
-            )
-        else
-            start, interval = block.sample
-            start == 0 ||
-                unsupported("sample(start, interval) with start ≠ 0 is not supported by the :mtk discrete backend")
-            push!(
-                lowered.discrete_events, ModelingToolkitBase.SymbolicDiscreteCallback(
-                    interval, affects; discrete_parameters = discretes
+                    continuous_conditions([block.crossing], !isempty(model.states)), selection(i, 1);
+                    affect_neg = selection(i, -1), reinitializealg = EVENT_REINITIALIZATION
                 )
             )
         end
     end
+    # Check discrete Boolean transitions after the relation-Boolean iteration, rather
+    # than trying to find a continuous root in a piecewise constant parameter.
+    mismatch = Num(false)
+    for (i, block) in enumerate(blocks)
+        isnothing(block.condition) && continue
+        changed = Num(block.condition) != (previous[i] > 0.5)
+        if !isnothing(block.crossing)
+            changed &= Num(abs(block.crossing) > ROOT_TOLERANCE)
+        end
+        mismatch |= changed
+    end
+    push!(
+        lowered.event_iteration, ModelingToolkitBase.SymbolicDiscreteCallback(
+            concrete_value(mismatch) === false ? Float64[] : Symbolics.unwrap(mismatch),
+            selection(); initialize = selection(),
+            reinitializealg = EVENT_REINITIALIZATION
+        )
+    )
+    samples = [b.sample for b in blocks if !isnothing(b.sample)]
+    for (start, interval) in samples
+        interval > 0 || unsupported("sample() interval must be positive")
+        start == 0 ||
+            unsupported("sample(start, interval) with start ≠ 0 is not supported by the :mtk discrete backend")
+    end
+    if !isempty(samples)
+        clock = ModelingToolkitBase.ImperativeAffect(
+            SampleSelection(WhenSelection(blocks, 0, 0, length(snapshots))); modified, observed
+        )
+        push!(
+            lowered.discrete_events, ModelingToolkitBase.SymbolicDiscreteCallback(
+                Symbolics.unwrap(t >= next_sample), clock; initialize = clock,
+                reinitializealg = EVENT_REINITIALIZATION
+            )
+        )
+    end
+    # Form one piecewise equation per assigned variable, retaining the symbolic
+    # affect solver for dependencies between assignments and algebraic variables.
+    assignments = Dict{Any, Any}()
+    reinits = Dict{Any, Any}()
+    for (i, block) in reverse(collect(enumerate(blocks)))
+        for (target, rhs) in block.assignments
+            assignments[target] = ifelse(
+                ModelingToolkit.Pre(active[i]) > 0.5, rhs,
+                get(assignments, target, ModelingToolkit.Pre(target))
+            )
+        end
+        for (target, rhs) in block.reinits
+            reinits[target] = ifelse(
+                ModelingToolkit.Pre(active[i]) > 0.5, rhs,
+                get(reinits, target, ModelingToolkit.Pre(target))
+            )
+        end
+    end
+    combined = WhenBlock(
+        0, 0, nothing, nothing, nothing,
+        Pair{Any, Any}[k => v for (k, v) in assignments],
+        Pair{Any, Any}[k => v for (k, v) in reinits]
+    )
+    affects, discretes = mtk_affect(combined, model)
+    # Re-solving a selected body after another simultaneous trigger uses the same
+    # pre-values. This lets a higher-priority branch replace an earlier selection
+    # without incrementing counters twice or applying a reinit twice.
+    pre_values = Dict(ModelingToolkit.Pre(var) => ModelingToolkit.Pre(snapshot) for (var, snapshot) in zip(snapshot_sources, snapshots))
+    affects = Equation[Symbolics.substitute(eq, pre_values) for eq in affects]
+    push!(affects, ready ~ 0.0)
+    push!(discretes, ready)
+    pending = ready > 0.5
+    push!(
+        lowered.event_iteration, ModelingToolkitBase.SymbolicDiscreteCallback(
+            Symbolics.unwrap(pending), affects; discrete_parameters = discretes,
+            initialize = affects, reinitializealg = EVENT_REINITIALIZATION
+        )
+    )
     return lowered
 end
 
@@ -482,41 +751,39 @@ function mtk_affect(block::WhenBlock, model::DiscreteModel)
 end
 
 """
-    when_blocks(clauses; boolean_definitions)
+    when_blocks(clauses)
 
-Evaluate the AST-level `WhenClause`s into [`WhenBlock`](@ref)s, merging clauses that share
-a trigger: separate callbacks with identical roots do not all fire at the same instant.
-`boolean_definitions` are the definitions of the Booleans defined by an equation (see
-[`lower_relation_booleans`](@ref)).
+Evaluate the AST-level `WhenClause`s into [`WhenBlock`](@ref)s, preserving chain identity
+and branch priority even when triggers coincide.
 """
-function when_blocks(clauses; boolean_definitions = Dict{Symbol, Any}())
+function when_blocks(clauses)
     blocks = WhenBlock[]
     for clause in clauses
         condition = crossing = nothing
         if isnothing(clause.sample)
             condition = with_eval_mode(() -> eval_AST(clause.condition), :condition)
-            # `when b` for a Boolean defined by a relation triggers on that relation
-            condition = expand_relation_boolean(condition, boolean_definitions)
-            crossing = to_zero_crossing(condition)
+            # Relation-defined Booleans transition during event iteration. Their
+            # conditions are discrete; only direct relations have continuous roots.
+            if varies_continuously(condition)
+                crossing = Num(to_zero_crossing(condition))
+                crossing /= crossing_coefficient(crossing)
+            end
         end
         assignments, reinits = with_eval_mode(:event) do
             Pair{Any, Any}[var => eval_AST(rhs) for (var, rhs) in clause.assignments],
                 Pair{Any, Any}[state => eval_AST(rhs) for (state, rhs) in clause.reinits]
         end
-        idx = findfirst(b -> isequal(b.crossing, crossing) && b.sample == clause.sample, blocks)
-        if isnothing(idx)
-            push!(blocks, WhenBlock(condition, crossing, clause.sample, assignments, reinits))
-        else
-            append!(blocks[idx].assignments, assignments)
-            append!(blocks[idx].reinits, reinits)
-        end
-    end
-    for block in blocks
-        states = first.(block.reinits)
+        states = first.(reinits)
         for (i, state) in enumerate(states)
             any(isequal(state), states[1:(i - 1)]) &&
                 unsupported("`$(symbol_name(state))` is reinitialized twice in the same event")
         end
+        push!(
+            blocks, WhenBlock(
+                clause.chain, clause.priority, condition, crossing,
+                clause.sample, assignments, reinits
+            )
+        )
     end
     return blocks
 end

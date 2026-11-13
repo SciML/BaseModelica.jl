@@ -13,7 +13,7 @@ import ParserCombinator
 using PrecompileTools: @compile_workload, @setup_workload
 const set_name = ParserCombinator.set_name
 using PythonCall: Py, pyconvert, pydict, pyexec, pyhasattr, pyimport, pylen
-using SciMLBase: ODEProblem
+using SciMLBase: ODEProblem, add_tstop!
 import SymbolicIndexingInterface
 using SymbolicUtils: substitute
 import SymbolicUtils

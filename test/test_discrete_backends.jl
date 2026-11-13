@@ -4,6 +4,7 @@ using ModelingToolkit
 using ModelingToolkit: Pre
 using OrdinaryDiffEq
 import Symbolics
+import ModelingToolkitBase
 
 BM = BaseModelica
 
@@ -116,8 +117,10 @@ end
 
         parse_basemodelica(testfile("WhenElsewhen"); discrete_backend = backend)
         @test length(backend.seen[end].when_blocks) == 2
+        @test [b.chain for b in backend.seen[end].when_blocks] == [1, 1]
+        @test [b.priority for b in backend.seen[end].when_blocks] == [1, 2]
 
-        # Two when-equations with the same condition fire together: one block
+        # Two independent when-equations keep their identities and fire together
         shared = write_model(
             """
                 Real 'x'(fixed = true, start = 0.0);
@@ -135,7 +138,9 @@ end
         )
         sys = parse_basemodelica(shared; discrete_backend = backend)
         model = backend.seen[end]
-        @test names_of(first.(only(model.when_blocks).assignments)) == [:a, :b]
+        @test [b.chain for b in model.when_blocks] == [1, 2]
+        @test [b.priority for b in model.when_blocks] == [1, 1]
+        @test names_of([first(only(b.assignments)) for b in model.when_blocks]) == [:a, :b]
         @test Dict(ModelingToolkit.getname(v) => s for (v, s) in model.discretes) == Dict(:a => 0.0, :b => 3.0)
         sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
         @test last(sol.ps[sys.a]) == 1.0
@@ -209,5 +214,52 @@ end
             """
         )
         @test_throws BM.UnsupportedFeatureError parse_basemodelica(phased; discrete_backend = :mtk)
+    end
+end
+
+# An independent backend that represents each discrete as a held continuous unknown.
+# This exercises the extension interface without delegating to MTKEventsBackend.
+struct HeldStateBackend <: BM.AbstractDiscreteBackend end
+function BM.declare_discrete(::HeldStateBackend, name::Symbol)
+    t = ModelingToolkit.t_nounits
+    return only(@variables($name(t)))
+end
+function BM.lower_discrete(::HeldStateBackend, model::BM.DiscreteModel)
+    eqs = copy(model.equations)
+    for (var, _) in model.discretes
+        push!(eqs, ModelingToolkit.D_nounits(var) ~ 0.0)
+    end
+    callbacks = Any[]
+    for block in model.when_blocks
+        @assert block.sample == (0.0, 0.25)
+        affects = Equation[var ~ rhs for (var, rhs) in block.assignments]
+        append!(affects, [state ~ Pre(state) for state in model.states])
+        push!(
+            callbacks, ModelingToolkitBase.SymbolicDiscreteCallback(
+                block.sample[2], affects; initialize = affects
+            )
+        )
+    end
+    return BM.LoweredDiscrete(;
+        equations = eqs, discrete_events = callbacks,
+        initial_conditions = Pair[model.discretes...]
+    )
+end
+
+@testset "Independent public backend solves a sampled model ($parser)" for parser in (:julia, :antlr)
+    BM.register_discrete_backend!(:held_state_test, HeldStateBackend())
+    try
+        sys = parse_basemodelica(testfile("SampledCounter"); parser, discrete_backend = :held_state_test)
+        @test !ModelingToolkit.isparameter(sys.n)
+        raw = parse_basemodelica(testfile("SampledCounter"); parser, discrete_backend = :held_state_test, simplify = false)
+        @test :n in names_of(unknowns(raw))
+        sol = solve(ODEProblem(sys, [], (0.0, 0.9)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.1; idxs = sys.n) == 1
+        @test sol(0.9; idxs = sys.n) == 4
+        @test sol(0.9; idxs = sys.xs) ≈ 0.75
+        @test sol(0.9; idxs = sys.x) ≈ 0.9
+    finally
+        BM.unregister_discrete_backend!(:held_state_test)
     end
 end

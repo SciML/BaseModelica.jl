@@ -273,8 +273,10 @@ function lower_relation_booleans(eqs, model_name)
         # Mismatches of the Booleans whose relations are all away from their roots
         mismatch = sum(eachindex(defined)) do k
             determined = prod(
-                (ifelse(abs(crossings[crossing_of[i]]) > ROOT_TOLERANCE * scales[crossing_of[i]], 1.0, 0.0)
-                    for i in depends[k] if crossing_of[i] != 0);
+                (
+                    ifelse(abs(crossings[crossing_of[i]]) > ROOT_TOLERANCE * scales[crossing_of[i]], 1.0, 0.0)
+                        for i in depends[k] if crossing_of[i] != 0
+                );
                 init = 1.0
             )
             determined * abs(ifelse(definitions_[k], 1.0, 0.0) - syms[defined[k]])
@@ -290,16 +292,4 @@ function lower_relation_booleans(eqs, model_name)
         equations, parameters, bindings, initialization_eqs, continuous_events,
         discrete_events, definitions,
     )
-end
-
-# The definition of `condition` if it is a Boolean of `relation_boolean_syms` defined by a
-# single relation, so that `when b` triggers on the crossing of that relation; otherwise
-# `condition` itself.
-function expand_relation_boolean(condition, definitions)
-    name = relation_boolean_name(condition)
-    isnothing(name) && return condition
-    definition = get(definitions, name, nothing)
-    isnothing(definition) && return condition
-    isnothing(relation_crossing(Symbolics.unwrap(definition))) && return condition
-    return definition
 end

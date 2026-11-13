@@ -383,10 +383,10 @@ function eval_AST(
             end
         elseif type_prefix == "constant"
             # A symbol for now, so that constants can refer to each other; replaced by its
-            # value below.
+            # value below. Unresolved constants keep this non-tunable symbol.
             comp.type_specifier.type == "String" && continue
             julia_type = modelica_type_to_julia(comp.type_specifier.type)
-            variable_map[name] = only(@parameters($name::julia_type))
+            variable_map[name] = only(@parameters $name::julia_type [tunable = false])
         elseif type_prefix == "discrete"
             # Explicitly declared discrete variables — treat same as when-body discretes.
             union!(discrete_variable_names, [name])
@@ -402,10 +402,6 @@ function eval_AST(
                 # Equations see `off > 0.5`.
                 push!(bool_comparison_names, name)
                 disc_sym = only(@discretes($name(t)::Real))
-                start_val = get_class_modification_value(
-                    comp.component_list[1].declaration.modification, "start"
-                )
-                relation_boolean_starts[name] = start_val === true ? 1.0 : 0.0
                 relation_boolean_syms[name] = disc_sym
                 variable_map[name] = relation_boolean_value(disc_sym)
             else
@@ -440,6 +436,10 @@ function eval_AST(
             )
             continue
         elseif name in bool_comparison_names
+            # Every parameter symbol now exists, including forward references. Keep the
+            # start symbolic so initialization (and remake) uses the current parameters.
+            start_value = get_class_modification_value(declaration.modification, "start")
+            relation_boolean_starts[name] = ifelse(something(start_value, false), 1.0, 0.0)
             # A declaration equation `Boolean b = expr` defines b
             expr = binding_expression(declaration)
             isnothing(expr) || push!(declaration_eqs, variable_map[name] ~ eval_AST(expr))
@@ -580,8 +580,8 @@ function eval_AST(
     end
 
     when_clause_list = WhenClause[]
-    for when_eq in when_equation_list
-        append!(when_clause_list, when_clauses(when_eq))
+    for (chain, when_eq) in enumerate(when_equation_list)
+        append!(when_clause_list, when_clauses(when_eq, chain))
     end
 
     #vars_and_pars = merge(Dict(vars .=> vars), Dict(pars .=> pars))
@@ -681,10 +681,11 @@ function eval_AST(
     discrete_model = DiscreteModel(
         real_eqs, copy(vars), differentiated_variables(real_eqs),
         Pair{Any, Any}[variable_map[name] => discrete_starts[name] for name in sort!(collect(keys(discrete_starts)))],
-        when_blocks(when_clause_list; boolean_definitions = booleans.definitions)
+        when_blocks(when_clause_list)
     )
     lowered = lower_discrete(backend, discrete_model)
     real_eqs = lowered.equations
+    append!(all_pars, lowered.parameters)
 
     # Discrete variables that the backend represents as (clocked) unknowns
     for name in discrete_variable_names
@@ -692,13 +693,22 @@ function eval_AST(
         ModelingToolkitBase.isparameter(sym) || push!(vars, sym)
     end
 
+    # SciML checks discrete callbacks in order once per accepted step. Resolve the
+    # finite when-dependency chain at this instant instead of deferring Boolean edges
+    # caused by an assignment/reinit to a later integration step. A branch can activate
+    # at most once along a convergent chain; the final round observes its consequences.
+    event_callbacks = copy(lowered.discrete_events)
+    rounds = isempty(lowered.event_iteration) ? 1 : length(discrete_model.when_blocks) + 1
+    for _ in 1:rounds
+        append!(event_callbacks, booleans.discrete_events)
+        append!(event_callbacks, lowered.event_iteration)
+    end
+    append!(event_callbacks, initial_assertion_events(initial_assertions, class_specifier.name))
+
     @named sys = System(
         real_eqs, t, vars, all_pars;
         continuous_events = vcat(lowered.continuous_events, booleans.continuous_events),
-        discrete_events = vcat(
-            lowered.discrete_events, booleans.discrete_events,
-            initial_assertion_events(initial_assertions, class_specifier.name)
-        ),
+        discrete_events = event_callbacks,
         initialization_eqs = vcat(
             initialization_eqs, lowered.initialization_eqs, booleans.initialization_eqs
         ),

@@ -377,9 +377,9 @@ function array_size(name, subscripts, declaration, scope)
         value = isnothing(expr) ? nothing :
             try
                 with_local_scope(() -> eval_AST(expr), scope)
-            catch
+        catch
                 nothing
-            end
+        end
     end
     is_array(value) && ndims(value) == length(dims) ||
         unsupported("size of array `$name` declared with `:` cannot be determined from its binding")
@@ -453,8 +453,18 @@ function scalarize_components(components)
     return result
 end
 
-# The current symbols (or inlined values) of the elements of array component `name`
-element_array(name::Symbol) = map(n -> get(variable_map, n, nothing), array_components[name])
+# The current symbols (or inlined values) of the elements of array component `name`.
+# Initial algorithms write scalarized names into their local scope; subsequent array
+# references, including slices and reductions, must see those writes too.
+function element_array(name::Symbol)
+    scope = LOCAL_SCOPE[]
+    return map(array_components[name]) do n
+        if !isnothing(scope) && haskey(scope, n)
+            return scope[n]
+        end
+        return get(variable_map, n, nothing)
+    end
+end
 
 """
     scalar_element_name(ref)
@@ -474,7 +484,20 @@ end
 # Names of the scalar variables that `ref` may refer to: an array reference with
 # subscripts that are not constant may refer to any element.
 function element_names(ref::BaseModelicaComponentReference)
-    name = reference_name(ref)
+    names, subscripts = reference_parts(ref)
+    name = Symbol(first(names))
     haskey(array_components, name) || return [name]
-    return vec(array_components[name])
+    elements = array_components[name]
+    isnothing(subscripts) && return vec(elements)
+    # This pre-scan runs before the model's symbols are declared. Structural parameter
+    # values can already resolve constant indices, ranges, slices and `end`.
+    selected = try
+        with_local_scope(() -> apply_subscripts(elements, subscripts), structural_values)
+    catch err
+        # A dynamic index may refer to any element. Its expression can fail evaluation
+        # before symbols exist (e.g. `i + 1`), as well as fail conversion to an integer.
+        err isa Union{UnsupportedFeatureError, MethodError} || rethrow()
+        return vec(elements)
+    end
+    return selected isa Symbol ? [selected] : vec(selected)
 end

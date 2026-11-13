@@ -29,6 +29,25 @@ parameter_names(sys) = Set(ModelingToolkit.getname.(ModelingToolkit.parameters(s
         @test solve(prob, Tsit5()).retcode == ReturnCode.Success
     end
 
+    @testset "Unresolved constants keep public non-tunable metadata ($parser)" for parser in (:julia, :antlr)
+        path = tempname() * ".bmo"
+        write(
+            path, """//! base 0.1.0
+            package 'UnboundConstant'
+              model 'UnboundConstant'
+                constant Real 'c';
+                Real 'x'(start = 1.0, fixed = true);
+              equation
+                der('x') = -'c' * 'x';
+              end 'UnboundConstant';
+            end 'UnboundConstant';
+            """
+        )
+        sys = parse_basemodelica(path; parser, simplify = false)
+        @test !ModelingToolkit.istunable(sys.c)
+        @test :c in parameter_names(sys)
+    end
+
     @testset "Evaluate = true parameters are not tunable ($parser)" for parser in (:julia, :antlr)
         sys = @test_logs (:warn, r"'n', 'useDamper', 'k' were evaluated at translation") min_level = Base.CoreLogging.Warn parse_basemodelica(
             testfile("EvaluatedParameters"); parser
@@ -102,8 +121,8 @@ parameter_names(sys) = Set(ModelingToolkit.getname.(ModelingToolkit.parameters(s
         # Parameters reach ModelingToolkit in declaration order, whatever was parsed before
         declared = [
             Symbol(m.captures[1]) for m in eachmatch(
-                r"parameter Real '([^']+)'", read(testfile("ParameterBindings"), String)
-            )
+                    r"parameter Real '([^']+)'", read(testfile("ParameterBindings"), String)
+                )
         ]
         @test ModelingToolkit.getname.(ModelingToolkit.parameters(sys)) == declared
         prob = create_odeproblem(testfile("ParameterBindings"); parser)

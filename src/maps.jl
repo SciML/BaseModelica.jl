@@ -135,9 +135,9 @@ bool_comparison_names = Set{Symbol}()
 # `bool_comparison_names`
 relation_boolean_syms = Dict{Symbol, Any}()
 
-# name => start value (0.0 or 1.0) of a Boolean in `bool_comparison_names`, the value of
-# `pre(b)` at initialization
-relation_boolean_starts = Dict{Symbol, Float64}()
+# name => start value (0.0 or 1.0, possibly a parameter expression) of a Boolean in
+# `bool_comparison_names`, the value of `pre(b)` at initialization
+relation_boolean_starts = Dict{Symbol, Any}()
 
 # names of parameters declared with fixed = false (to be solved during initialization)
 free_parameter_names = Set{Symbol}()

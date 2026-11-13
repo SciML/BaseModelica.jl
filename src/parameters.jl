@@ -78,7 +78,7 @@ function inline_constants!(variable_map, components)
         sym = variable_map[name]
         value = concrete_value(resolve_value(get(bindings, sym, sym), bindings))
         variable_map[name] = if isnothing(value)
-            ModelingToolkitBase.toconstant(sym)
+            sym  # Already declared with public `tunable = false` metadata.
         else
             value isa julia_type ? value : convert(julia_type, value)
         end
