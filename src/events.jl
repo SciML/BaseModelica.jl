@@ -895,10 +895,20 @@ end
 function event_iteration_callbacks(booleans, lowered)
     callbacks = vcat(booleans.discrete_events, lowered.event_iteration)
     isempty(lowered.event_iteration) && return callbacks
+    # Only iterate when a Boolean update, branch selection, or body solve is
+    # pending. An always-true condition forces SciML to save at every step,
+    # even when the affect reports that nothing changed.
+    pending = Num(false)
+    for cb in callbacks
+        condition = cb.conditions
+        # Empty preset-time conditions represent disabled callbacks.
+        condition isa AbstractVector && isempty(condition) && continue
+        pending |= Num(condition)
+    end
     loop = ModelingToolkitBase.ImperativeAffect(EventIteration(length(callbacks)))
     push!(
         callbacks, ModelingToolkitBase.SymbolicDiscreteCallback(
-            Symbolics.unwrap(t > -Inf), loop; initialize = loop,
+            Symbolics.unwrap(pending), loop; initialize = loop,
             reinitializealg = EVENT_REINITIALIZATION
         )
     )

@@ -386,6 +386,47 @@ end
     end
 end
 
+@testset "Event iteration honours solution saving ($parser)" for parser in (:antlr, :julia)
+    path = regression_model(
+        """
+            Real 'x'(start = 0.0, fixed = true);
+            discrete Real 'n'(start = 0.0);
+          equation
+            der('x') = 1.0;
+            when 'x' > 0.5 then 'n' = pre('n') + 1.0; end when;
+        """
+    )
+    sys = parse_basemodelica(path; parser)
+    for alg in (Tsit5(), Rodas5P())
+        # Even when no event fires, an unconditional iteration callback used to
+        # save every accepted step twice, regardless of either saving option.
+        prob = ODEProblem(sys, [], (0.0, 0.4))
+        grid = solve(prob, alg; saveat = 0.1, save_everystep = false)
+        @test grid.retcode == ReturnCode.Success
+        # Initialization may save both sides at t = 0, just like an event.
+        saved_grid = unique(grid.t)
+        @test length(saved_grid) == 5 && saved_grid ≈ collect(0.0:0.1:0.4)
+        @test allunique(filter(t -> t > 0.0, grid.t))
+        endpoints = solve(prob, alg; save_everystep = false)
+        @test endpoints.retcode == ReturnCode.Success
+        @test unique(endpoints.t) == [0.0, 0.4]
+
+        # A real event may save both sides of its discontinuity, but must not
+        # introduce off-grid saves or duplicates at ordinary integration steps.
+        prob = ODEProblem(sys, [], (0.0, 1.0))
+        grid = solve(prob, alg; saveat = 0.25, save_everystep = false)
+        @test grid.retcode == ReturnCode.Success
+        ordinary_times = filter(t -> t > 0.0 && !isapprox(t, 0.5; atol = 1.0e-9), grid.t)
+        @test length(ordinary_times) == 3 && ordinary_times ≈ [0.25, 0.75, 1.0]
+        @test allunique(ordinary_times)
+        @test last(grid.ps[sys.n]) == 1
+        endpoints = solve(prob, alg; save_everystep = false)
+        @test endpoints.retcode == ReturnCode.Success
+        @test filter(t -> t > 0.0 && !isapprox(t, 0.5; atol = 1.0e-9), endpoints.t) == [1.0]
+        @test last(endpoints.ps[sys.n]) == 1
+    end
+end
+
 @testset "Coincident priority restores a replaced reinit ($parser)" for parser in (:antlr, :julia)
     path = regression_model(
         """
