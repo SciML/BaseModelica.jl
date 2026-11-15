@@ -62,7 +62,38 @@ catch e
     sprint(showerror, e)
 end
 
+# Third-party backends must get a useful error for iteration clocks, rather than
+# failures converting vectors to Num or applying | to Bool and Float64.
+struct IterationClockBackend <: BM.AbstractDiscreteBackend
+    condition::Any
+end
+function BM.lower_discrete(backend::IterationClockBackend, model::BM.DiscreteModel)
+    return BM.LoweredDiscrete(;
+        equations = model.equations,
+        event_iteration = [ModelingToolkitBase.SymbolicDiscreteCallback(backend.condition)]
+    )
+end
+
 @testset "Discrete backend interface" begin
+    @testset "Iteration callbacks require Boolean conditions" begin
+        path = write_model("""
+            Real 'x'(start = 0.0, fixed = true);
+          equation
+            der('x') = 1.0;
+        """)
+        for condition in ([0.5], 0.1)
+            err = try
+                parse_basemodelica(path; discrete_backend = IterationClockBackend(condition))
+            catch e
+                e
+            end
+            @test err isa ArgumentError
+            @test occursin("event_iteration callbacks require symbolic Boolean conditions", sprint(showerror, err))
+            @test occursin("discrete_events", sprint(showerror, err))
+        end
+        @test parse_basemodelica(path; discrete_backend = IterationClockBackend(Float64[])) isa System
+    end
+
     @testset "Registered backend receives the DiscreteModel" begin
         backend = RecordingBackend()
         BM.register_discrete_backend!(:recording, backend)

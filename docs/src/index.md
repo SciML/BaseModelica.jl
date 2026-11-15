@@ -104,7 +104,9 @@ conditions change during event iteration. Use `block.condition` and
 [`BaseModelica.when_edge`](@ref) with stored condition history for those blocks. Seed
 that history at initialization without activating ordinary when-clauses. Backends can
 return callbacks in `LoweredDiscrete.event_iteration` to have BaseModelica iterate them
-after relation-Boolean updates until all conditions are inactive; clocks belong in
+after relation-Boolean updates until all conditions are inactive. Their conditions must
+be symbolic Boolean expressions (or empty preset-time vectors for disabled callbacks);
+other condition types raise `ArgumentError`. Preset-time and periodic clocks belong in
 `discrete_events` and run once. These callback passes solve one simultaneous equation
 system: all active bodies share the same `pre` values, including bodies activated by
 Boolean equations or other when assignments. Discrete `pre` values advance only between

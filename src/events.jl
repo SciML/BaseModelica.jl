@@ -377,7 +377,9 @@ What [`lower_discrete`](@ref) returns. BaseModelica builds the `System` from it:
 - `parameters`: auxiliary parameters used by the backend, including event bookkeeping.
 - `event_iteration`: callbacks checked after the relation-Boolean update in each event
   iteration. These callbacks must become inactive once their assignments are consistent;
-  clocks belong in `discrete_events` and are checked once.
+  conditions must be symbolic Boolean expressions (or an empty preset-time vector
+  to disable the callback). Preset-time and periodic clocks belong in `discrete_events`
+  and are checked once; other condition types raise `ArgumentError`.
 """
 Base.@kwdef struct LoweredDiscrete
     equations::Vector{Equation}
@@ -903,6 +905,13 @@ function event_iteration_callbacks(booleans, lowered)
         condition = cb.conditions
         # Empty preset-time conditions represent disabled callbacks.
         condition isa AbstractVector && isempty(condition) && continue
+        if !(condition isa Union{Bool, Num, SymbolicUtils.BasicSymbolic}) ||
+                SymbolicUtils.symtype(Symbolics.unwrap(condition)) !== Bool
+            throw(ArgumentError(
+                "event_iteration callbacks require symbolic Boolean conditions " *
+                    "(or an empty preset-time vector); put preset-time and periodic callbacks in discrete_events"
+            ))
+        end
         pending |= Num(condition)
     end
     loop = ModelingToolkitBase.ImperativeAffect(EventIteration(length(callbacks)))
