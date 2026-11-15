@@ -105,8 +105,12 @@ conditions change during event iteration. Use `block.condition` and
 that history at initialization without activating ordinary when-clauses. Backends can
 return callbacks in `LoweredDiscrete.event_iteration` to have BaseModelica iterate them
 after relation-Boolean updates until all conditions are inactive; clocks belong in
-`discrete_events` and run once. Backends that delegate event handling can use
-`lower_discrete(MTKEventsBackend(), model)`.
+`discrete_events` and run once. These callback passes solve one simultaneous equation
+system: all active bodies share the same `pre` values, including bodies activated by
+Boolean equations or other when assignments. Discrete `pre` values advance only between
+whole-system event iterations, after solving the equations and when-conditions together
+(Modelica 3.6 §8.5 and §3.7.5); continuous `pre` values remain at their pre-event values.
+Backends that delegate event handling can use `lower_discrete(MTKEventsBackend(), model)`.
 
 ```@docs
 BaseModelica.AbstractDiscreteBackend

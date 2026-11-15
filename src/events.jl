@@ -299,8 +299,11 @@ All expressions are symbolic, built from the symbols of [`DiscreteModel`](@ref):
   state appears twice in one block.
 
 In `rhs`, `pre(x)` is marked as `ModelingToolkit.Pre(x)`. Backends must interpret it
-as the preceding event iteration's value for discrete `x`, and the pre-event value
-for continuous `x` (Modelica 3.6 §3.7.5). Any other variable appears as its plain symbol: a plain
+as a value shared by all active bodies while solving the whole equation system,
+including Boolean equations and when-conditions (Modelica 3.6 §8.5 and §3.7.5).
+Propagating conditions through callback passes must not advance `pre(x)`; discrete
+pre-values advance only between whole-system event iterations. For continuous `x`,
+use its pre-event value. Any other variable appears as its plain symbol: a plain
 discrete `v` means its new value at this event, a plain continuous `x` means its value at
 the event instant (which equals its pre-event value).
 """
@@ -493,14 +496,10 @@ struct WhenSelection
     direction::Int
     root_directions::Vector{Int}
     nsnapshots::Int
-    iteration_snapshots::Vector{Tuple{Int, Int}}
     initialize::Bool
 end
 
-function WhenSelection(
-        blocks, root, direction, nsnapshots;
-        initialize = false, iteration_snapshots = Tuple{Int, Int}[]
-    )
+function WhenSelection(blocks, root, direction, nsnapshots; initialize = false)
     signs = zeros(Int, length(blocks))
     if root != 0
         for (i, block) in enumerate(blocks)
@@ -511,7 +510,7 @@ function WhenSelection(
         end
         signs[root] = 1
     end
-    return WhenSelection(blocks, root, direction, signs, nsnapshots, iteration_snapshots, initialize)
+    return WhenSelection(blocks, root, direction, signs, nsnapshots, initialize)
 end
 
 const WHEN_ROOT_TOLERANCE = 64eps(Float64)
@@ -586,19 +585,10 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
             push!(chosen, block.chain)
         end
     end
-    # A body activated by an earlier iteration sees that iteration's discrete
-    # values in pre(v), rather than the values before the whole event (§3.7.5).
-    # Keep each already selected body's inputs stable if coincident callbacks
-    # require the simultaneous solve to run again.
-    for (k, (branch, source)) in enumerate(select.iteration_snapshots)
-        chain = findall(j -> same_when_chain(select.blocks, branch, j), 1:n)
-        any(active[chain]) && !any(selected_before[chain]) || continue
-        old[2n + 4 + select.nsnapshots + k] = observed[Symbol(:snapshot, source)]
-    end
     for i in 1:n
-        slot = 2n + 4 + select.nsnapshots + length(select.iteration_snapshots) + i
+        slot = 2n + 4 + select.nsnapshots + i
         if active[i]
-            old[slot] = old[slot] > 0.5 || !selected_before[i] ? 1.0 : 0.0
+            old[slot] = 1.0
         elseif selected_before[i] || old[slot] < -0.5
             # A late coincident trigger replaced this branch. Restore its targets
             # before applying the higher-priority body, including distinct reinits.
@@ -633,16 +623,6 @@ function (clock::SampleSelection)(modified, observed, ctx, integ)
     return merge(selected, (; next_sample = next_time))
 end
 
-same_when_chain(blocks, i, j) = i == j ||
-    (blocks[i].chain != 0 && blocks[i].chain == blocks[j].chain)
-
-function contains_expression(expr, target)
-    isequal(expr, target) && return true
-    expr = Symbolics.unwrap(expr)
-    SymbolicUtils.iscall(expr) || return false
-    return any(arg -> contains_expression(arg, target), SymbolicUtils.arguments(expr))
-end
-
 function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     lowered = LoweredDiscrete(;
         equations = model.equations,
@@ -660,35 +640,12 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     next_sample = only(@discretes($(gensym(:when_next_sample))(t)))
     snapshot_sources = unique(vcat(model.variables, first.(model.discretes)))
     snapshots = [only(@discretes($(gensym(:when_pre))(t))) for _ in snapshot_sources]
-    iteration_snapshots = Tuple{Int, Int}[]
-    branch_pre = [Dict{Any, Any}() for _ in blocks]
-    branch_snapshots = Num[]
-    for (i, block) in enumerate(blocks), (var, _) in model.discretes
-        marker = ModelingToolkit.Pre(var)
-        body = vcat(block.assignments, block.reinits)
-        any(p -> isequal(first(p), var) || contains_expression(last(p), marker), body) ||
-            continue
-        prior = findfirst(
-            j -> same_when_chain(blocks, i, j) && haskey(branch_pre[j], marker), 1:(i - 1)
-        )
-        if !isnothing(prior)
-            branch_pre[i][marker] = branch_pre[prior][marker]
-            continue
-        end
-        snapshot = only(@discretes($(gensym(:when_iteration_pre))(t)))
-        push!(branch_snapshots, snapshot)
-        push!(iteration_snapshots, (i, findfirst(isequal(var), snapshot_sources)))
-        branch_pre[i][marker] = ModelingToolkit.Pre(snapshot)
-    end
     execute = [only(@discretes($(gensym(:when_execute))(t))) for _ in blocks]
-    bookkeeping = vcat(
-        previous, active, [root_time, sample_time, event_time, ready], snapshots,
-        branch_snapshots, execute
-    )
+    bookkeeping = vcat(previous, active, [root_time, sample_time, event_time, ready], snapshots, execute)
     append!(lowered.parameters, vcat(bookkeeping, [next_sample]))
     append!(
         lowered.initial_conditions,
-        [p => 0.0 for p in vcat(previous, active, snapshots, branch_snapshots, execute, [ready])]
+        [p => 0.0 for p in vcat(previous, active, snapshots, execute, [ready])]
     )
     append!(lowered.initial_conditions, [root_time => -Inf, sample_time => -Inf, event_time => -Inf, next_sample => Inf])
     modified = NamedTuple{(Tuple(Symbol(:m, i) for i in eachindex(bookkeeping))..., :next_sample)}(
@@ -709,9 +666,7 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     end
     observed = NamedTuple{Tuple(obs_names)}(Tuple(obs_values))
     selection(root = 0, direction = 0; initialize = false) = ModelingToolkitBase.ImperativeAffect(
-        WhenSelection(
-            blocks, root, direction, length(snapshots); initialize, iteration_snapshots
-        ); modified, observed
+        WhenSelection(blocks, root, direction, length(snapshots); initialize); modified, observed
     )
     roots = Any[]
     for (i, block) in enumerate(blocks)
@@ -755,16 +710,10 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     end
     if !isempty(samples)
         clock = ModelingToolkitBase.ImperativeAffect(
-            SampleSelection(
-                WhenSelection(blocks, 0, 0, length(snapshots); iteration_snapshots)
-            ); modified, observed
+            SampleSelection(WhenSelection(blocks, 0, 0, length(snapshots))); modified, observed
         )
         initial_clock = ModelingToolkitBase.ImperativeAffect(
-            SampleSelection(
-                WhenSelection(
-                    blocks, 0, 0, length(snapshots); initialize = true, iteration_snapshots
-                )
-            ); modified, observed
+            SampleSelection(WhenSelection(blocks, 0, 0, length(snapshots); initialize = true)); modified, observed
         )
         push!(
             lowered.discrete_events, ModelingToolkitBase.SymbolicDiscreteCallback(
@@ -773,9 +722,9 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
             )
         )
     end
-    # Solve newly activated bodies together. An already executed body holds its
-    # result in later iterations; evaluating it again could change an assignment
-    # that reads another discrete variable updated by a later body.
+    # Re-solve all selected bodies together as conditions propagate. They share
+    # the event's pre-values, while plain discrete variables take their new values
+    # in the simultaneous solution, including bodies selected in a later pass.
     continuous_pre = Dict{Any, Any}()
     for var in model.variables
         continuous_pre[var] = ModelingToolkit.Pre(var)
@@ -785,8 +734,7 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
         ModelingToolkit.Pre(var) => ModelingToolkit.Pre(snapshot)
             for (var, snapshot) in zip(snapshot_sources, snapshots)
     )
-    function body_value(rhs, i)
-        rhs = Symbolics.substitute(rhs, branch_pre[i])
+    function body_value(rhs)
         rhs = Symbolics.substitute(rhs, continuous_pre; fold = Val(false))
         return Symbolics.substitute(rhs, pre_values)
     end
@@ -795,18 +743,18 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     for (i, block) in reverse(collect(enumerate(blocks)))
         for (target, rhs) in block.assignments
             assignments[target] = ifelse(
-                ModelingToolkit.Pre(execute[i]) > 0.5, body_value(rhs, i),
+                ModelingToolkit.Pre(execute[i]) > 0.5, body_value(rhs),
                 ifelse(
-                    ModelingToolkit.Pre(execute[i]) < -0.5, body_value(ModelingToolkit.Pre(target), i),
+                    ModelingToolkit.Pre(execute[i]) < -0.5, body_value(ModelingToolkit.Pre(target)),
                     get(assignments, target, ModelingToolkit.Pre(target))
                 )
             )
         end
         for (target, rhs) in block.reinits
             reinits[target] = ifelse(
-                ModelingToolkit.Pre(execute[i]) > 0.5, body_value(rhs, i),
+                ModelingToolkit.Pre(execute[i]) > 0.5, body_value(rhs),
                 ifelse(
-                    ModelingToolkit.Pre(execute[i]) < -0.5, body_value(ModelingToolkit.Pre(target), i),
+                    ModelingToolkit.Pre(execute[i]) < -0.5, body_value(ModelingToolkit.Pre(target)),
                     get(reinits, target, ModelingToolkit.Pre(target))
                 )
             )

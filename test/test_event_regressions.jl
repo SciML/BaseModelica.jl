@@ -318,30 +318,72 @@ end
     end
 end
 
-@testset "pre advances across event iterations ($parser)" for parser in (:antlr, :julia)
-    path = regression_model(
-        """
-            Real 'x'(start = 0.0, fixed = true);
-            discrete Real 'd'(start = 0.0);
-            discrete Real 'e'(start = 0.0);
-            discrete Real 'f'(start = 0.0);
-            Boolean 'b';
-            Boolean 'c';
-          equation
-            der('x') = 1.0;
-            'b' = 'd' > 0.5;
-            'c' = 'e' > 10.5;
-            when 'x' > 0.5 then 'd' = 'e' + 1.0; end when;
-            when 'b' then 'e' = pre('d') + 10.0; end when;
-            when 'c' then 'f' = pre('e') + 10.0; end when;
-        """
-    )
-    sys = parse_basemodelica(path; parser)
-    sol = solve(ODEProblem(sys, [], (0.0, 0.9)), Tsit5())
-    @test sol.retcode == ReturnCode.Success
-    @test sol(0.5 + 1.0e-6; idxs = sys.d) == 1
-    @test sol(0.5 + 1.0e-6; idxs = sys.e) == 11
-    @test sol(0.5 + 1.0e-6; idxs = sys.f) == 21
+@testset "Active bodies share pre values ($parser)" for parser in (:antlr, :julia)
+    @testset "State entry remembers the previous state ($via_boolean)" for via_boolean in (true, false)
+        path = regression_model(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'state'(start = 1.0);
+                discrete Real 'prev'(start = 0.0);
+                $(via_boolean ? "Boolean 'entered';" : "")
+              equation
+                der('x') = 1.0;
+                $(via_boolean ? "'entered' = 'state' > 1.5;" : "")
+                when 'x' > 0.5 then 'state' = 2.0; end when;
+                when $(via_boolean ? "'entered'" : "'state' > 1.5") then
+                  'prev' = pre('state');
+                end when;
+            """
+        )
+        sys = parse_basemodelica(path; parser)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.4; idxs = sys.prev) == 0
+        @test sol(0.6; idxs = sys.state) == 2
+        @test sol(0.6; idxs = sys.prev) == 1
+    end
+
+    @testset "Acyclic counter reads the shared pre value" begin
+        path = regression_model(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'n'(start = 0.0);
+                discrete Real 'm'(start = 0.0);
+              equation
+                der('x') = 1.0;
+                when 'x' > 0.5 then 'n' = pre('n') + 1.0; end when;
+                when 'n' > 0.5 then 'm' = pre('n') + 10.0; end when;
+            """
+        )
+        sys = parse_basemodelica(path; parser)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.6; idxs = sys.n) == 1
+        @test sol(0.6; idxs = sys.m) == 10
+    end
+
+    @testset "Selected bodies re-solve current discrete dependencies" begin
+        path = regression_model(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'gate'(start = 0.0);
+                discrete Real 'd'(start = 0.0);
+                discrete Real 'e'(start = 0.0);
+              equation
+                der('x') = 1.0;
+                when 'x' > 0.5 then
+                  'gate' = 1.0;
+                  'd' = 'e' + 1.0;
+                end when;
+                when 'gate' > 0.5 then 'e' = 10.0; end when;
+            """
+        )
+        sys = parse_basemodelica(path; parser)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.6; idxs = sys.e) == 10
+        @test sol(0.6; idxs = sys.d) == 11
+    end
 end
 
 @testset "Coincident priority restores a replaced reinit ($parser)" for parser in (:antlr, :julia)
