@@ -29,7 +29,7 @@ unsupported(msg) = throw(UnsupportedFeatureError(msg))
 # The meaning of `pre(x)` depends on where it appears:
 #   :normal    continuous equations; `pre(v)` of a discrete variable is `v` (they differ
 #              only at event instants), otherwise `Pre(x)`
-#   :condition when-conditions; `pre(x)` is the current value of `x`
+#   :condition when-conditions; `pre(x)` is a per-iteration value, resolved by the backend
 #   :event     when-bodies; `pre(x)` is `Pre(x)`, resolved by the event backend
 const EVAL_MODE = Ref(:normal)
 
@@ -68,7 +68,6 @@ end
 # `pre(x)` evaluated in the current mode; `arg` is the plain symbol for `x`.
 function apply_pre(arg)
     mode = EVAL_MODE[]
-    mode === :condition && return arg
     name = relation_boolean_name(arg)
     isnothing(name) || return relation_boolean_pre(name)
     mode === :normal && is_discrete_variable(arg) && return arg
@@ -288,7 +287,8 @@ All expressions are symbolic, built from the symbols of [`DiscreteModel`](@ref):
 
 - `chain::Int`: identity of the when-equation, in model order.
 - `priority::Int`: branch order within that chain (1 for `when`, 2 for its first `elsewhen`).
-- `condition`: the Boolean condition, e.g. `h(t) < 0`, with `pre(x)` evaluated as `x`.
+- `condition`: the Boolean condition, e.g. `h(t) < 0`, with `pre(x)` marked as
+  `ModelingToolkit.Pre(x)`, just as in the body.
   `nothing` for a `sample` trigger.
 - `crossing`: an expression that crosses zero upwards when `condition` becomes true, e.g.
   `-h(t)` for `h < 0`. The block fires on that rising edge only. `nothing` for a `sample`
@@ -625,6 +625,34 @@ function (clock::SampleSelection)(modified, observed, ctx, integ)
     return merge(selected, (; next_sample = next_time))
 end
 
+# Explicit pre reads in conditions require whole-system iterations, rather than
+# just callback passes propagating one simultaneous solution.
+function condition_pre_arguments!(found, expr)
+    expr = Symbolics.unwrap(expr)
+    SymbolicUtils.iscall(expr) || return found
+    if SymbolicUtils.operation(expr) isa ModelingToolkit.Pre
+        push!(found, Num(only(SymbolicUtils.arguments(expr))))
+    else
+        foreach(arg -> condition_pre_arguments!(found, arg), SymbolicUtils.arguments(expr))
+    end
+    return found
+end
+
+struct AdvanceWhenPre
+    nblocks::Int
+    indices::Vector{Int}
+end
+
+function (advance::AdvanceWhenPre)(modified, observed, ctx, integ)
+    old = collect(values(modified))
+    n = advance.nblocks
+    old[(n + 1):(2n)] .= 0.0
+    for i in advance.indices
+        old[2n + 4 + i] = observed[Symbol(:snapshot, i)]
+    end
+    return NamedTuple{keys(modified)}(Tuple(old))
+end
+
 function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     lowered = LoweredDiscrete(;
         equations = model.equations,
@@ -640,7 +668,7 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     event_time = only(@discretes($(gensym(:when_event_time))(t)))
     ready = only(@discretes($(gensym(:when_ready))(t)))
     next_sample = only(@discretes($(gensym(:when_next_sample))(t)))
-    snapshot_sources = unique(vcat(model.variables, first.(model.discretes)))
+    snapshot_sources = unique(vcat(model.variables, first.(model.discretes), collect(values(relation_boolean_syms))))
     snapshots = [only(@discretes($(gensym(:when_pre))(t))) for _ in snapshot_sources]
     execute = [only(@discretes($(gensym(:when_execute))(t))) for _ in blocks]
     bookkeeping = vcat(previous, active, [root_time, sample_time, event_time, ready], snapshots, execute)
@@ -653,18 +681,29 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     modified = NamedTuple{(Tuple(Symbol(:m, i) for i in eachindex(bookkeeping))..., :next_sample)}(
         Tuple(vcat(bookkeeping, [next_sample]))
     )
+    condition_reads = Any[]
+    for block in blocks
+        isnothing(block.condition) || condition_pre_arguments!(condition_reads, block.condition)
+    end
+    at_event = abs(t - event_time) <= 32eps(Float64) * max(1, abs(t))
+    condition_pre = Dict(
+        ModelingToolkit.Pre(var) => ifelse(at_event, snapshot, relation_boolean_left_limit(var))
+            for (var, snapshot) in zip(snapshot_sources, snapshots)
+    )
+    condition_value(block) = isnothing(block.condition) ? Num(false) :
+        Symbolics.substitute(block.condition, condition_pre)
     obs_names = [:time]
     obs_values = Any[t]
     for (i, block) in enumerate(blocks)
         push!(obs_names, Symbol(:condition, i))
-        push!(obs_values, isnothing(block.condition) ? Num(false) : block.condition)
+        push!(obs_values, condition_value(block))
         isnothing(block.crossing) && continue
         push!(obs_names, Symbol(:crossing, i))
         push!(obs_values, block.crossing)
     end
     for (i, var) in enumerate(snapshot_sources)
         push!(obs_names, Symbol(:snapshot, i))
-        push!(obs_values, var)
+        push!(obs_values, relation_boolean_left_limit(var))
     end
     observed = NamedTuple{Tuple(obs_names)}(Tuple(obs_values))
     selection(root = 0, direction = 0; initialize = false) = ModelingToolkitBase.ImperativeAffect(
@@ -690,11 +729,17 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     mismatch = Num(false)
     for (i, block) in enumerate(blocks)
         isnothing(block.condition) && continue
-        changed = Num(block.condition) != (previous[i] > 0.5)
+        changed = Num(condition_value(block)) != (previous[i] > 0.5)
         if !isnothing(block.crossing)
             changed &= Num(abs(block.crossing) > ROOT_TOLERANCE)
         end
         mismatch |= changed
+    end
+    # A condition such as `when pre(b)` may stay false throughout the first
+    # iteration. Still enter selection at the Boolean event so its pre can advance
+    # at this instant, rather than on the next accepted integration step.
+    for var in condition_reads
+        mismatch |= !at_event & (var != relation_boolean_left_limit(var))
     end
     push!(
         lowered.event_iteration, ModelingToolkitBase.SymbolicDiscreteCallback(
@@ -725,7 +770,7 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
         )
     end
     # Re-solve all selected bodies together as conditions propagate. They share
-    # the event's pre-values, while plain discrete variables take their new values
+    # the iteration's pre-values, while plain discrete variables take their new values
     # in the simultaneous solution, including bodies selected in a later pass.
     continuous_pre = Dict{Any, Any}()
     for var in model.variables
@@ -778,6 +823,29 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
             initialize = affects, reinitializealg = EVENT_REINITIALIZATION
         )
     )
+    if !isempty(condition_reads)
+        # Only discrete pre values advance; continuous reads retain the event left limit.
+        indices = findall(v -> !any(isequal(v), model.variables), snapshot_sources)
+        changed_pre = Num(false)
+        for (var, snapshot) in zip(snapshot_sources, snapshots)
+            any(isequal(var), condition_reads) || continue
+            changed_pre |= var != snapshot
+        end
+        advance_observed = NamedTuple{Tuple(Symbol(:snapshot, i) for i in indices)}(
+            Tuple(snapshot_sources[indices])
+        )
+        advance = ModelingToolkitBase.ImperativeAffect(
+            AdvanceWhenPre(n, indices); modified, observed = advance_observed
+        )
+        # event_iteration_callbacks additionally gates this on all other callbacks
+        # being inactive, including the equation-defined Boolean updates.
+        push!(
+            lowered.event_iteration, ModelingToolkitBase.SymbolicDiscreteCallback(
+                Symbolics.unwrap(at_event & changed_pre), advance;
+                reinitializealg = EVENT_REINITIALIZATION
+            )
+        )
+    end
     return lowered
 end
 
@@ -901,7 +969,12 @@ function event_iteration_callbacks(booleans, lowered)
     # pending. An always-true condition forces SciML to save at every step,
     # even when the affect reports that nothing changed.
     pending = Num(false)
-    for cb in callbacks
+    advances = Int[]
+    for (i, cb) in enumerate(callbacks)
+        if cb.affect isa ModelingToolkitBase.ImperativeAffect && cb.affect.f isa AdvanceWhenPre
+            push!(advances, i)
+            continue
+        end
         condition = cb.conditions
         # Empty preset-time conditions represent disabled callbacks.
         condition isa AbstractVector && isempty(condition) && continue
@@ -913,6 +986,14 @@ function event_iteration_callbacks(booleans, lowered)
             ))
         end
         pending |= Num(condition)
+    end
+    for i in advances
+        cb = callbacks[i]
+        condition = Num(cb.conditions) & !pending
+        callbacks[i] = ModelingToolkitBase.SymbolicDiscreteCallback(
+            Symbolics.unwrap(condition), cb.affect; reinitializealg = cb.reinitializealg
+        )
+        pending |= condition
     end
     loop = ModelingToolkitBase.ImperativeAffect(EventIteration(length(callbacks)))
     push!(

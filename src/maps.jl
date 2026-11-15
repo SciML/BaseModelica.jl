@@ -135,6 +135,9 @@ bool_comparison_names = Set{Symbol}()
 # `bool_comparison_names`
 relation_boolean_syms = Dict{Symbol, Any}()
 
+# Boolean symbol => (event time, value before its first update at that time).
+relation_boolean_history = Dict{Any, Tuple{Any, Any}}()
+
 # name => start value (0.0 or 1.0, possibly a parameter expression) of a Boolean in
 # `bool_comparison_names`, the value of `pre(b)` at initialization
 relation_boolean_starts = Dict{Symbol, Any}()

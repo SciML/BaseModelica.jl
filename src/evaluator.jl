@@ -333,6 +333,7 @@ function eval_AST(
     empty!(tstops_collection)
     empty!(bool_comparison_names)
     empty!(relation_boolean_syms)
+    empty!(relation_boolean_history)
     empty!(relation_boolean_starts)
 
     class_specifier = model.long_class_specifier

@@ -39,12 +39,19 @@ function relation_boolean_name(x)
     return nothing
 end
 
-# `pre(b)` of a Boolean `b`, except in when-conditions where it is `b`. In continuous
+# `pre(b)` of a Boolean `b`. In continuous
 # equations `pre(b)` equals `b` (they differ only at event instants), but in the definition
 # of `b` it is the start value during initialization, so `pre` is kept as a marker here and
 # resolved by `lower_relation_booleans`.
 function relation_boolean_pre(name)
     return relation_boolean_value(ModelingToolkit.Pre(relation_boolean_syms[name]))
+end
+
+# Read a Boolean's left limit before selection has recorded the event snapshots.
+function relation_boolean_left_limit(sym)
+    haskey(relation_boolean_history, sym) || return sym
+    time, snapshot = relation_boolean_history[sym]
+    return ifelse(abs(t - time) <= 32eps(Float64) * max(1, abs(t)), snapshot, sym)
 end
 
 const BOOLEAN_CONNECTIVES = (&, |, !, ~, xor, ifelse)
@@ -123,7 +130,14 @@ end
 
 function (update::RelationBooleanUpdate)(modified, observed, ctx, integ)
     natoms = length(update.atoms)
-    observed = values(observed)
+    n = length(update.values)
+    old = collect(values(modified))
+    # Keep the left limit even when the Boolean root callback precedes when selection.
+    if !same_event_time(observed.time, old[n + 1])
+        old[(n + 2):end] = old[1:n]
+        old[n + 1] = observed.time
+    end
+    observed = Base.front(values(observed))
     # observed: the atoms, then |crossing| and the scale of each crossing
     ncross = (length(observed) - natoms) ÷ 2
     undetermined = falses(natoms)
@@ -141,7 +155,7 @@ function (update::RelationBooleanUpdate)(modified, observed, ctx, integ)
         end
     end
     frozen = [any(i -> undetermined[i], deps) for deps in update.depends]
-    current = Bool[v > 0.5 for v in values(modified)]
+    current = Bool[v > 0.5 for v in old[1:n]]
     for _ in 0:length(current)
         for (value, b) in zip(update.values, current)
             substitutions[value] = b
@@ -153,7 +167,8 @@ function (update::RelationBooleanUpdate)(modified, observed, ctx, integ)
         next == current && break
         current = next
     end
-    return NamedTuple{keys(modified)}(Tuple(Float64.(current)))
+    old[1:n] = Float64.(current)
+    return NamedTuple{keys(modified)}(Tuple(old))
 end
 
 """
@@ -246,16 +261,25 @@ function lower_relation_booleans(eqs, model_name)
             crossing_of[i] = j
         end
         scales = Any[crossing_scale(atoms[findfirst(==(j), crossing_of)]) for j in eachindex(crossings)]
-        modified = NamedTuple{Tuple(Symbol(:b, k) for k in eachindex(defined))}(Tuple(syms[defined]))
+        event_time = only(@discretes($(gensym(:boolean_event_time))(t)))
+        snapshots = [only(@discretes($(gensym(:boolean_pre))(t))) for _ in defined]
+        append!(parameters, [event_time; snapshots])
+        append!(bindings, [event_time => -Inf; [p => 0.0 for p in snapshots]])
+        for (sym, snapshot) in zip(syms[defined], snapshots)
+            relation_boolean_history[sym] = (event_time, snapshot)
+        end
+        modified_syms = vcat(syms[defined], [event_time], snapshots)
+        modified = NamedTuple{Tuple(Symbol(:b, k) for k in eachindex(modified_syms))}(Tuple(modified_syms))
         observed = NamedTuple{
             Tuple(
                 vcat(
                     [Symbol(:a, i) for i in eachindex(atoms)],
                     [Symbol(:c, j) for j in eachindex(crossings)],
-                    [Symbol(:s, j) for j in eachindex(crossings)]
+                    [Symbol(:s, j) for j in eachindex(crossings)],
+                    [:time]
                 )
             ),
-        }(Tuple(Num.(vcat(atoms, abs.(crossings), scales))))
+        }(Tuple(Num.(vcat(atoms, abs.(crossings), scales, [t]))))
         function affect(forced)
             update = RelationBooleanUpdate(
                 definitions_, values[defined], atoms, crossing_of, forced, depends

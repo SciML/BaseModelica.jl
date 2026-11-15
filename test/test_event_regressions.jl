@@ -18,6 +18,79 @@ function regression_model(body)
 end
 
 @testset "Event regression tests ($parser)" for parser in (:julia, :antlr)
+    @testset "Equation Boolean pre keeps the event left limit ($cascade)" for cascade in (false, true)
+        path = regression_model(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 's'(start = 0.0);
+                discrete Real 'k'(start = 0.0);
+                Boolean 'b';
+              equation
+                der('x') = 1.0;
+                'b' = $(cascade ? "'s'" : "'x'") > 0.5;
+                when 'x' > 0.5 then 's' = 1.0; end when;
+                when $(cascade ? "'s'" : "'x'") > 0.5 then
+                  'k' = if pre('b') then 1.0 else 2.0;
+                end when;
+            """
+        )
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.4; idxs = sys.k) == 0
+        # Modelica 3.6 §3.7.5/§8.5: both bodies use the same left limit, b = false.
+        # Updating the equation-defined Boolean is part of solving this iteration.
+        @test sol(0.6; idxs = sys.b) == 1
+        @test sol(0.6; idxs = sys.k) == 2
+    end
+
+    @testset "Boolean condition retains pre(b): $condition" for condition in (
+            "'b' and not pre('b')", "pre('b')",
+        )
+        path = regression_model(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                Boolean 'b';
+                discrete Real 'k'(start = 0.0);
+              equation
+                der('x') = 1.0;
+                'b' = 'x' > 0.5 and 'x' < 0.75;
+                when $condition then 'k' = pre('k') + 1.0; end when;
+            """
+        )
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.4; idxs = sys.k) == 0
+        # Modelica 3.6 §3.7.5: edge(b) expands to b and not pre(b).
+        # `pre(b)` alone rises in the following iteration, at the same instant (§8.5).
+        @test sol(0.5 + 1.0e-8; idxs = sys.k) == 1
+        @test sol(0.6; idxs = sys.k) == 1
+        @test sol(0.9; idxs = sys.k) == 1
+    end
+
+    @testset "pre in a condition activates a later whole-system iteration" begin
+        path = regression_model(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'n'(start = 0.0);
+                discrete Real 'm'(start = 0.0);
+              equation
+                der('x') = 1.0;
+                when 'x' > 0.5 then 'n' = pre('n') + 1.0; end when;
+                when pre('n') > 0.5 then 'm' = pre('n') + 10.0; end when;
+            """
+        )
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.4; idxs = sys.m) == 0
+        # §3.7.5/§8.5: n = 1 in the first iteration; only after pre(n) := n
+        # can the second when activate, using that iteration's shared pre(n) = 1.
+        @test sol(0.6; idxs = sys.n) == 1
+        @test sol(0.6; idxs = sys.m) == 11
+    end
+
     @testset "Compound Boolean transitions trigger when bodies" begin
         path = regression_model(
             """
