@@ -30,7 +30,7 @@ unsupported(msg) = throw(UnsupportedFeatureError(msg))
 #   :normal    continuous equations; `pre(v)` of a discrete variable is `v` (they differ
 #              only at event instants), otherwise `Pre(x)`
 #   :condition when-conditions; `pre(x)` is the current value of `x`
-#   :event     when-bodies; `pre(x)` is `Pre(x)`, the value just before the event
+#   :event     when-bodies; `pre(x)` is `Pre(x)`, resolved by the event backend
 const EVAL_MODE = Ref(:normal)
 
 function with_eval_mode(f, mode::Symbol)
@@ -298,8 +298,9 @@ All expressions are symbolic, built from the symbols of [`DiscreteModel`](@ref):
 - `reinits`: `x => rhs` for each `reinit(x, rhs)`; `x` is a continuous state, and no
   state appears twice in one block.
 
-In `rhs`, `pre(x)` is `ModelingToolkit.Pre(x)` (the value just before the event), for
-discrete and continuous `x` alike. Any other variable appears as its plain symbol: a plain
+In `rhs`, `pre(x)` is marked as `ModelingToolkit.Pre(x)`. Backends must interpret it
+as the preceding event iteration's value for discrete `x`, and the pre-event value
+for continuous `x` (Modelica 3.6 §3.7.5). Any other variable appears as its plain symbol: a plain
 discrete `v` means its new value at this event, a plain continuous `x` means its value at
 the event instant (which equals its pre-event value).
 """
@@ -312,6 +313,23 @@ struct WhenBlock
     assignments::Vector{Pair{Any, Any}}
     reinits::Vector{Pair{Any, Any}}
 end
+
+# Older backends constructed blocks without chain metadata. Treat those as
+# independent branches; parsed blocks always have a positive chain identity.
+WhenBlock(condition, crossing, sample, assignments, reinits) =
+    WhenBlock(0, 1, condition, crossing, sample, assignments, reinits)
+
+"""
+    when_edge(current, previous; initialize = false)
+
+The rising-edge predicate for a Boolean when-condition. Accepts Boolean values or
+symbolic Boolean expressions. Backends must store the previous condition, seed it
+from the initialized condition, and update it after each event iteration. Ordinary
+when-clauses are inactive during initialization (Modelica 3.6 §8.6); sample ticks
+are scheduled separately. A block with both `crossing === nothing` and
+`sample === nothing` uses this predicate during event iteration, not root finding.
+"""
+when_edge(current, previous; initialize = false) = initialize ? false : current & !previous
 
 """
     DiscreteModel
@@ -475,9 +493,14 @@ struct WhenSelection
     direction::Int
     root_directions::Vector{Int}
     nsnapshots::Int
+    iteration_snapshots::Vector{Tuple{Int, Int}}
+    initialize::Bool
 end
 
-function WhenSelection(blocks, root, direction, nsnapshots)
+function WhenSelection(
+        blocks, root, direction, nsnapshots;
+        initialize = false, iteration_snapshots = Tuple{Int, Int}[]
+    )
     signs = zeros(Int, length(blocks))
     if root != 0
         for (i, block) in enumerate(blocks)
@@ -488,7 +511,7 @@ function WhenSelection(blocks, root, direction, nsnapshots)
         end
         signs[root] = 1
     end
-    return WhenSelection(blocks, root, direction, signs, nsnapshots)
+    return WhenSelection(blocks, root, direction, signs, nsnapshots, iteration_snapshots, initialize)
 end
 
 const WHEN_ROOT_TOLERANCE = 64eps(Float64)
@@ -502,7 +525,11 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
     n = length(select.blocks)
     old = collect(values(modified))
     time = observed.time
-    previous = old[1:n] .> 0.5
+    current = Bool[observed[Symbol(:condition, i)] for i in 1:n]
+    # Modelica 3.6 §8.6: ordinary when-clauses are inactive at initialization.
+    # Seed their edge history from the initialized solution, including relations
+    # exactly on a root. Sample clocks may still select their initial tick below.
+    previous = select.initialize ? copy(current) : old[1:n] .> 0.5
     # A root and a clock can report the same instant a few floating-point units
     # apart. Retain the selected branches and the event's pre-values across them.
     if !same_event_time(time, old[2n + 3])
@@ -515,7 +542,6 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
     end
     selected_before = old[(n + 1):(2n)] .> 0.5
     active = copy(selected_before)
-    current = Bool[observed[Symbol(:condition, i)] for i in 1:n]
     # Root callbacks at the same instant all see the same transition. The first one
     # handles every coincident crossing, including scaled conditions.
     if select.root != 0 && !same_event_time(time, old[2n + 1])
@@ -532,7 +558,7 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
             end
         end
         old[2n + 1] = time
-    else
+    elseif !select.initialize
         # At the root the strict relation itself can still have its old value.
         # Preserve the direction selected by the continuous callback.
         for (i, block) in enumerate(select.blocks)
@@ -543,7 +569,7 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
     end
     for (i, block) in enumerate(select.blocks)
         if isnothing(block.sample)
-            active[i] |= current[i] && !previous[i]
+            active[i] |= when_edge(current[i], previous[i]; initialize = select.initialize)
         else
             start, interval = block.sample
             active[i] |= !same_event_time(time, old[2n + 2]) && sample_tick(time, start, interval)
@@ -554,10 +580,29 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
     chosen = Set{Int}()
     for (i, block) in enumerate(select.blocks)
         active[i] || continue
-        if block.chain in chosen
+        if block.chain != 0 && block.chain in chosen
             active[i] = false
         else
             push!(chosen, block.chain)
+        end
+    end
+    # A body activated by an earlier iteration sees that iteration's discrete
+    # values in pre(v), rather than the values before the whole event (§3.7.5).
+    # Keep each already selected body's inputs stable if coincident callbacks
+    # require the simultaneous solve to run again.
+    for (k, (branch, source)) in enumerate(select.iteration_snapshots)
+        chain = findall(j -> same_when_chain(select.blocks, branch, j), 1:n)
+        any(active[chain]) && !any(selected_before[chain]) || continue
+        old[2n + 4 + select.nsnapshots + k] = observed[Symbol(:snapshot, source)]
+    end
+    for i in 1:n
+        slot = 2n + 4 + select.nsnapshots + length(select.iteration_snapshots) + i
+        if active[i]
+            old[slot] = old[slot] > 0.5 || !selected_before[i] ? 1.0 : 0.0
+        elseif selected_before[i] || old[slot] < -0.5
+            # A late coincident trigger replaced this branch. Restore its targets
+            # before applying the higher-priority body, including distinct reinits.
+            old[slot] = -1.0
         end
     end
     old[1:n] = Float64.(current)
@@ -588,6 +633,16 @@ function (clock::SampleSelection)(modified, observed, ctx, integ)
     return merge(selected, (; next_sample = next_time))
 end
 
+same_when_chain(blocks, i, j) = i == j ||
+    (blocks[i].chain != 0 && blocks[i].chain == blocks[j].chain)
+
+function contains_expression(expr, target)
+    isequal(expr, target) && return true
+    expr = Symbolics.unwrap(expr)
+    SymbolicUtils.iscall(expr) || return false
+    return any(arg -> contains_expression(arg, target), SymbolicUtils.arguments(expr))
+end
+
 function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     lowered = LoweredDiscrete(;
         equations = model.equations,
@@ -605,9 +660,36 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     next_sample = only(@discretes($(gensym(:when_next_sample))(t)))
     snapshot_sources = unique(vcat(model.variables, first.(model.discretes)))
     snapshots = [only(@discretes($(gensym(:when_pre))(t))) for _ in snapshot_sources]
-    bookkeeping = vcat(previous, active, [root_time, sample_time, event_time, ready], snapshots)
+    iteration_snapshots = Tuple{Int, Int}[]
+    branch_pre = [Dict{Any, Any}() for _ in blocks]
+    branch_snapshots = Num[]
+    for (i, block) in enumerate(blocks), (var, _) in model.discretes
+        marker = ModelingToolkit.Pre(var)
+        body = vcat(block.assignments, block.reinits)
+        any(p -> isequal(first(p), var) || contains_expression(last(p), marker), body) ||
+            continue
+        prior = findfirst(
+            j -> same_when_chain(blocks, i, j) && haskey(branch_pre[j], marker), 1:(i - 1)
+        )
+        if !isnothing(prior)
+            branch_pre[i][marker] = branch_pre[prior][marker]
+            continue
+        end
+        snapshot = only(@discretes($(gensym(:when_iteration_pre))(t)))
+        push!(branch_snapshots, snapshot)
+        push!(iteration_snapshots, (i, findfirst(isequal(var), snapshot_sources)))
+        branch_pre[i][marker] = ModelingToolkit.Pre(snapshot)
+    end
+    execute = [only(@discretes($(gensym(:when_execute))(t))) for _ in blocks]
+    bookkeeping = vcat(
+        previous, active, [root_time, sample_time, event_time, ready], snapshots,
+        branch_snapshots, execute
+    )
     append!(lowered.parameters, vcat(bookkeeping, [next_sample]))
-    append!(lowered.initial_conditions, [p => 0.0 for p in vcat(previous, active, snapshots, [ready])])
+    append!(
+        lowered.initial_conditions,
+        [p => 0.0 for p in vcat(previous, active, snapshots, branch_snapshots, execute, [ready])]
+    )
     append!(lowered.initial_conditions, [root_time => -Inf, sample_time => -Inf, event_time => -Inf, next_sample => Inf])
     modified = NamedTuple{(Tuple(Symbol(:m, i) for i in eachindex(bookkeeping))..., :next_sample)}(
         Tuple(vcat(bookkeeping, [next_sample]))
@@ -626,8 +708,10 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
         push!(obs_values, var)
     end
     observed = NamedTuple{Tuple(obs_names)}(Tuple(obs_values))
-    selection(root = 0, direction = 0) = ModelingToolkitBase.ImperativeAffect(
-        WhenSelection(blocks, root, direction, length(snapshots)); modified, observed
+    selection(root = 0, direction = 0; initialize = false) = ModelingToolkitBase.ImperativeAffect(
+        WhenSelection(
+            blocks, root, direction, length(snapshots); initialize, iteration_snapshots
+        ); modified, observed
     )
     roots = Any[]
     for (i, block) in enumerate(blocks)
@@ -658,7 +742,8 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     push!(
         lowered.event_iteration, ModelingToolkitBase.SymbolicDiscreteCallback(
             concrete_value(mismatch) === false ? Float64[] : Symbolics.unwrap(mismatch),
-            selection(); initialize = selection(),
+            selection();
+            initialize = any(b -> !isnothing(b.sample), blocks) ? nothing : selection(; initialize = true),
             reinitializealg = EVENT_REINITIALIZATION
         )
     )
@@ -670,30 +755,60 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     end
     if !isempty(samples)
         clock = ModelingToolkitBase.ImperativeAffect(
-            SampleSelection(WhenSelection(blocks, 0, 0, length(snapshots))); modified, observed
+            SampleSelection(
+                WhenSelection(blocks, 0, 0, length(snapshots); iteration_snapshots)
+            ); modified, observed
+        )
+        initial_clock = ModelingToolkitBase.ImperativeAffect(
+            SampleSelection(
+                WhenSelection(
+                    blocks, 0, 0, length(snapshots); initialize = true, iteration_snapshots
+                )
+            ); modified, observed
         )
         push!(
             lowered.discrete_events, ModelingToolkitBase.SymbolicDiscreteCallback(
-                Symbolics.unwrap(t >= next_sample), clock; initialize = clock,
+                Symbolics.unwrap(t >= next_sample), clock; initialize = initial_clock,
                 reinitializealg = EVENT_REINITIALIZATION
             )
         )
     end
-    # Form one piecewise equation per assigned variable, retaining the symbolic
-    # affect solver for dependencies between assignments and algebraic variables.
+    # Solve newly activated bodies together. An already executed body holds its
+    # result in later iterations; evaluating it again could change an assignment
+    # that reads another discrete variable updated by a later body.
+    continuous_pre = Dict{Any, Any}()
+    for var in model.variables
+        continuous_pre[var] = ModelingToolkit.Pre(var)
+        continuous_pre[ModelingToolkit.Pre(var)] = ModelingToolkit.Pre(var)
+    end
+    pre_values = Dict(
+        ModelingToolkit.Pre(var) => ModelingToolkit.Pre(snapshot)
+            for (var, snapshot) in zip(snapshot_sources, snapshots)
+    )
+    function body_value(rhs, i)
+        rhs = Symbolics.substitute(rhs, branch_pre[i])
+        rhs = Symbolics.substitute(rhs, continuous_pre; fold = Val(false))
+        return Symbolics.substitute(rhs, pre_values)
+    end
     assignments = Dict{Any, Any}()
     reinits = Dict{Any, Any}()
     for (i, block) in reverse(collect(enumerate(blocks)))
         for (target, rhs) in block.assignments
             assignments[target] = ifelse(
-                ModelingToolkit.Pre(active[i]) > 0.5, rhs,
-                get(assignments, target, ModelingToolkit.Pre(target))
+                ModelingToolkit.Pre(execute[i]) > 0.5, body_value(rhs, i),
+                ifelse(
+                    ModelingToolkit.Pre(execute[i]) < -0.5, body_value(ModelingToolkit.Pre(target), i),
+                    get(assignments, target, ModelingToolkit.Pre(target))
+                )
             )
         end
         for (target, rhs) in block.reinits
             reinits[target] = ifelse(
-                ModelingToolkit.Pre(active[i]) > 0.5, rhs,
-                get(reinits, target, ModelingToolkit.Pre(target))
+                ModelingToolkit.Pre(execute[i]) > 0.5, body_value(rhs, i),
+                ifelse(
+                    ModelingToolkit.Pre(execute[i]) < -0.5, body_value(ModelingToolkit.Pre(target), i),
+                    get(reinits, target, ModelingToolkit.Pre(target))
+                )
             )
         end
     end
@@ -703,13 +818,9 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
         Pair{Any, Any}[k => v for (k, v) in reinits]
     )
     affects, discretes = mtk_affect(combined, model)
-    # Re-solving a selected body after another simultaneous trigger uses the same
-    # pre-values. This lets a higher-priority branch replace an earlier selection
-    # without incrementing counters twice or applying a reinit twice.
-    pre_values = Dict(ModelingToolkit.Pre(var) => ModelingToolkit.Pre(snapshot) for (var, snapshot) in zip(snapshot_sources, snapshots))
-    affects = Equation[Symbolics.substitute(eq, pre_values) for eq in affects]
     push!(affects, ready ~ 0.0)
-    push!(discretes, ready)
+    append!(affects, [flag ~ 0.0 for flag in execute])
+    append!(discretes, [ready; execute])
     pending = ready > 0.5
     push!(
         lowered.event_iteration, ModelingToolkitBase.SymbolicDiscreteCallback(
@@ -786,6 +897,64 @@ function when_blocks(clauses)
         )
     end
     return blocks
+end
+
+# MTK compiles each symbolic callback once. Reuse the compiled SciML callbacks
+# during event iteration; duplicating symbolic callbacks recompiles the entire
+# simultaneous affect solve for every round. Only the adjacent iteration callbacks
+# belong to this loop (never user callbacks or sample clocks).
+struct EventIteration
+    count::Int
+    id::Symbol
+end
+
+EventIteration(count) = EventIteration(count, gensym(:event_iteration))
+
+function (iteration::EventIteration)(modified, observed, ctx, integ)
+    callbacks = integ.opts.callback.discrete_callbacks
+    index = findfirst(callbacks) do cb
+        # ImperativeAffect's compiled callable retains the supplied user_affect.
+        # Inspect only this marker, not MTK's generated getters/setters or indices.
+        return hasproperty(cb.affect!, :user_affect) && cb.affect!.user_affect === iteration
+    end
+    isnothing(index) && error("event iteration callback is missing from the CallbackSet")
+    first_index = index - iteration.count
+    changed_any = false
+    for _ in 1:1000
+        changed = false
+        for i in first_index:(index - 1)
+            cb = callbacks[i]
+            cb.condition(integ.u, integ.t, integ) || continue
+            cb.affect!(integ)
+            SciMLBase.reeval_internals_due_to_modification!(
+                integ, false; callback_initializealg = cb.initializealg
+            )
+            SciMLBase.save_discretes!(integ, cb)
+            changed = changed_any = true
+        end
+        if !changed
+            @static if isdefined(SciMLBase, :derivative_discontinuity!)
+                SciMLBase.derivative_discontinuity!(integ, changed_any)
+            else
+                SciMLBase.u_modified!(integ, changed_any)
+            end
+            return nothing
+        end
+    end
+    error("Modelica event iteration did not converge at t = $(integ.t)")
+end
+
+function event_iteration_callbacks(booleans, lowered)
+    callbacks = vcat(booleans.discrete_events, lowered.event_iteration)
+    isempty(lowered.event_iteration) && return callbacks
+    loop = ModelingToolkitBase.ImperativeAffect(EventIteration(length(callbacks)))
+    push!(
+        callbacks, ModelingToolkitBase.SymbolicDiscreteCallback(
+            Symbolics.unwrap(t > -Inf), loop; initialize = loop,
+            reinitializealg = EVENT_REINITIALIZATION
+        )
+    )
+    return callbacks
 end
 
 # ── Backend registry ──────────────────────────────────────────────────────────

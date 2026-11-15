@@ -230,7 +230,35 @@ function BM.lower_discrete(::HeldStateBackend, model::BM.DiscreteModel)
         push!(eqs, ModelingToolkit.D_nounits(var) ~ 0.0)
     end
     callbacks = Any[]
+    iteration = Any[]
+    parameters = Num[]
+    starts = Pair[model.discretes...]
     for block in model.when_blocks
+        if isnothing(block.sample)
+            # Relation-defined Booleans have no continuous crossing. This backend
+            # independently implements their edge history using the public helper.
+            @assert isnothing(block.crossing)
+            previous = only(@discretes($(gensym(:previous))(ModelingToolkit.t_nounits)))
+            push!(parameters, previous)
+            push!(starts, previous => 0.0)
+            condition = Pre(block.condition)
+            edge = BM.when_edge(condition, Pre(previous) > 0.5)
+            affects = Equation[
+                var ~ ifelse(edge, rhs, Pre(var)) for (var, rhs) in block.assignments
+            ]
+            push!(affects, previous ~ ifelse(condition, 1.0, 0.0))
+            append!(affects, [state ~ Pre(state) for state in model.states])
+            initialize = Equation[previous ~ ifelse(condition, 1.0, 0.0)]
+            append!(initialize, [state ~ Pre(state) for state in model.states])
+            append!(initialize, [var ~ Pre(var) for (var, _) in model.discretes])
+            push!(
+                iteration, ModelingToolkitBase.SymbolicDiscreteCallback(
+                    Symbolics.unwrap(Num(block.condition) != (previous > 0.5)), affects;
+                    initialize, discrete_parameters = [previous]
+                )
+            )
+            continue
+        end
         @assert block.sample == (0.0, 0.25)
         affects = Equation[var ~ rhs for (var, rhs) in block.assignments]
         append!(affects, [state ~ Pre(state) for state in model.states])
@@ -241,8 +269,8 @@ function BM.lower_discrete(::HeldStateBackend, model::BM.DiscreteModel)
         )
     end
     return BM.LoweredDiscrete(;
-        equations = eqs, discrete_events = callbacks,
-        initial_conditions = Pair[model.discretes...]
+        equations = eqs, discrete_events = callbacks, event_iteration = iteration,
+        parameters, initial_conditions = starts
     )
 end
 
@@ -262,4 +290,42 @@ end
     finally
         BM.unregister_discrete_backend!(:held_state_test)
     end
+end
+
+@testset "Backend Boolean edges and legacy block constructor ($parser)" for parser in (:antlr, :julia)
+    path = write_model(
+        """
+            Real 'x'(start = 0.0, fixed = true);
+            Boolean 'b';
+            Boolean 'already';
+            discrete Real 'n'(start = 0.0);
+            discrete Real 'm'(start = 0.0);
+          equation
+            der('x') = 1.0;
+            'b' = 'x' > 0.5;
+            'already' = 'x' > -1.0;
+            when 'b' then 'n' = pre('n') + 1.0; end when;
+            when 'already' then 'm' = pre('m') + 1.0; end when;
+        """
+    )
+    recording = RecordingBackend()
+    parse_basemodelica(path; parser, discrete_backend = recording)
+    blocks = only(recording.seen).when_blocks
+    @test length(blocks) == 2
+    @test all(b -> isnothing(b.crossing) && isnothing(b.sample), blocks)
+    for b in blocks
+        legacy = BM.WhenBlock(b.condition, b.crossing, b.sample, b.assignments, b.reinits)
+        @test legacy.chain == 0 && legacy.priority == 1
+        @test isequal(legacy.condition, b.condition)
+    end
+    @test !BM.when_edge(true, true)
+    @test BM.when_edge(true, false)
+    @test !BM.when_edge(false, true)
+    @test !BM.when_edge(true, false; initialize = true)
+    sys = parse_basemodelica(path; parser, discrete_backend = HeldStateBackend())
+    sol = solve(ODEProblem(sys, [], (0.0, 0.9)), Tsit5())
+    @test sol.retcode == ReturnCode.Success
+    @test sol(0.0; idxs = sys.n) == sol(0.4; idxs = sys.n) == 0
+    @test sol(0.5 + 1.0e-6; idxs = sys.n) == sol(0.9; idxs = sys.n) == 1
+    @test all(iszero, sol[sys.m])
 end

@@ -191,6 +191,10 @@ function lower_relation_booleans(eqs, model_name)
     pre_markers = [Symbolics.unwrap(ModelingToolkit.Pre(sym)) for sym in syms]
     pre_current = Dict{Any, Any}(zip(pre_markers, Symbolics.unwrap.(syms)))
     pre_start = Dict{Any, Any}(zip(pre_markers, [relation_boolean_starts[n] for n in names]))
+    initial_definitions = Dict(
+        name => SymbolicUtils.substitute(definition, pre_start; fold = Val(true))
+            for (name, definition) in definitions
+    )
     equations = Equation[Symbolics.substitute(eq, pre_current) for eq in equations]
     for (name, definition) in definitions
         definitions[name] = Symbolics.substitute(definition, pre_current)
@@ -207,7 +211,7 @@ function lower_relation_booleans(eqs, model_name)
             push!(defined, i)
             push!(parameters, ModelingToolkitBase.setguess(syms[i], start))
             push!(bindings, syms[i] => missing)
-            initial_value = SymbolicUtils.substitute(definitions[name], pre_start; fold = Val(true))
+            initial_value = initial_definitions[name]
             push!(initialization_eqs, syms[i] ~ ifelse(initial_value, 1.0, 0.0))
         else
             push!(undefined, name)

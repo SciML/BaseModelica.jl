@@ -312,3 +312,16 @@ PC = BM.ParserCombinator
         @test parse_basemodelica(pid_path, parser = :julia) isa System
     end
 end
+
+@testset "Whitespace before a signed relation operand" begin
+    for (expr, ast_type, value) in (
+            ("2 < -1.0", BM.BaseModelicaLessThan, false),
+            ("-1.0 <= -0.5", BM.BaseModelicaLEQ, true),
+            ("2 >= +1.0", BM.BaseModelicaGEQ, true),
+            ("if 1 > -1.0 then 2 else 3", BM.BaseModelicaIfExpression, 2),
+        )
+        ast = only(PC.parse_one(expr, BM.expression))
+        @test ast isa ast_type
+        @test BM.eval_AST(ast) == value
+    end
+end

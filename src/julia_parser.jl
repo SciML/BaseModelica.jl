@@ -610,7 +610,7 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
     #equations
 
     relation = arithmetic_expression + spc +
-        (relational_operator + arithmetic_expression)[0:1]
+        (relational_operator + spc + arithmetic_expression)[0:1]
     logical_factor = (e"not"[0:1] |> (x -> !isempty(x) ? BMNOT() : nothing)) + spc +
         relation |> create_relation
     logical_term = logical_factor + spc + Star((E"and" > BMAND) + spc + logical_factor) |>

@@ -156,3 +156,27 @@ end
         @test changed(1.0; idxs = sys.x) ≈ -1.0
     end
 end
+
+@testset "Defined Boolean pre-start survives remake ($parser)" for parser in (:antlr, :julia)
+    path = initialization_model(
+        """
+            parameter Boolean 'startOn' = true;
+            Boolean 'b'(start = 'startOn');
+            Real 'y';
+            Real 'x'(start = 0.0, fixed = true);
+          equation
+            der('x') = 1.0;
+            'b' = pre('b') and time < 1.0;
+            'y' = if 'b' then 1.0 else 0.0;
+        """
+    )
+    sys = parse_basemodelica(path; parser)
+    prob = ODEProblem(sys, [], (0.0, 1.5))
+    for (p, expected) in ((prob, 1.0), (remake(prob; p = [sys.startOn => false]), 0.0))
+        sol = solve(p, Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.0; idxs = sys.y) == expected
+        @test sol(0.5; idxs = sys.y) == expected
+        @test sol(1.25; idxs = sys.y) == 0.0
+    end
+end

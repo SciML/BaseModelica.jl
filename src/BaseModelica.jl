@@ -13,6 +13,7 @@ import ParserCombinator
 using PrecompileTools: @compile_workload, @setup_workload
 const set_name = ParserCombinator.set_name
 using PythonCall: Py, pyconvert, pydict, pyexec, pyhasattr, pyimport, pylen
+import SciMLBase
 using SciMLBase: ODEProblem, add_tstop!
 import SymbolicIndexingInterface
 using SymbolicUtils: substitute
@@ -309,7 +310,7 @@ export parse_basemodelica, create_odeproblem, parse_experiment_annotation,
     eval(
         Meta.parse(
             "public AbstractDiscreteBackend, MTKEventsBackend, DiscreteModel, WhenBlock, " *
-                "LoweredDiscrete, lower_discrete, declare_discrete, compile_system, " *
+                "LoweredDiscrete, lower_discrete, declare_discrete, compile_system, when_edge, " *
                 "register_discrete_backend!, unregister_discrete_backend!, UnsupportedFeatureError"
         )
     )

@@ -693,16 +693,7 @@ function eval_AST(
         ModelingToolkitBase.isparameter(sym) || push!(vars, sym)
     end
 
-    # SciML checks discrete callbacks in order once per accepted step. Resolve the
-    # finite when-dependency chain at this instant instead of deferring Boolean edges
-    # caused by an assignment/reinit to a later integration step. A branch can activate
-    # at most once along a convergent chain; the final round observes its consequences.
-    event_callbacks = copy(lowered.discrete_events)
-    rounds = isempty(lowered.event_iteration) ? 1 : length(discrete_model.when_blocks) + 1
-    for _ in 1:rounds
-        append!(event_callbacks, booleans.discrete_events)
-        append!(event_callbacks, lowered.event_iteration)
-    end
+    event_callbacks = vcat(lowered.discrete_events, event_iteration_callbacks(booleans, lowered))
     append!(event_callbacks, initial_assertion_events(initial_assertions, class_specifier.name))
 
     @named sys = System(

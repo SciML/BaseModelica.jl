@@ -96,6 +96,18 @@ provide backends by subtyping [`BaseModelica.AbstractDiscreteBackend`](@ref) and
 SynchToolkit.jl registers `:synchtoolkit` from its `SynchToolkitBaseModelicaExt` extension,
 so `discrete_backend = :synchtoolkit` works after `using SynchToolkit`.
 
+Backend compatibility: `WhenBlock` preserves each branch and records its `chain` and
+`priority`; independent equations with equal triggers are not merged. The original
+five-argument constructor remains available for independent branches. A non-sample
+block can have `crossing === nothing`: Boolean aliases and equation-defined Boolean
+conditions change during event iteration. Use `block.condition` and
+[`BaseModelica.when_edge`](@ref) with stored condition history for those blocks. Seed
+that history at initialization without activating ordinary when-clauses. Backends can
+return callbacks in `LoweredDiscrete.event_iteration` to have BaseModelica iterate them
+after relation-Boolean updates until all conditions are inactive; clocks belong in
+`discrete_events` and run once. Backends that delegate event handling can use
+`lower_discrete(MTKEventsBackend(), model)`.
+
 ```@docs
 BaseModelica.AbstractDiscreteBackend
 BaseModelica.register_discrete_backend!
@@ -105,6 +117,7 @@ BaseModelica.declare_discrete
 BaseModelica.compile_system
 BaseModelica.DiscreteModel
 BaseModelica.WhenBlock
+BaseModelica.when_edge
 BaseModelica.LoweredDiscrete
 BaseModelica.MTKEventsBackend
 ```
