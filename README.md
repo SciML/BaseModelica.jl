@@ -23,8 +23,12 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
 - `when`/`elsewhen` equations. A rising-edge condition (a relation or a Boolean variable)
   becomes a ModelingToolkit `SymbolicContinuousCallback`, and `sample(0, dt)` becomes a
   periodic `SymbolicDiscreteCallback`. In the body, `v = expr` updates a discrete variable
-  and `reinit(x, expr)` resets a continuous state. `pre(v)` and continuous variables read
-  their pre-event values.
+  and `reinit(x, expr)` resets a continuous state at the end of an event-iteration step.
+  States stay fixed within each step; `pre(v)` reads the previous iteration's value.
+  Plain body reads of non-state unknowns coupled by equations to discrete-time quantities
+  (including connection aliases) currently raise `UnsupportedFeatureError`: these require
+  recomputing algebraics before copying reinit values. Explicit `pre(v)` reads remain
+  supported.
   The lowering is pluggable: other packages register backends with
   `BaseModelica.register_discrete_backend!`. With `using SynchToolkit` (SynchToolkit.jl
   ships the extension), `discrete_backend = :synchtoolkit` (experimental) makes discrete

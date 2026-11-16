@@ -127,6 +127,10 @@ initial_value_map = Dict()
 # names of variables that only appear in when-equation bodies (declared as discrete parameters)
 discrete_variable_names = Set{Symbol}()
 
+# Equation-defined Integers are represented as Real unknowns in MTK. Preserve their
+# declared variability for the built-in when-body read guard.
+integer_variable_names = Set{Symbol}()
+
 # names of Boolean variables defined by an equation (e.g. `off = s < 0`), lowered to
 # 0/1 discrete parameters, see relation_booleans.jl
 bool_comparison_names = Set{Symbol}()

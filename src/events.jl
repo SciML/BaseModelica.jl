@@ -211,7 +211,7 @@ end
 Convert a symbolic Boolean condition into an expression that crosses zero upwards when the
 condition becomes true.
 """
-function to_zero_crossing(cond)
+function to_zero_crossing(cond; original = cond)
     inner = Symbolics.unwrap(cond)
     if !SymbolicUtils.iscall(inner)
         return cond - 0.5
@@ -225,7 +225,7 @@ function to_zero_crossing(cond)
     elseif op === (==)
         return args[1] - args[2]
     elseif op in (&, |, !, ~, ifelse)
-        unsupported("compound when-condition `$cond`; only a single relation or Boolean variable is supported")
+        unsupported("compound when-condition `$original`; only a single relation or Boolean variable is supported")
     else
         # Bare Boolean variable applied to time (e.g. u(t)): `when u` means rising edge
         return cond - 0.5
@@ -303,10 +303,11 @@ In `rhs`, `pre(x)` is marked as `ModelingToolkit.Pre(x)`. Backends must interpre
 as a value shared by all active bodies while solving the whole equation system,
 including Boolean equations and when-conditions (Modelica 3.6 §8.5 and §3.7.5).
 Propagating conditions through callback passes must not advance `pre(x)`; discrete
-pre-values advance only between whole-system event iterations. For continuous `x`,
-use its pre-event value. Any other variable appears as its plain symbol: a plain
-discrete `v` means its new value at this event, a plain continuous `x` means its value at
-the event instant (which equals its pre-event value).
+pre-values advance only between whole-system event iterations. States stay fixed within
+each event-iteration step, with reinit values copied at its end.
+Any other variable appears as its plain symbol and means its new value in the simultaneous
+solution, including algebraic and discrete-time unknowns. Backends must reject body
+reads they cannot solve with these semantics.
 """
 struct WhenBlock
     chain::Int
@@ -456,8 +457,11 @@ compile_system(::AbstractDiscreteBackend, sys) = mtkcompile(sys)
 The built-in discrete backend, registered as `:mtk` (the default). Discrete variables are
 `@discretes`. Continuous roots, Boolean transitions during event iteration, and periodic
 sample clocks select rising edges together, respecting `elsewhen` priority. Assignments
-and `reinit` become one symbolic affect solve in which continuous variables read their
-pre-event value (`Pre`). Sample clocks include their initial tick.
+and `reinit` become one symbolic affect solve. States read their event-iteration
+values (`Pre`), and explicit `pre(v)` reads the previous iteration's value. Plain reads
+of non-state unknowns coupled to discrete-time quantities are currently rejected, since
+they require recomputing algebraics before copying reinit values. Sample clocks include
+their initial tick.
 """
 struct MTKEventsBackend <: AbstractDiscreteBackend end
 
@@ -658,6 +662,79 @@ function (advance::AdvanceWhenPre)(modified, observed, ctx, integ)
     return NamedTuple{keys(modified)}(Tuple(old))
 end
 
+# The current affect freezes non-state unknowns along with states. Reject plain
+# reads that could change in the simultaneous event-step solution (§8.6), including
+# connection aliases and implicit/transitive algebraic dependencies. States are known
+# values in that solve and therefore stop dependency propagation.
+function when_body_unknowns!(found, expr, candidates; skip_pre = false)
+    expr = Symbolics.unwrap(expr)
+    for var in candidates
+        if isequal(expr, Symbolics.unwrap(var))
+            any(isequal(var), found) || push!(found, var)
+            return found
+        end
+    end
+    SymbolicUtils.iscall(expr) || return found
+    skip_pre && SymbolicUtils.operation(expr) isa ModelingToolkit.Pre && return found
+    for arg in SymbolicUtils.arguments(expr)
+        when_body_unknowns!(found, arg, candidates; skip_pre)
+    end
+    return found
+end
+
+function has_event_relation(expr)
+    expr = Symbolics.unwrap(expr)
+    SymbolicUtils.iscall(expr) || return false
+    SymbolicUtils.operation(expr) in (<, <=, >, >=, ==, !=) && return true
+    return any(has_event_relation, SymbolicUtils.arguments(expr))
+end
+
+function validate_when_body_reads(model::DiscreteModel)
+    algebraics = filter(v -> !any(isequal(v), model.states), model.variables)
+    isempty(algebraics) && return nothing
+    discrete_quantities = vcat(first.(model.discretes), collect(values(relation_boolean_syms)))
+    quantities = unique(vcat(algebraics, discrete_quantities))
+    # Derivatives are unknowns too: e.g. der(x) = c; y = der(x). Keep them as
+    # graph nodes without propagating through the known state x itself.
+    for eq in model.equations, side in (eq.lhs, eq.rhs), var in Symbolics.get_variables(side)
+        ModelingToolkitBase.isparameter(var) && continue
+        any(v -> isequal(var, Symbolics.unwrap(v)), model.states) && continue
+        union!(quantities, [Num(var)])
+    end
+    integer_unknowns = filter(algebraics) do v
+        symbol_name(v) in integer_variable_names ||
+            SymbolicUtils.symtype(Symbolics.unwrap(v)) <: Integer
+    end
+    affected = unique(vcat(discrete_quantities, integer_unknowns))
+    equation_reads = [
+        when_body_unknowns!(when_body_unknowns!(Any[], eq.lhs, quantities), eq.rhs, quantities)
+            for eq in model.equations
+    ]
+    # Relations can appear directly in an equation's if-expression rather than
+    # through an equation-defined Boolean parameter.
+    for (eq, reads) in zip(model.equations, equation_reads)
+        (has_event_relation(eq.lhs) || has_event_relation(eq.rhs)) && union!(affected, reads)
+    end
+    while true
+        before = length(affected)
+        for reads in equation_reads
+            any(v -> any(isequal(v), affected), reads) && union!(affected, reads)
+        end
+        length(affected) == before && break
+    end
+    for block in model.when_blocks, (_, rhs) in Iterators.flatten((block.assignments, block.reinits))
+        for var in when_body_unknowns!(Any[], rhs, algebraics; skip_pre = true)
+            any(isequal(var), affected) || continue
+            unsupported(
+                "plain read of non-state unknown `$(symbol_name(var))` in a when-body; " *
+                    "its equations involve discrete-time quantities and require a simultaneous " *
+                    "algebraic event-step solve before reinit values are copied (not yet supported by :mtk)"
+            )
+        end
+    end
+    return nothing
+end
+
 function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     lowered = LoweredDiscrete(;
         equations = model.equations,
@@ -665,6 +742,7 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     )
     blocks = model.when_blocks
     isempty(blocks) && return lowered
+    validate_when_body_reads(model)
     n = length(blocks)
     previous = [only(@discretes($(gensym(:when_previous))(t))) for _ in blocks]
     active = [only(@discretes($(gensym(:when_active))(t))) for _ in blocks]
@@ -829,12 +907,11 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
         )
     )
     if !isempty(condition_reads)
-        # Every condition pre read must advance for event iteration to converge.
-        # model.variables also contains equation-defined discrete-time unknowns.
-        # Continuous values read only in bodies retain the event left limit.
-        indices = findall(snapshot_sources) do v
-            !any(isequal(v), model.variables) || any(isequal(v), condition_reads)
-        end
+        # Advance the whole solution between event-iteration steps, including
+        # states/unknowns read only by bodies. In particular, a step-2 body must
+        # see the state copied by a step-1 reinit (§8.3.6), independently of
+        # whether an unrelated condition also reads pre(state).
+        indices = collect(eachindex(snapshot_sources))
         changed_pre = Num(false)
         for (var, snapshot) in zip(snapshot_sources, snapshots)
             any(isequal(var), condition_reads) || continue
@@ -863,11 +940,12 @@ end
 
 Affect equations for `block`. Returns `(affects, discrete_parameters)`.
 
-Continuous variables are read through `Pre`, matching Modelica: inside an event they keep
-their pre-event value, and `reinit` takes effect only after the event. Every state not
-reinitialized is held with `x ~ Pre(x)`; MTK solves the affect together with the observed
-equations of the model, and without these equations states that are not assigned are
-treated as free unknowns of that system.
+State values are fixed within an event-iteration step; `reinit` values are copied at
+its end. This affect freezes all non-discrete unknown reads as well, which is valid
+only when their equations cannot change with the step's discrete-time solution.
+`validate_when_body_reads` rejects the other cases until algebraic solves and reinit
+copies are separated. Every state not reinitialized is held with `x ~ Pre(x)` so MTK
+does not treat it as a free unknown of the affect system.
 """
 function mtk_affect(block::WhenBlock, model::DiscreteModel)
     pre_values = Dict{Any, Any}()
@@ -910,7 +988,7 @@ function when_blocks(clauses)
                 )
             )
             if varies_continuously(plain)
-                crossing = Num(to_zero_crossing(plain))
+                crossing = Num(to_zero_crossing(plain; original = condition))
                 crossing /= crossing_coefficient(crossing)
             end
         end
@@ -996,10 +1074,12 @@ function event_iteration_callbacks(booleans, lowered)
         condition isa AbstractVector && isempty(condition) && continue
         if !(condition isa Union{Bool, Num, SymbolicUtils.BasicSymbolic}) ||
                 SymbolicUtils.symtype(Symbolics.unwrap(condition)) !== Bool
-            throw(ArgumentError(
-                "event_iteration callbacks require symbolic Boolean conditions " *
-                    "(or an empty preset-time vector); put preset-time and periodic callbacks in discrete_events"
-            ))
+            throw(
+                ArgumentError(
+                    "event_iteration callbacks require symbolic Boolean conditions " *
+                        "(or an empty preset-time vector); put preset-time and periodic callbacks in discrete_events"
+                )
+            )
         end
         pending |= Num(condition)
     end

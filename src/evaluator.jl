@@ -334,6 +334,7 @@ function eval_AST(
     empty!(variable_map)
     empty!(parameter_val_map)
     empty!(discrete_variable_names)
+    empty!(integer_variable_names)
     empty!(free_parameter_names)
     empty!(evaluated_parameter_names)
     empty!(tstops_collection)
@@ -376,6 +377,7 @@ function eval_AST(
     for comp in components
         name = Symbol(comp.component_list[1].declaration.ident[1].name)
         type_prefix = comp.type_prefix.dpc
+        comp.type_specifier.type == "Integer" && push!(integer_variable_names, name)
         length(comp.component_list) == 1 ||
             unsupported("component clauses declaring several components are not supported")
 

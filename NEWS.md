@@ -1,5 +1,17 @@
 # Unreleased
 
+- The `:mtk` backend now rejects plain when-body reads of non-state unknowns coupled
+  through equations to discrete-time quantities, including connection aliases,
+  equation-defined Integers and relation Booleans. These previously could silently
+  return the event-start value instead of the current event-step solution. This is
+  a conservative stop-gap until algebraic affect solves and reinit copies are separated;
+  it also applies to reinit right-hand sides. Explicit `pre(v)` reads remain supported.
+- Snapshot advancement between event-iteration steps now includes body-only state and
+  algebraic reads. Bodies selected in a later step see a previous step's reinit copy,
+  independently of unrelated conditions that happen to read `pre` of those unknowns.
+- Unsupported compound when-condition diagnostics now show the original condition,
+  preserving `pre(v)` rather than displaying a stripped `v` in its place.
+
 - Self-resetting when-conditions no longer leave assignments armed for a later,
   unrelated event.
 - Event iteration now advances snapshots of unknowns read through `pre` in

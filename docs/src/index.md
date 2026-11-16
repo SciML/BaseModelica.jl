@@ -109,10 +109,17 @@ be symbolic Boolean expressions (or empty preset-time vectors for disabled callb
 other condition types raise `ArgumentError`. Preset-time and periodic clocks belong in
 `discrete_events` and run once. These callback passes solve one simultaneous equation
 system: all active bodies share the same `pre` values, including bodies activated by
-Boolean equations or other when assignments. Discrete `pre` values advance only between
+Boolean equations or other when assignments. Pre-values advance together only between
 whole-system event iterations, after solving the equations and when-conditions together
-(Modelica 3.6 §8.5 and §3.7.5); continuous `pre` values remain at their pre-event values.
-Backends that delegate event handling can use `lower_discrete(MTKEventsBackend(), model)`.
+(Modelica 3.6 §8.5 and §3.7.5). States stay fixed within a step; reinit values are copied
+at its end, before advancing their pre-values (§8.3.6).
+
+The built-in `:mtk` backend currently rejects plain when-body reads of non-state unknowns
+coupled through equations to discrete-time quantities, including connection aliases and
+reinit right-hand sides. Those reads require recomputing algebraics with the new discrete
+values while holding states fixed, then copying reinit values in a separate phase.
+Explicit `pre(v)` reads remain supported. Backends that delegate event handling can use
+`lower_discrete(MTKEventsBackend(), model)`.
 
 Backend compatibility change: `WhenBlock.condition` now preserves `pre(v)` as
 `ModelingToolkit.Pre(v)` instead of replacing it with `v`. Backends must resolve those
