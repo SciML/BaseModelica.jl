@@ -360,3 +360,22 @@ end
     @test sol(0.5 + 1.0e-6; idxs = sys.n) == sol(0.9; idxs = sys.n) == 1
     @test all(iszero, sol[sys.m])
 end
+
+@testset "Pre markers belong to conditions, not continuous roots ($parser)" for parser in (:julia, :antlr)
+    path = write_model(
+        """
+            Real 'x'(start = 0.0, fixed = true);
+            discrete Real 'T'(start = 0.25);
+          equation
+            der('x') = 1.0;
+            when time >= pre('T') then 'T' = pre('T') + 0.25; end when;
+        """
+    )
+    backend = RecordingBackend()
+    parse_basemodelica(path; parser, discrete_backend = backend)
+    model = only(backend.seen)
+    block = only(model.when_blocks)
+    T = first(only(model.discretes))
+    @test isequal(block.condition, ModelingToolkit.t_nounits >= Pre(T))
+    @test isequal(block.crossing, ModelingToolkit.t_nounits - T)
+end

@@ -291,7 +291,8 @@ All expressions are symbolic, built from the symbols of [`DiscreteModel`](@ref):
   `ModelingToolkit.Pre(x)`, just as in the body.
   `nothing` for a `sample` trigger.
 - `crossing`: an expression that crosses zero upwards when `condition` becomes true, e.g.
-  `-h(t)` for `h < 0`. The block fires on that rising edge only. `nothing` for a `sample`
+  `-h(t)` for `h < 0`. It contains plain `v` in place of `Pre(v)`, since they agree
+  between events. The block fires on that rising edge only. `nothing` for a `sample`
   trigger or a condition that varies only at events.
 - `sample`: `nothing`, or `(start, interval)` for `when sample(start, interval)`.
 - `assignments`: `v => rhs` for each `v = rhs` in the body; `v` is a discrete variable.
@@ -894,7 +895,11 @@ function when_blocks(clauses)
             # Relation-defined Booleans transition during event iteration. Their
             # conditions are discrete; only direct relations have continuous roots.
             if varies_continuously(condition)
-                crossing = Num(to_zero_crossing(condition))
+                # Between events pre(v) = v; only the event condition needs snapshots.
+                plain = Dict(
+                    ModelingToolkit.Pre(v) => v for v in condition_pre_arguments!(Any[], condition)
+                )
+                crossing = Num(to_zero_crossing(Symbolics.substitute(condition, plain)))
                 crossing /= crossing_coefficient(crossing)
             end
         end

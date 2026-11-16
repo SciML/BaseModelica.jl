@@ -18,6 +18,45 @@ function regression_model(body)
 end
 
 @testset "Event regression tests ($parser)" for parser in (:julia, :antlr)
+    @testset "Continuous sampling relation containing pre keeps its root" begin
+        path = regression_model(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'T'(start = 0.25);
+                discrete Real 'n'(start = 0.0);
+              equation
+                der('x') = 1.0;
+                when time >= pre('T') then
+                  'T' = pre('T') + 0.25;
+                  'n' = pre('n') + 1.0;
+                end when;
+            """
+        )
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        # Modelica §3.7.5/§8.5: pre is shared during an iteration, then
+        # advances to the new T, scheduling the next sampling threshold.
+        @test [sol(t; idxs = sys.T) for t in (0.2, 0.3, 0.6)] == [0.25, 0.5, 0.75]
+        @test sol(0.9; idxs = sys.n) == 3
+    end
+
+    @testset "Continuous state relation containing pre keeps its root" begin
+        path = regression_model(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'c'(start = 0.0);
+              equation
+                der('x') = 1.0;
+                when 'x' > pre('c') + 0.5 then 'c' = pre('c') + 1.0; end when;
+            """
+        )
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 3.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test [sol(t; idxs = sys.c) for t in (0.4, 0.6, 1.4, 1.6, 2.9)] == [0, 1, 1, 2, 3]
+    end
+
     @testset "Equation Boolean pre keeps the event left limit ($cascade)" for cascade in (false, true)
         path = regression_model(
             """
