@@ -605,8 +605,9 @@ function eval_AST(
     initialization_eqs = Equation[]
     has_free_params = !isempty(free_parameter_names)
     # `pre(v) = value` / `v = value` for a discrete v sets the start value of v
-    assignments, initial_assertions =
+    assignments, initial_assertions = with_eval_mode(:initial) do
         initial_algorithm_assignments(initial_algorithms, composition.annotation)
+    end
     for (var, value) in assignments
         name = symbol_name(var)
         if name in discrete_variable_names && value isa Number
@@ -620,7 +621,9 @@ function eval_AST(
     initial_equations = filter(initial_equations) do eq
         name = discrete_initial_target(eq)
         isnothing(name) && return true
-        value = eval_AST(eq.equation.equation.rhs)
+        value = with_eval_mode(:initial) do
+            eval_AST(eq.equation.equation.rhs)
+        end
         if haskey(relation_boolean_syms, name)
             value isa Bool || return true
             relation_boolean_starts[name] = value ? 1.0 : 0.0
@@ -629,7 +632,10 @@ function eval_AST(
         end
         return false
     end
-    for dictionary in [eval_AST(eq) for eq in initial_equations]
+    initial_values = with_eval_mode(:initial) do
+        [eval_AST(eq) for eq in initial_equations]
+    end
+    for dictionary in initial_values
         for (var, value) in dictionary
             found = false
             for (name, sym) in variable_map

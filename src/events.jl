@@ -29,6 +29,7 @@ unsupported(msg) = throw(UnsupportedFeatureError(msg))
 # The meaning of `pre(x)` depends on where it appears:
 #   :normal    ordinary equations; preserve `Pre(x)` for validation (only Boolean
 #              self-reference is supported by lower_relation_booleans)
+#   :initial   initial sections; discrete `pre(x)` is the initialization value of `x`
 #   :condition when-conditions; `pre(x)` is a per-iteration value, resolved by the backend
 #   :event     when-bodies; `pre(x)` is `Pre(x)`, resolved by the event backend
 const EVAL_MODE = Ref(:normal)
@@ -67,6 +68,10 @@ end
 
 # Preserve `pre(x)` until equation validation or the event backend resolves it.
 function apply_pre(arg)
+    if EVAL_MODE[] === :initial
+        is_discrete_variable(arg) && return arg
+        unsupported("pre() in initial sections is only supported for discrete variables")
+    end
     name = relation_boolean_name(arg)
     isnothing(name) || return relation_boolean_pre(name)
     return ModelingToolkit.Pre(arg)
@@ -576,7 +581,14 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
                         u = integ(ahead_time), p = SymbolicIndexingInterface.parameter_values(integ),
                         t = ahead_time
                     )
-                    value = SymbolicIndexingInterface.getsym(integ, block.crossing)(ahead)
+                    # Recomputed stages can make integ(time) differ from integ.u
+                    # at a root. Take only the time delta from that same polynomial.
+                    now = SymbolicIndexingInterface.ProblemState(;
+                        u = integ(time), p = SymbolicIndexingInterface.parameter_values(integ),
+                        t = time
+                    )
+                    g = SymbolicIndexingInterface.getsym(integ, block.crossing)
+                    value = crossing + (g(ahead) - g(now))
                     if (crossing < 0 && value >= 0) || (crossing > 0 && value <= 0)
                         current[i] = crossing < 0
                     end

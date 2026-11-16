@@ -19,7 +19,8 @@ end
 
 function step_solution(body, parser; stop = 1.0, alg = Tsit5())
     sys = parse_basemodelica(step_model(body); parser, discrete_backend = :mtk)
-    sol = solve(ODEProblem(sys, [], (0.0, stop)), alg)
+    prob = ODEProblem(sys, [], (0.0, stop))
+    sol = isnothing(alg) ? solve(prob) : solve(prob, alg)
     @test sol.retcode == ReturnCode.Success
     return sys, sol
 end
@@ -864,5 +865,60 @@ end
             """, parser; stop = 0.6
         )
         @test sol(0.6; idxs = sys.m) == (direct ? 1.0 : 0.0)
+    end
+end
+
+@testset "Round 13 interpolant roots ($parser)" for parser in (:julia, :antlr)
+    @testset "N1: oscillator near an unrelated time root ($alg)" for alg in (Tsit5(), nothing)
+        sys, sol = step_solution(
+            """
+                Real 'y'(start = 0.0, fixed = true); Real 'v'(start = 10.0, fixed = true);
+                discrete Real 'n'(start = 0.0); discrete Real 'd'(start = -1.0);
+                discrete Real 'a'(start = 0.0);
+              equation
+                der('y') = 'v'; der('v') = -100.0 * 'y';
+                when time > 0.21 then 'a' = pre('a') + 1.0; end when;
+                when 'y' > 0.863209317 then 'n' = pre('n') + 1.0; 'd' = time; end when;
+            """, parser; stop = 0.4, alg
+        )
+        @test sol(0.4; idxs = sys.n) == 1.0
+        @test sol(0.4; idxs = sys.d) ≈ asin(0.863209317) / 10 atol = 2.0e-4
+        @test sol(0.4; idxs = sys.a) == 1.0
+    end
+
+    @testset "N1: oscillator threshold offsets ($clock, $offset)" for clock in (0.10, 0.14, 0.18, 0.21), offset in (-3.0e-5, -1.0e-6, -1.0e-8, 1.0e-8, 1.0e-6, 3.0e-5)
+        threshold = sin(10clock) + offset
+        sys, sol = step_solution(
+            """
+                Real 'y'(start = 0.0, fixed = true); Real 'v'(start = 10.0, fixed = true);
+                discrete Real 'n'(start = 0.0); discrete Real 'd'(start = -1.0);
+                discrete Real 'a'(start = 0.0);
+              equation
+                der('y') = 'v'; der('v') = -100.0 * 'y';
+                when time > $clock then 'a' = pre('a') + 1.0; end when;
+                when 'y' > $threshold then 'n' = pre('n') + 1.0; 'd' = time; end when;
+            """, parser; stop = 0.4
+        )
+        @test sol(0.4; idxs = sys.n) == 1.0
+        @test sol(0.4; idxs = sys.d) ≈ asin(threshold) / 10 atol = 2.0e-4
+    end
+
+    @testset "Coincident nonlinear roots precede a lower-priority cascade ($reverse)" for reverse in (false, true)
+        high, trigger = reverse ? ("'x'^2 > 0.25", "'x' > 0.5") : ("'x' > 0.5", "'x'^2 > 0.25")
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'z'(start = 0.0, fixed = true);
+                discrete Real 'c'(start = 0.0); discrete Real 'n'(start = 0.0);
+              equation
+                der('x') = 1.0 - 'x'^3; der('z') = 0.0;
+                when $trigger then 'c' = 2.0; end when;
+                when $high then reinit('z', 10.0);
+                elsewhen 'c' > 1.5 then 'n' = pre('n') + 1.0;
+                end when;
+            """, parser; stop = 0.8
+        )
+        @test sol(0.8; idxs = sys.c) == 2.0
+        @test sol(0.8; idxs = sys.z) == 10.0
+        @test sol(0.8; idxs = sys.n) == 0.0
     end
 end

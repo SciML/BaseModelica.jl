@@ -3,8 +3,15 @@
 - Coincident when roots now handle their own crossing on every callback pass, including
   steep and late-time roots outside the crossing-value tolerance. A sign check on the
   local interpolant selects coincident roots before lower-priority elsewhen cascades.
+  This check now takes the time delta from a single interpolating polynomial, avoiding
+  false events near unrelated roots when explicit solvers recompute their stages.
 - Ordinary equations reject cross-variable `pre()` reads instead of silently using the
-  current value. Boolean self-reference for hysteresis remains supported.
+  current value. Boolean self-reference for hysteresis remains supported. This limitation
+  rejects MSL Logical.Pre and RSFlipFlop, StateGraph, and the friction models that use
+  cross-variable `pre()` equations.
+- Initial equations and initial algorithms again resolve `pre(v)` of discrete variables
+  to their initialization values, including `pre(v) = pre(w)` start constraints. Other
+  initial-section `pre()` reads raise `UnsupportedFeatureError` rather than a bare MTK error.
 
 - The `:mtk` backend rejects direct derivative reads in when-bodies (including reinit
   right-hand sides) with a translation-time diagnostic instead of stale values or `setsym`

@@ -37,6 +37,10 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   Explicit `pre(v)` reads in when-conditions and bodies remain supported.
   Ordinary equations support `pre()` only for a Boolean's self-reference (hysteresis);
   cross-variable reads raise `UnsupportedFeatureError` until they share event pre-values.
+  This excludes MSL Logical.Pre and RSFlipFlop, StateGraph, and friction models that
+  use cross-variable `pre()` equations. Initial sections support `pre(v)` of discrete
+  variables as their initialization values; other initial-section `pre()` reads raise
+  `UnsupportedFeatureError`.
   A model with `pre()` in any when-condition
   and `sample()` anywhere rejects every multi-branch when/elsewhen chain with a non-sample branch:
   restoration of a replaced branch after snapshot advancement is not yet supported.

@@ -180,3 +180,67 @@ end
         @test sol(1.25; idxs = sys.y) == 0.0
     end
 end
+
+@testset "Initial-section pre reads ($parser)" for parser in (:julia, :antlr)
+    @testset "$case: pre(discrete) initializes a state" for case in (:I1, :I2, :I4)
+        initial = case === :I4 ? "initial algorithm 'x' := pre('k');" :
+            "initial equation 'x' = pre('k')$(case === :I2 ? " + 1.0" : "");"
+        path = initialization_model(
+            """
+                Real 'x'(fixed = false); discrete Real 'k'(start = 2.0);
+              equation
+                der('x') = 1.0;
+                when time > 0.5 then 'k' = pre('k') + 1.0; end when;
+              $initial
+            """
+        )
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        start = case === :I2 ? 3.0 : 2.0
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.0; idxs = sys.x) == start
+        @test sol(1.0; idxs = sys.x) ≈ start + 1.0
+        @test sol(0.0; idxs = sys.k) == 2.0
+        @test sol(1.0; idxs = sys.k) == 3.0
+    end
+
+    @testset "Relation Boolean pre in an initial section is diagnosed" begin
+        path = initialization_model(
+            """
+                Real 'x'(fixed = false); Boolean 'b';
+              equation
+                der('x') = 1.0; 'b' = time > 0.5;
+              initial equation
+                'x' = if pre('b') then 1.0 else 0.0;
+            """
+        )
+        err = try
+            parse_basemodelica(path; parser, discrete_backend = :mtk)
+        catch e
+            e
+        end
+        @test err isa BaseModelica.UnsupportedFeatureError
+        @test occursin("pre() in initial sections is only supported for discrete variables", sprint(showerror, err))
+    end
+
+    @testset "Discrete pre target with a pre RHS" begin
+        path = initialization_model(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'k'(start = 0.0); discrete Real 'w'(start = 2.0);
+              equation
+                der('x') = 1.0;
+                when time > 0.5 then 'k' = pre('k') + 1.0; 'w' = pre('w') + 3.0; end when;
+              initial equation
+                pre('k') = pre('w');
+            """
+        )
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.0; idxs = sys.k) == 2.0
+        @test sol(1.0; idxs = sys.k) == 3.0
+        @test sol(0.0; idxs = sys.w) == 2.0
+        @test sol(1.0; idxs = sys.w) == 5.0
+    end
+end
