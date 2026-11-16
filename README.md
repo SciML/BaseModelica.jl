@@ -24,16 +24,20 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   becomes a ModelingToolkit `SymbolicContinuousCallback`, and `sample(0, dt)` becomes a
   periodic `SymbolicDiscreteCallback`. In the body, `v = expr` updates a discrete variable
   and `reinit(x, expr)` resets a continuous state at the end of an event-iteration step.
-  States stay fixed within each step; `pre(v)` reads the previous iteration's value.
+  States stay fixed within each step; when-conditions and bodies share pre-values,
+  advanced only between whole-system event iterations.
   Plain body reads of derivatives are rejected. Non-state unknowns are also rejected
   when connected by equations to discrete values, Integers, relation Booleans,
-  relations (including state-only if-expressions), or `sign`/`floor`/`ceil`/`integer`/`div`/`mod`/`rem`.
+  relations (including state-only if-expressions), or `floor`/`ceil`/`integer`/`div`/`mod`/`rem`.
   This conservative guard includes reinit right-hand sides and implicit/alias dependencies;
   explicitly determined continuous signals from states, parameters and time stop propagation.
   These cases need a separate algebraic event-step solve before reinit copies.
   `sign` is event-free (MLS 3.6 §3.7.1, `noEvent` expansion); its value at a coincident
   root is numerically ill-defined, so sign-derived non-state reads are guarded conservatively too.
-  Explicit `pre(v)` reads remain supported. A model with `pre()` in any when-condition
+  Explicit `pre(v)` reads in when-conditions and bodies remain supported.
+  Ordinary equations support `pre()` only for a Boolean's self-reference (hysteresis);
+  cross-variable reads raise `UnsupportedFeatureError` until they share event pre-values.
+  A model with `pre()` in any when-condition
   and `sample()` anywhere rejects every multi-branch when/elsewhen chain with a non-sample branch:
   restoration of a replaced branch after snapshot advancement is not yet supported.
   Reinitializing one state in separate when-equations is diagnosed during translation.

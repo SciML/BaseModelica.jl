@@ -743,3 +743,126 @@ end
         )
     end
 end
+
+@testset "Round 12 coincident roots and equation pre ($parser)" for parser in (:julia, :antlr)
+    @testset "M1: coincident roots ($variant, $clock)" for variant in (:unit, :steep, :late), clock in (false, true)
+        slope, start, event, stop = variant === :late ? (1.0, -1000.0, 1000.5, 1001.0) :
+            variant === :steep ? (1000.0, -499.5, 0.5, 0.6) : (1.0, 0.0, 0.5, 0.6)
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = $start, fixed = true);
+                discrete Real 'c'(start = 0.0); discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = $slope;
+                $(clock ? "when time > $event then 'c' = pre('c') + 1.0; end when;" : "")
+                when 'x' > 0.5 then 'd' = time; end when;
+            """, parser; stop
+        )
+        @test sol(stop; idxs = sys.d) ≈ event atol = 1.0e-9 rtol = 0
+        clock && @test sol(stop; idxs = sys.c) == 1.0
+    end
+
+    @testset "M1 control: nearby distinct roots ($late)" for late in (false, true)
+        slope, clock, stop = late ? (1.0, 1000.5, 1001.0) : (1000.0, 0.5, 0.6)
+        event = clock + 1.0e-6
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = $(0.5 - slope * event), fixed = true);
+                discrete Real 'c'(start = 0.0); discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = $slope;
+                when time > $clock then 'c' = 1.0; end when;
+                when 'x' > 0.5 then 'd' = time; end when;
+            """, parser; stop
+        )
+        @test sol(clock + 0.5e-6; idxs = sys.d) == -1.0
+        @test sol(stop; idxs = sys.d) ≈ event atol = 1.0e-9 rtol = 0
+    end
+
+    @testset "M2: coincident reinit is saved at stop time" begin
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = -499.5, fixed = true);
+                Real 'y'(start = 0.0, fixed = true);
+                discrete Real 'c'(start = 0.0);
+              equation
+                der('x') = 1000.0; der('y') = 1.0;
+                when time > 0.5 then 'c' = pre('c') + 1.0; end when;
+                when 'x' > 0.5 then reinit('y', 0.0); end when;
+            """, parser; stop = 0.6
+        )
+        @test sol(0.6; idxs = sys.y) ≈ 0.1 atol = 1.0e-9
+        @test sol[sys.y][end] ≈ 0.1 atol = 1.0e-9
+        @test sol(0.6; idxs = sys.c) == 1.0
+    end
+
+    @testset "Ra/Ra': root priority ($slope, $advance, $boolean, $reverse)" for slope in (1.0, 1000.0, 0.001), advance in (false, true), boolean in (false, true), reverse in (false, true)
+        high = reverse ? "time > 0.5" : "'x' > 0.5"
+        trigger = reverse ? "'x' > 0.5" : "time > 0.5"
+        lower = boolean ? "'b'" : "'c' > 1.5"
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = $(0.5 - slope * 0.5), fixed = true);
+                Real 'h'(start = 0.0, fixed = true); Real 'v'(start = 0.0, fixed = true);
+                discrete Real 'c'(start = 0.0); discrete Real 'k'(start = 0.0);
+                discrete Real 'd'(start = -1.0);
+                $(boolean ? "Boolean 'b';" : "")
+              equation
+                der('x') = $slope; der('h') = 0.0; der('v') = 0.0;
+                $(boolean ? "'b' = 'c' > 1.5;" : "")
+                when $trigger then 'c' = 2.0; end when;
+                when $high then reinit('h', 10.0);
+                elsewhen $lower then reinit('v', pre('v') + 1.0); 'k' = pre('k') + 1.0;
+                end when;
+                $(advance ? "when pre('k') > 0.5 then 'd' = time; end when;" : "")
+            """, parser; stop = 0.6
+        )
+        @test sol(0.6; idxs = sys.h) ≈ 10.0
+        @test sol(0.6; idxs = sys.v) == 0.0
+        @test sol(0.6; idxs = sys.k) == 0.0
+        @test sol(0.6; idxs = sys.d) == -1.0
+    end
+
+    @testset "$case: cross-variable pre in ordinary equations" for case in (:E1, :E5, :Rb, :real, :boolean_read)
+        definition = case === :E1 ? "Boolean 'b'; Boolean 'e';" :
+            case === :E5 ? "Boolean 'b'; Boolean 'e';" :
+            case === :Rb ? "Boolean 'b';" :
+            case === :boolean_read ? "Boolean 'b'; Real 'y';" : "Real 'y';"
+        equations = case === :E1 ? "'b' = 'x' > 0.5; 'e' = 'b' and not pre('b');" :
+            case === :E5 ? "'b' = 'k' > 0.5; 'e' = 'b' and not pre('b');" :
+            case === :Rb ? "'b' = pre('k') > 0.5;" :
+            case === :boolean_read ? "'b' = 'x' > 0.5; 'y' = if pre('b') then 1.0 else 0.0;" : "'y' = pre('k');"
+        consumer = case in (:E1, :E5) ? "when 'e' then 'd' = time; end when;" :
+            case === :Rb ? "when 'b' then 'd' = pre('k'); end when;" : ""
+        # E1/E5 require d=0.5/0.25; Rb requires d=1 in the second iteration.
+        # Reject these until ordinary equations share the when pre-value machinery.
+        reject_step(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'k'(start = 0.0); discrete Real 'd'(start = -1.0);
+                $definition
+              equation
+                der('x') = 1.0;
+                $equations
+                when 'x' > 0.25 then 'k' = pre('k') + 1.0; end when;
+                $consumer
+            """, parser, ""; message = "pre() in ordinary equations is only supported for a Boolean's self-reference"
+        )
+    end
+
+    @testset "Rb controls: direct pre condition and plain Boolean ($direct)" for direct in (false, true)
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'k'(start = 0.0); discrete Real 'm'(start = -1.0);
+                $(direct ? "" : "Boolean 'b';")
+              equation
+                der('x') = 1.0;
+                $(direct ? "" : "'b' = 'k' > 0.5;")
+                when 'x' > 0.25 then 'k' = pre('k') + 1.0; end when;
+                when $(direct ? "pre('k') > 0.5" : "'b'") then 'm' = pre('k'); end when;
+            """, parser; stop = 0.6
+        )
+        @test sol(0.6; idxs = sys.m) == (direct ? 1.0 : 0.0)
+    end
+end

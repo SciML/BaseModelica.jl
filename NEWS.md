@@ -1,5 +1,11 @@
 # Unreleased
 
+- Coincident when roots now handle their own crossing on every callback pass, including
+  steep and late-time roots outside the crossing-value tolerance. A sign check on the
+  local interpolant selects coincident roots before lower-priority elsewhen cascades.
+- Ordinary equations reject cross-variable `pre()` reads instead of silently using the
+  current value. Boolean self-reference for hysteresis remains supported.
+
 - The `:mtk` backend rejects direct derivative reads in when-bodies (including reinit
   right-hand sides) with a translation-time diagnostic instead of stale values or `setsym`
   errors. Its non-state read guard also covers Real targets of `sign`, `floor`, `ceil`, `integer`,

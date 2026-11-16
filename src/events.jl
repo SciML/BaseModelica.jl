@@ -27,8 +27,8 @@ unsupported(msg) = throw(UnsupportedFeatureError(msg))
 
 # ── Evaluation modes ──────────────────────────────────────────────────────────
 # The meaning of `pre(x)` depends on where it appears:
-#   :normal    continuous equations; `pre(v)` of a discrete variable is `v` (they differ
-#              only at event instants), otherwise `Pre(x)`
+#   :normal    ordinary equations; preserve `Pre(x)` for validation (only Boolean
+#              self-reference is supported by lower_relation_booleans)
 #   :condition when-conditions; `pre(x)` is a per-iteration value, resolved by the backend
 #   :event     when-bodies; `pre(x)` is `Pre(x)`, resolved by the event backend
 const EVAL_MODE = Ref(:normal)
@@ -65,12 +65,10 @@ function symbol_name(sym)
     end
 end
 
-# `pre(x)` evaluated in the current mode; `arg` is the plain symbol for `x`.
+# Preserve `pre(x)` until equation validation or the event backend resolves it.
 function apply_pre(arg)
-    mode = EVAL_MODE[]
     name = relation_boolean_name(arg)
     isnothing(name) || return relation_boolean_pre(name)
-    mode === :normal && is_discrete_variable(arg) && return arg
     return ModelingToolkit.Pre(arg)
 end
 
@@ -343,8 +341,8 @@ What BaseModelica hands to [`lower_discrete`](@ref): the continuous part of the 
 its discrete variables and `when` equations, all as ModelingToolkit symbolics.
 
 - `equations::Vector{Equation}`: the continuous equations (`der(x) = ...`, algebraic
-  equations, declaration equations). Discrete variables appear as their plain symbols, and
-  `pre(v)` of a discrete `v` is already rewritten to `v`.
+  equations, declaration equations). Discrete variables appear as their plain symbols;
+  unsupported `pre(v)` reads in ordinary equations have already been rejected.
 - `variables::Vector`: the continuous unknowns, e.g. `x(t)`.
 - `states::Vector`: the subset of `variables` that appear under `der`.
 - `discretes::Vector{Pair}`: `v => start` for each discrete variable, where `v` is the
@@ -553,9 +551,12 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
     end
     selected_before = old[(n + 1):(2n)] .> 0.5
     active = copy(selected_before)
-    # Root callbacks at the same instant all see the same transition. The first one
-    # handles every coincident crossing, including scaled conditions.
-    if select.root != 0 && !same_event_time(time, old[2n + 1])
+    # Every root pass must handle its own crossing (and proportional crossings):
+    # later roots at this instant can lie outside the crossing-value tolerance.
+    # On the first pass, also check for a sign change within the event-time window.
+    # This selects steep/late coincident roots before lower-priority cascades can run.
+    if select.root != 0
+        first_root = !same_event_time(time, old[2n + 1])
         for (i, block) in enumerate(select.blocks)
             isnothing(block.crossing) && continue
             crossing = observed[Symbol(:crossing, i)]
@@ -564,11 +565,27 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
                 # A rising root is an edge even if no accepted solver step observed
                 # the false interval (e.g. consecutive bouncing-ball impacts).
                 active[i] |= current[i]
-            elseif abs(crossing) <= WHEN_ROOT_TOLERANCE
-                current[i] = !previous[i]
+            elseif first_root
+                if abs(crossing) <= WHEN_ROOT_TOLERANCE
+                    current[i] = !previous[i]
+                else
+                    # Use the solver's local interpolant rather than differentiating
+                    # arbitrary algebraic root expressions or assuming a crossing scale.
+                    ahead_time = time + 32eps(Float64) * max(1, abs(time))
+                    ahead = SymbolicIndexingInterface.ProblemState(;
+                        u = integ(ahead_time), p = SymbolicIndexingInterface.parameter_values(integ),
+                        t = ahead_time
+                    )
+                    value = SymbolicIndexingInterface.getsym(integ, block.crossing)(ahead)
+                    if (crossing < 0 && value >= 0) || (crossing > 0 && value <= 0)
+                        current[i] = crossing < 0
+                    end
+                end
+            elseif !first_root && abs(crossing) <= ROOT_TOLERANCE
+                current[i] = previous[i]
             end
         end
-        old[2n + 1] = time
+        first_root && (old[2n + 1] = time)
     elseif !select.initialize
         # At the root the strict relation itself can still have its old value.
         # Preserve the direction selected by the continuous callback.

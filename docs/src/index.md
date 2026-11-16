@@ -117,13 +117,16 @@ at its end, before advancing their pre-values (§8.3.6).
 The built-in `:mtk` backend rejects plain derivative reads in when-bodies and reinit
 right-hand sides. It also conservatively rejects non-state reads connected through equations
 to discrete values, Integers, relation Booleans, relations (even state-only if-expressions),
-or `sign`/`floor`/`ceil`/`integer`/`div`/`mod`/`rem`. Implicit and alias dependencies are included;
+or `floor`/`ceil`/`integer`/`div`/`mod`/`rem`. Implicit and alias dependencies are included;
 explicit continuous definitions from states, parameters and time stop propagation, so an
 unrelated downstream discrete setpoint does not prevent sampling a continuous measurement.
 The rejected reads require a separate algebraic event-step solve before reinit copies.
 `sign` is event-free (MLS 3.6 §3.7.1, `noEvent` expansion); its value at a coincident root
 is numerically ill-defined, so sign-derived non-state reads are guarded conservatively too.
-Explicit `pre(v)` reads remain supported. Models with `pre()` in any when-condition and
+Explicit `pre(v)` reads in when-conditions and bodies remain supported.
+Ordinary equations support `pre()` only for a Boolean's self-reference (hysteresis);
+cross-variable reads raise `UnsupportedFeatureError` until they share event pre-values.
+Models with `pre()` in any when-condition and
 `sample()` anywhere reject every multi-branch when/elsewhen chain with a non-sample branch,
 since late coincident priority replacement cannot restore values after snapshot advancement.
 Symbolic `div` calls are rejected during expression translation.

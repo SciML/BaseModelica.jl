@@ -39,10 +39,8 @@ function relation_boolean_name(x)
     return nothing
 end
 
-# `pre(b)` of a Boolean `b`. In continuous
-# equations `pre(b)` equals `b` (they differ only at event instants), but in the definition
-# of `b` it is the start value during initialization, so `pre` is kept as a marker here and
-# resolved by `lower_relation_booleans`.
+# Preserve `pre(b)` for when snapshots and Boolean self-reference. Ordinary
+# equations must validate the marker before lower_relation_booleans resolves it.
 function relation_boolean_pre(name)
     return relation_boolean_value(ModelingToolkit.Pre(relation_boolean_syms[name]))
 end
@@ -202,7 +200,21 @@ function lower_relation_booleans(eqs, model_name)
         end
     end
 
-    # Resolve the `pre(b)` markers: `b` itself, or the start value during initialization
+    # Ordinary equations do not share the when backend's event-iteration snapshots.
+    # Only self-referencing Boolean definitions can resolve pre locally. Reject other
+    # reads before substitution can silently replace the left limit with the current value.
+    for (name, definition) in definitions
+        reads = condition_pre_arguments!(Num[], definition)
+        any(arg -> !isequal(arg, relation_boolean_syms[name]), reads) &&
+            unsupported("pre() in ordinary equations is only supported for a Boolean's self-reference (definition of `$name`)")
+    end
+    for eq in equations
+        reads = condition_pre_arguments!(Num[], eq.lhs)
+        condition_pre_arguments!(reads, eq.rhs)
+        isempty(reads) || unsupported("pre() in ordinary equations is only supported for a Boolean's self-reference")
+    end
+
+    # Resolve the validated self-reference: current iteration, or initialization start.
     pre_markers = [Symbolics.unwrap(ModelingToolkit.Pre(sym)) for sym in syms]
     pre_current = Dict{Any, Any}(zip(pre_markers, Symbolics.unwrap.(syms)))
     pre_start = Dict{Any, Any}(zip(pre_markers, [relation_boolean_starts[n] for n in names]))
