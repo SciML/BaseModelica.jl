@@ -73,7 +73,7 @@ function build_nested_ifelse(if_expr::BaseModelicaIfExpression, idx = 1)
     if idx > length(if_expr.conditions)
         return eval_AST(if_expr.expressions[end])
     end
-    condition = eval_AST(if_expr.conditions[idx])
+    condition = logical_operand(eval_AST(if_expr.conditions[idx]))
     collect_time_events!(condition)
     then_value = eval_AST(if_expr.expressions[idx])
     else_value = build_nested_ifelse(if_expr, idx + 1)
@@ -210,7 +210,7 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
             end
         end
 
-        condition = eval_AST(if_eq.ifs[idx])
+        condition = logical_operand(eval_AST(if_eq.ifs[idx]))
         rhs = get_rhs_for_var(var_lhs, branches[idx])
 
         if isnothing(rhs)

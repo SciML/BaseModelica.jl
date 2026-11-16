@@ -59,11 +59,15 @@ Not supported: records, arrays of records, Boolean- or enumeration-indexed dimen
 sizes that depend on a time-varying value, `when`-equations inside `for`-equations, algorithm sections
 in models, `while` loops, multiple-output function calls, external functions, compound
 continuous `when` conditions (`a and b`), `floor`/`integer`/`ceil`/`div`/`mod`/`rem`
-with continuous arguments in when-conditions, logical use of when-assigned Booleans,
-and `edge`/`change`/`initial()`. These raise a
+with continuous arguments written directly in when-conditions, logical use of
+when-assigned Booleans, and `edge`/`change`/`initial()`. These raise a
 `BaseModelica.UnsupportedFeatureError` instead of producing a different model. Syntax
 errors raise `BaseModelica.BaseModelicaParseError` (`:antlr`) or a
 `ParserCombinator.ParserException` (`:julia`).
+
+Discontinuity event generation for `floor`/`integer`/`ceil`/`div`/`mod`/`rem` is
+unsupported. Calls hidden behind equation-defined intermediate variables are not
+detected by the when-condition guard and may silently miss events.
 
 ## Installation
 

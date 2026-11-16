@@ -589,6 +589,9 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
         end
     end
     for i in 1:n
+        # Match the ready flag below: a no-op selection after the body cleared
+        # its execute slots must not arm those assignments for a later event.
+        active == selected_before && break
         slot = 2n + 4 + select.nsnapshots + i
         if active[i]
             old[slot] = 1.0
@@ -894,12 +897,15 @@ function when_blocks(clauses)
             condition = with_eval_mode(() -> eval_AST(clause.condition), :condition)
             # Relation-defined Booleans transition during event iteration. Their
             # conditions are discrete; only direct relations have continuous roots.
-            if varies_continuously(condition)
-                # Between events pre(v) = v; only the event condition needs snapshots.
-                plain = Dict(
+            # Between events pre(v) = v; classify that plain expression too, since
+            # Pre(continuous v) itself looks like a parameter to Symbolics.
+            plain = Symbolics.substitute(
+                condition, Dict(
                     ModelingToolkit.Pre(v) => v for v in condition_pre_arguments!(Any[], condition)
                 )
-                crossing = Num(to_zero_crossing(Symbolics.substitute(condition, plain)))
+            )
+            if varies_continuously(plain)
+                crossing = Num(to_zero_crossing(plain))
                 crossing /= crossing_coefficient(crossing)
             end
         end
