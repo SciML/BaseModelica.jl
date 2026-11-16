@@ -58,7 +58,9 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
 Not supported: records, arrays of records, Boolean- or enumeration-indexed dimensions, array
 sizes that depend on a time-varying value, `when`-equations inside `for`-equations, algorithm sections
 in models, `while` loops, multiple-output function calls, external functions, compound
-`when` conditions (`a and b`) and `edge`/`change`/`initial()`. These raise a
+continuous `when` conditions (`a and b`), `floor`/`integer`/`ceil`/`div`/`mod`/`rem`
+with continuous arguments in when-conditions, logical use of when-assigned Booleans,
+and `edge`/`change`/`initial()`. These raise a
 `BaseModelica.UnsupportedFeatureError` instead of producing a different model. Syntax
 errors raise `BaseModelica.BaseModelicaParseError` (`:antlr`) or a
 `ParserCombinator.ParserException` (`:julia`).

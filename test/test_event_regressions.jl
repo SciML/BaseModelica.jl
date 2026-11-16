@@ -57,6 +57,46 @@ end
         @test [sol(t; idxs = sys.c) for t in (0.4, 0.6, 1.4, 1.6, 2.9)] == [0, 1, 1, 2, 3]
     end
 
+    @testset "Event-generating functions in continuous when conditions are rejected" begin
+        # Modelica §3.7.2 requires events at every discontinuity. In the reviewer's
+        # floor(x/0.25) > count model count must be 1 at 0.3 and 3 at 0.9;
+        # a root of floor(x/0.25) - count silently misses these events.
+        for expression in (
+                "floor('x'/0.25)", "integer('x'/0.25)", "ceil('x'/0.25)",
+                "div('x', 0.25)", "mod('x', 0.25)", "rem('x', 0.25)",
+            ), count in ("'count'", "pre('count')")
+            path = regression_model(
+                """
+                    Real 'x'(start = 0.0, fixed = true);
+                    discrete Real 'count'(start = 0.0);
+                  equation
+                    der('x') = 1.0;
+                    when $expression > $count then
+                      'count' = pre('count') + 1.0;
+                    end when;
+                """
+            )
+            @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path; parser)
+        end
+    end
+
+    @testset "Logical use of when-assigned Booleans has a useful diagnostic" begin
+        for condition in ("not 'on'", "'on' and not pre('on')", "'on' or not pre('on')")
+            path = regression_model(
+                """
+                    Real 'x'(start = 0.0, fixed = true);
+                    Boolean 'on'(start = false);
+                    discrete Real 'n'(start = 0.0);
+                  equation
+                    der('x') = 1.0;
+                    when 'x' > 0.5 then 'on' = true; end when;
+                    when $condition then 'n' = pre('n') + 1.0; end when;
+                """
+            )
+            @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path; parser)
+        end
+    end
+
     @testset "Equation Boolean pre keeps the event left limit ($cascade)" for cascade in (false, true)
         path = regression_model(
             """

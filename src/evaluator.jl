@@ -25,6 +25,12 @@ function modelica_type_to_julia(type_str::String)
     end
 end
 
+function logical_operand(value)
+    SymbolicUtils.symtype(Symbolics.unwrap(value)) === Bool ||
+        unsupported("logical operand `$value` is not Boolean; logical use of when-assigned Booleans is not supported")
+    return value
+end
+
 function eval_AST(expr::BaseModelicaExpr)
     return let f = eval_AST
         @match expr begin
@@ -49,9 +55,9 @@ function eval_AST(expr::BaseModelicaExpr)
             BaseModelicaElementWiseDivide(left, right) => f(left) ./ f(right)
             BaseModelicaElementWiseFactor(base, exp) => f(base) .^ f(exp)
             BaseModelicaParens(inner) => f(inner)
-            BaseModelicaNot(relation) => ~f(relation)
-            BaseModelicaAnd(left, right) => f(left) & f(right)
-            BaseModelicaOr(left, right) => f(left) | f(right)
+            BaseModelicaNot(relation) => ~logical_operand(f(relation))
+            BaseModelicaAnd(left, right) => logical_operand(f(left)) & logical_operand(f(right))
+            BaseModelicaOr(left, right) => logical_operand(f(left)) | logical_operand(f(right))
             BaseModelicaLEQ(left, right) => f(left) <= f(right)
             BaseModelicaGEQ(left, right) => f(left) >= f(right)
             BaseModelicaLessThan(left, right) => f(left) < f(right)
@@ -891,6 +897,10 @@ function eval_AST(function_call::BaseModelicaFunctionCall)
     haskey(function_map, function_name) ||
         unsupported("function `$function_name` is not supported")
     args = eval_AST(function_call.args)
+    if EVAL_MODE[] === :condition && function_name in (:floor, :integer, :ceil, :div, :mod, :rem) &&
+            any(varies_continuously, args)
+        unsupported("event-generating `$function_name(...)` with continuous arguments in a when-condition is not supported")
+    end
     return call_builtin(function_name, args)
 end
 

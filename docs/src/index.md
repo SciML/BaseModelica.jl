@@ -114,6 +114,15 @@ whole-system event iterations, after solving the equations and when-conditions t
 (Modelica 3.6 §8.5 and §3.7.5); continuous `pre` values remain at their pre-event values.
 Backends that delegate event handling can use `lower_discrete(MTKEventsBackend(), model)`.
 
+Backend compatibility change: `WhenBlock.condition` now preserves `pre(v)` as
+`ModelingToolkit.Pre(v)` instead of replacing it with `v`. Backends must resolve those
+markers using the iteration's shared pre-values. `WhenBlock.crossing` uses plain `v`
+instead, because `pre(v) = v` between events. The public `DiscreteModel` does not expose
+the definitions or left-limit history of equation-defined Booleans. Backends needing
+`pre(b)` for those Booleans must currently delegate to `MTKEventsBackend`; independent
+handling needs a future IR extension. SynchToolkit compatibility for these cases has
+not been verified.
+
 ```@docs
 BaseModelica.AbstractDiscreteBackend
 BaseModelica.register_discrete_backend!
