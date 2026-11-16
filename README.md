@@ -27,12 +27,12 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   States stay fixed within each step; `pre(v)` reads the previous iteration's value.
   Plain body reads of derivatives are rejected. Non-state unknowns are also rejected
   when connected by equations to discrete values, Integers, relation Booleans,
-  relations (including state-only if-expressions), or `floor`/`ceil`/`integer`/`div`/`mod`/`rem`.
+  relations (including state-only if-expressions), or `sign`/`floor`/`ceil`/`integer`/`div`/`mod`/`rem`.
   This conservative guard includes reinit right-hand sides and implicit/alias dependencies;
   explicitly determined continuous signals from states, parameters and time stop propagation.
   These cases need a separate algebraic event-step solve before reinit copies.
   Explicit `pre(v)` reads remain supported. A model with `pre()` in any when-condition
-  cannot mix sample clocks and continuous roots within one when/elsewhen chain:
+  cannot mix sample clocks and non-sample branches within one when/elsewhen chain:
   restoration of a replaced branch after snapshot advancement is not yet supported.
   Reinitializing one state in separate when-equations is diagnosed during translation.
   Symbolic `div` calls are rejected during expression translation.
@@ -76,7 +76,7 @@ when-assigned Booleans, and `edge`/`change`/`initial()`. These raise a
 errors raise `BaseModelica.BaseModelicaParseError` (`:antlr`) or a
 `ParserCombinator.ParserException` (`:julia`).
 
-Discontinuity event generation for `floor`/`integer`/`ceil`/`div`/`mod`/`rem` is
+Discontinuity event generation for `sign`/`floor`/`integer`/`ceil`/`div`/`mod`/`rem` is
 unsupported. Calls hidden behind equation-defined intermediate variables are not
 detected by the when-condition guard and may silently miss events.
 

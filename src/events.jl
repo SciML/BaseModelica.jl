@@ -461,7 +461,7 @@ and `reinit` become one symbolic affect solve. States read their event-iteration
 values (`Pre`), and explicit `pre(v)` reads the previous iteration's value. Plain reads
 of derivatives and non-state unknowns connected to discrete values or event-generating
 relations/functions are conservatively rejected. Explicit continuous definitions stop
-that propagation. A chain mixing sample clocks and continuous roots is rejected if any
+that propagation. A chain mixing sample clocks and non-sample branches is rejected if any
 when-condition reads `pre`, since restoration after snapshot advancement is unsupported.
 Sample clocks include their initial tick.
 """
@@ -687,7 +687,7 @@ end
 function has_event_discontinuity(expr)
     expr = Symbolics.unwrap(expr)
     SymbolicUtils.iscall(expr) || return false
-    SymbolicUtils.operation(expr) in (<, <=, >, >=, ==, !=, floor, ceil, div, mod, rem) && return true
+    SymbolicUtils.operation(expr) in (<, <=, >, >=, ==, !=, sign, floor, ceil, div, mod, rem) && return true
     return any(has_event_discontinuity, SymbolicUtils.arguments(expr))
 end
 
@@ -698,9 +698,13 @@ function reject_body_derivatives(expr)
     SymbolicUtils.iscall(expr) || return nothing
     op = SymbolicUtils.operation(expr)
     op isa ModelingToolkit.Pre && return nothing
-    op isa Symbolics.Differential && unsupported(
-        "plain derivative read `$expr` in a when-body requires an algebraic event-step solve (not yet supported by :mtk)"
-    )
+    if op isa Symbolics.Differential
+        name = symbol_name(Num(only(SymbolicUtils.arguments(expr))))
+        derivative = isnothing(name) ? expr : "der('$name')"
+        unsupported(
+            "plain derivative read `$derivative` in a when-body requires an algebraic event-step solve (not yet supported by :mtk)"
+        )
+    end
     foreach(reject_body_derivatives, SymbolicUtils.arguments(expr))
     return nothing
 end
@@ -715,9 +719,9 @@ function validate_when_structure(blocks)
     if !isempty(reads)
         for block in blocks
             isnothing(block.sample) && continue
-            any(b -> b.chain == block.chain && !isnothing(b.crossing), blocks) || continue
+            any(b -> b.chain == block.chain && isnothing(b.sample), blocks) || continue
             unsupported(
-                "an elsewhen chain mixing sample() and continuous roots in a model with pre() in when-conditions; " *
+                "an elsewhen chain mixing sample() and non-sample branches in a model with pre() in when-conditions; " *
                     "coincident priority restoration after snapshot advancement is not yet supported by :mtk"
             )
         end

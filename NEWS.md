@@ -2,7 +2,7 @@
 
 - The `:mtk` backend rejects direct derivative reads in when-bodies (including reinit
   right-hand sides) with a translation-time diagnostic instead of stale values or `setsym`
-  errors. Its non-state read guard also covers Real targets of `floor`, `ceil`, `integer`,
+  errors. Its non-state read guard also covers Real targets of `sign`, `floor`, `ceil`, `integer`,
   `div`, `mod` and `rem`. Symbolic `div` calls fail explicitly during expression
   translation, where Symbolics cannot yet construct the quotient. The guard conservatively
   follows equations connected to discrete values, Integers, relation Booleans and relations,
@@ -12,8 +12,9 @@
   continuous measurement. Implicit dependencies remain conservative. Rejected reads need
   separate algebraic event-step solves and reinit copies. Explicit `pre(v)` is supported.
 - Models with `pre()` in any when-condition reject a when/elsewhen chain mixing sample
-  clocks and continuous roots: coincident priority replacement after snapshot advancement
+  clocks and non-sample branches: coincident priority replacement after snapshot advancement
   could otherwise leave the replaced branch's values and cascades in the solution.
+  This includes equation-defined Boolean and discrete conditions, even without a direct root.
 - Reinitializing the same state in separate when-equations now fails during translation;
   multiple branches of a single when/elsewhen chain remain allowed (§8.3.6).
 - Snapshot advancement between event-iteration steps now includes body-only state and

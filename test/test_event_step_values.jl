@@ -316,7 +316,7 @@ end
             e
         end
         @test err isa BaseModelica.UnsupportedFeatureError
-        @test occursin("plain derivative read", sprint(showerror, err))
+        @test occursin("plain derivative read `der('x')`", sprint(showerror, err))
         @test occursin("event-step solve", sprint(showerror, err))
     end
 
@@ -473,6 +473,85 @@ end
     end
 end
 
+@testset "Round 10 guard regressions ($parser)" for parser in (:julia, :antlr)
+    @testset "P3/P3c: sample priority with a non-sample sibling ($discrete, $advance)" for discrete in (false, true), advance in (false, true)
+        declaration = discrete ? "discrete Real 'c'(start = 0.0);" : "Boolean 'b';"
+        equation = discrete ? "when 'x' > 0.5 then 'c' = 1.0; end when;" : "'b' = 'x' > 0.5;"
+        condition = discrete ? "'c' > 0.5" : "'b'"
+        body = """
+            Real 'x'(start = 0.0, fixed = true);
+            Real 'h'(start = 0.0, fixed = true);
+            Real 'v'(start = 0.0, fixed = true);
+            discrete Real 'k'(start = 0.0); discrete Real 'd'(start = -1.0);
+            $declaration
+          equation
+            der('x') = 1.0; der('h') = 0.0; der('v') = 0.0;
+            $equation
+            when $condition then reinit('h', 10.0);
+            elsewhen sample(0, 0.5) then
+              reinit('v', pre('v') + 1.0); 'k' = pre('k') + 1.0;
+            end when;
+            $(advance ? "when pre('k') > 1.5 then 'd' = time; end when;" : "")
+        """
+        # P3/P3c require h=10, v=k=1, d=-1 at 0.6. Previously v=k=2,
+        # d=0.5 when snapshot advancement discarded the priority restore values.
+        if advance
+            err = reject_step(body, parser, ""; message = "mixing sample() and non-sample branches")
+            @test occursin("coincident priority restoration after snapshot advancement", sprint(showerror, err))
+        else
+            # P3ctl/P3cctl: without pre() in a condition, restoration works.
+            sys, sol = step_solution(body, parser; stop = 0.6)
+            @test sol(0.6; idxs = sys.h) ≈ 10.0
+            @test sol(0.6; idxs = sys.v) ≈ 1.0
+            @test sol(0.6; idxs = sys.k) == 1.0
+            @test sol(0.6; idxs = sys.d) == -1.0
+        end
+    end
+
+    @testset "P3d: two non-sample siblings ($reverse, $advance)" for reverse in (false, true), advance in (false, true)
+        definitions = ["'b1' = 'x' > 0.5;", "'b2' = 2.0 * 'x' > 1.0;"]
+        reverse && reverse!(definitions)
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                Real 'h'(start = 0.0, fixed = true);
+                Real 'v'(start = 0.0, fixed = true);
+                Boolean 'b1'; Boolean 'b2';
+                discrete Real 'k'(start = 0.0); discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = 1.0; der('h') = 0.0; der('v') = 0.0;
+                $(join(definitions, "\n"))
+                when 'b1' then reinit('h', 10.0);
+                elsewhen 'b2' then reinit('v', pre('v') + 1.0); 'k' = pre('k') + 1.0;
+                end when;
+                $(advance ? "when pre('k') > 0.5 then 'd' = time; end when;" : "")
+            """, parser; stop = 0.6
+        )
+        @test sol(0.6; idxs = sys.h) ≈ 10.0
+        @test sol(0.6; idxs = sys.v) == 0.0
+        @test sol(0.6; idxs = sys.k) == 0.0
+        @test sol(0.6; idxs = sys.d) == -1.0
+    end
+
+    @testset "P1/P1v/P1ctl: sign-derived event-step values ($variant)" for variant in (:P1, :P1v, :P1ctl)
+        start = variant === :P1v ? -1.0 : 0.0
+        argument = variant === :P1v ? "'x'" : "'x' - 0.5"
+        condition = variant === :P1v ? "'x' > 0.0" : "'x' > 0.5"
+        expression = variant === :P1ctl ? "if $argument > 0.0 then 1.0 else if $argument < 0.0 then -1.0 else 0.0" : "sign($argument)"
+        reject_step(
+            """
+                Real 'x'(start = $start, fixed = true); Real 'y';
+                discrete Real 'd'(start = -2.0);
+              equation
+                der('x') = 1.0; 'y' = $expression;
+                when $condition then 'd' = 'y'; end when;
+            """, parser, "y"
+        )
+        # §3.7.1: sign generates events. The event value is 1, whereas the
+        # previous implementation silently copied -1 (P1) or 0 (P1v).
+    end
+end
+
 @testset "Adjacent whole-step probes ($parser)" for parser in (:julia, :antlr)
     @testset "R2: bouncing ball with a pre(counter) threshold" begin
         ball = """
@@ -581,7 +660,7 @@ end
             e
         end
         @test err isa BaseModelica.UnsupportedFeatureError
-        @test occursin("plain derivative read", sprint(showerror, err))
+        @test occursin("plain derivative read `der('x')`", sprint(showerror, err))
     end
     @testset "S8/N1: Integer target ($name)" for name in ("n", "ctl.n")
         reject_step(

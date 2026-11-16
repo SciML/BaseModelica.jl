@@ -117,12 +117,12 @@ at its end, before advancing their pre-values (§8.3.6).
 The built-in `:mtk` backend rejects plain derivative reads in when-bodies and reinit
 right-hand sides. It also conservatively rejects non-state reads connected through equations
 to discrete values, Integers, relation Booleans, relations (even state-only if-expressions),
-or `floor`/`ceil`/`integer`/`div`/`mod`/`rem`. Implicit and alias dependencies are included;
+or `sign`/`floor`/`ceil`/`integer`/`div`/`mod`/`rem`. Implicit and alias dependencies are included;
 explicit continuous definitions from states, parameters and time stop propagation, so an
 unrelated downstream discrete setpoint does not prevent sampling a continuous measurement.
 The rejected reads require a separate algebraic event-step solve before reinit copies.
 Explicit `pre(v)` reads remain supported. Models with `pre()` in any when-condition also
-reject a when/elsewhen chain mixing sample clocks and continuous roots, since late
+reject a when/elsewhen chain mixing sample clocks and non-sample branches, since late
 coincident priority replacement cannot restore values after snapshot advancement.
 Symbolic `div` calls are rejected during expression translation.
 A state may be reinitialized in multiple branches of one chain, but not in separate
