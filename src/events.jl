@@ -571,25 +571,29 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
                 # the false interval (e.g. consecutive bouncing-ball impacts).
                 active[i] |= current[i]
             elseif first_root
-                if abs(crossing) <= WHEN_ROOT_TOLERANCE
+                # A root still on its old side can be reported by the solver later.
+                # Do not pre-fire it merely because its crossing value is tiny.
+                pending = previous[i] ? crossing > 0 : crossing < 0
+                if abs(crossing) <= WHEN_ROOT_TOLERANCE && !pending && !iszero(crossing)
                     current[i] = !previous[i]
                 else
-                    # Use the solver's local interpolant rather than differentiating
-                    # arbitrary algebraic root expressions or assuming a crossing scale.
-                    ahead_time = time + 32eps(Float64) * max(1, abs(time))
+                    # Estimate the root's change along the solution tangent. A
+                    # sqrt(eps) step avoids differencing noisy (notably Verner)
+                    # interpolants over the much smaller event-time window.
+                    window = 32eps(Float64) * max(1, abs(time))
+                    h = sqrt(eps(Float64)) * max(1, abs(time))
+                    du = integ(time, Val{1})
                     ahead = SymbolicIndexingInterface.ProblemState(;
-                        u = integ(ahead_time), p = SymbolicIndexingInterface.parameter_values(integ),
-                        t = ahead_time
-                    )
-                    # Recomputed stages can make integ(time) differ from integ.u
-                    # at a root. Take only the time delta from that same polynomial.
-                    now = SymbolicIndexingInterface.ProblemState(;
-                        u = integ(time), p = SymbolicIndexingInterface.parameter_values(integ),
-                        t = time
+                        u = integ.u .+ h .* du,
+                        p = SymbolicIndexingInterface.parameter_values(integ), t = time + h
                     )
                     g = SymbolicIndexingInterface.getsym(integ, block.crossing)
-                    value = crossing + (g(ahead) - g(now))
-                    if (crossing < 0 && value >= 0) || (crossing > 0 && value <= 0)
+                    value = crossing + (g(ahead) - crossing) * (window / h)
+                    if iszero(crossing)
+                        # A later root pass must not invent a falling edge for an
+                        # already handled rising root that now evaluates to zero.
+                        current[i] = iszero(value) ? previous[i] : value > 0
+                    elseif (crossing < 0 && value >= 0) || (crossing > 0 && value <= 0)
                         current[i] = crossing < 0
                     end
                 end

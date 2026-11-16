@@ -922,3 +922,63 @@ end
         @test sol(0.8; idxs = sys.n) == 0.0
     end
 end
+
+@testset "Round 14 single firing at coincident roots ($parser)" for parser in (:julia, :antlr)
+    # Count both clauses: saving a timestamp or reinitializing to the same value
+    # can hide a second firing. Rodas5P used to double-fire M1-unit and M2;
+    # Vern9 and FBDF also exposed the pending-root/interpolant problem.
+    @testset "M1: $variant ($(nameof(typeof(alg))))" for alg in (Rodas5P(), Vern9(), FBDF()),
+        variant in (:unit, :slow)
+
+        slope = variant === :unit ? 1.0 : 0.001
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = $(0.5 - 0.5slope), fixed = true);
+                discrete Real 'c'(start = 0.0); discrete Real 'k'(start = 0.0);
+              equation
+                der('x') = $slope;
+                when time > 0.5 then 'c' = pre('c') + 1.0; end when;
+                when 'x' > 0.5 then 'k' = pre('k') + 1.0; end when;
+            """, parser; stop = 0.6, alg
+        )
+        @test sol(0.6; idxs = sys.c) == 1.0
+        @test sol(0.6; idxs = sys.k) == 1.0
+    end
+
+    @testset "M2: coincident reinit ($(nameof(typeof(alg))))" for alg in (Rodas5P(), Vern9(), FBDF())
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = -499.5, fixed = true);
+                Real 'y'(start = 0.0, fixed = true);
+                discrete Real 'c'(start = 0.0); discrete Real 'k'(start = 0.0);
+              equation
+                der('x') = 1000.0; der('y') = 1.0;
+                when time > 0.5 then 'c' = pre('c') + 1.0; end when;
+                when 'x' > 0.5 then reinit('y', 0.0); 'k' = pre('k') + 1.0; end when;
+            """, parser; stop = 0.6, alg
+        )
+        @test sol(0.6; idxs = sys.c) == 1.0
+        @test sol(0.6; idxs = sys.k) == 1.0
+        # FBDF can locate the root less accurately than the event-time window.
+        # Counts must be exact; the saved state follows the solver tolerance.
+        @test sol[sys.y][end] ≈ 0.1 rtol = 1.0e-3
+    end
+
+    @testset "An exact-zero later root preserves its rising direction" begin
+        # Vern9 resolves these roots just outside the coincidence window. After
+        # x^2's own pass, the x pass sees both crossings exactly zero. Toggling
+        # x^2's true history to false would make the next accepted step fire again.
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'c'(start = 0.0); discrete Real 'k'(start = 0.0);
+              equation
+                der('x') = 1.0 - 'x'^3;
+                when 'x' > 0.5 then 'c' = pre('c') + 1.0; end when;
+                when 'x'^2 > 0.25 then 'k' = pre('k') + 1.0; end when;
+            """, parser; stop = 0.8, alg = Vern9()
+        )
+        @test sol(0.8; idxs = sys.c) == 1.0
+        @test sol(0.8; idxs = sys.k) == 1.0
+    end
+end

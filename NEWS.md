@@ -1,10 +1,13 @@
 # Unreleased
 
-- Coincident when roots now handle their own crossing on every callback pass, including
-  steep and late-time roots outside the crossing-value tolerance. A sign check on the
-  local interpolant selects coincident roots before lower-priority elsewhen cascades.
-  This check now takes the time delta from a single interpolating polynomial, avoiding
-  false events near unrelated roots when explicit solvers recompute their stages.
+- Coincident when roots handle their own crossing on every callback pass, including
+  steep and late-time roots outside the crossing-value tolerance. Pending roots use
+  a sign check along the solution tangent instead of a blind near-zero flip, avoiding
+  duplicate firings and noise from differencing local interpolants. Exact-zero roots
+  also follow the tangent direction instead of inventing another edge. Coincidence is
+  recognized only within `32eps(Float64)*max(1, abs(t))`; larger solver root-location
+  errors can change elsewhen priority. Vern9 can also report the same root twice
+  upstream. See README's "Known limitations" for details.
 - Ordinary equations reject cross-variable `pre()` reads instead of silently using the
   current value. Boolean self-reference for hysteresis remains supported. This limitation
   rejects MSL Logical.Pre and RSFlipFlop, StateGraph, and the friction models that use

@@ -90,6 +90,21 @@ Discontinuity event generation for `floor`/`integer`/`ceil`/`div`/`mod`/`rem` is
 unsupported. Calls hidden behind equation-defined intermediate variables are not
 detected by the when-condition guard and may silently miss events.
 
+## Known limitations
+
+Coincident roots are recognized only within a `32eps(Float64)*max(1, abs(t))` time
+window. Solvers with larger root-location error can resolve exactly coincident time
+and state roots as separate instants, changing `elsewhen` priority. In the event
+probes, FBDF errors were about `1e-10` to `1e-6`, and Rodas5P/Verner errors about
+`1e-14`; these are observations, not solver accuracy guarantees.
+
+Vern9 can also report the same root twice in upstream OrdinaryDiffEq/DiffEqBase:
+a plain `VectorContinuousCallback` on `[x - 0.5, z - 2]` with `x' = 1 - x^3`,
+`z' = 4(1 - x^3)`, starting from `x = z = 0`, can fire both indices twice
+at nearly identical times.
+If the repeated reports fall outside the coincidence window, BaseModelica also
+fires the clauses twice. This upstream duplicate-root issue remains unresolved.
+
 ## Installation
 
 Assuming that you already have Julia correctly installed, it suffices to import
