@@ -2,8 +2,14 @@
 
 - Self-resetting when-conditions no longer leave assignments armed for a later,
   unrelated event.
+- Event iteration now advances snapshots of unknowns read through `pre` in
+  when-conditions, including equation-defined Integer and discrete-time Real values.
+  These conditions no longer abort with "Modelica event iteration did not converge"
+  when an event changes the unknown.
 - Continuous when roots also detect continuous variables that appear only inside
   `pre`, for accepted nonstandard conditions using `pre(continuous_variable)`.
+  These condition snapshots advance during event iteration, including when the body
+  reinitializes the state or changes an algebraic dependency.
 - `WhenBlock.condition` now preserves `pre(v)` as `ModelingToolkit.Pre(v)`;
   previous versions replaced it with `v` in when-conditions. Backends must resolve
   these markers using shared values for each whole-system event iteration.

@@ -588,17 +588,18 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
             push!(chosen, block.chain)
         end
     end
-    for i in 1:n
-        # Match the ready flag below: a no-op selection after the body cleared
-        # its execute slots must not arm those assignments for a later event.
-        active == selected_before && break
-        slot = 2n + 4 + select.nsnapshots + i
-        if active[i]
-            old[slot] = 1.0
-        elseif selected_before[i] || old[slot] < -0.5
-            # A late coincident trigger replaced this branch. Restore its targets
-            # before applying the higher-priority body, including distinct reinits.
-            old[slot] = -1.0
+    # Match the ready flag below: a no-op selection after the body cleared
+    # its execute slots must not arm those assignments for a later event.
+    if active != selected_before
+        for i in 1:n
+            slot = 2n + 4 + select.nsnapshots + i
+            if active[i]
+                old[slot] = 1.0
+            elseif selected_before[i] || old[slot] < -0.5
+                # A late coincident trigger replaced this branch. Restore its targets
+                # before applying the higher-priority body, including distinct reinits.
+                old[slot] = -1.0
+            end
         end
     end
     old[1:n] = Float64.(current)
@@ -828,8 +829,12 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
         )
     )
     if !isempty(condition_reads)
-        # Only discrete pre values advance; continuous reads retain the event left limit.
-        indices = findall(v -> !any(isequal(v), model.variables), snapshot_sources)
+        # Every condition pre read must advance for event iteration to converge.
+        # model.variables also contains equation-defined discrete-time unknowns.
+        # Continuous values read only in bodies retain the event left limit.
+        indices = findall(snapshot_sources) do v
+            !any(isequal(v), model.variables) || any(isequal(v), condition_reads)
+        end
         changed_pre = Num(false)
         for (var, snapshot) in zip(snapshot_sources, snapshots)
             any(isequal(var), condition_reads) || continue

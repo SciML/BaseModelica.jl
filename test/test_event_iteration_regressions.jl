@@ -129,3 +129,87 @@ end
         @test sol(0.6; idxs = sys.y) == 1
     end
 end
+
+@testset "Unknowns read through pre in conditions ($parser)" for parser in (:julia, :antlr)
+    @testset "Q30: change of an equation-defined Integer" begin
+        path = iteration_model("""
+            Real 'x'(start = 0.0, fixed = true);
+            discrete Real 'c'(start = 0.0);
+            Integer 'n';
+            discrete Integer 'k'(start = 0);
+          equation
+            der('x') = 1.0;
+            'n' = if 'c' > 0.5 then 1 else 0;
+            when 'x' > 0.5 then 'c' = 1.0; end when;
+            when 'n' <> pre('n') then 'k' = pre('k') + 1; end when;
+        """)
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        # §3.7.5/§8.6: n is discrete-time even without a discrete qualifier.
+        # Its change activates k once, then pre(n) := n terminates iteration.
+        @test [sol(t; idxs = sys.n) for t in (0.4, 0.9)] == [0, 1]
+        @test [sol(t; idxs = sys.k) for t in (0.4, 0.9)] == [0, 1]
+    end
+
+    @testset "Q25: pre of an algebraic discrete-time Real" begin
+        path = iteration_model("""
+            Real 'x'(start = 0.0, fixed = true);
+            discrete Real 'c'(start = 0.0);
+            Real 'y';
+            discrete Real 'd'(start = 0.0);
+          equation
+            der('x') = 1.0;
+            'y' = 2.0 * 'c';
+            when 'x' > 0.5 then 'c' = pre('c') + 1.0; end when;
+            when pre('y') > 1.0 then 'd' = time; end when;
+        """)
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        # §3.7.5/§8.6: iteration 1 sets y = 2; iteration 2 sees pre(y) = 2
+        # at the same instant, rather than waiting for an accepted solver step.
+        @test sol(0.4; idxs = sys.d) == 0
+        @test sol(0.5 + 1.0e-8; idxs = sys.d) ≈ 0.5 atol = 1.0e-9
+        @test sol(0.9; idxs = sys.d) ≈ 0.5 atol = 1.0e-9
+        @test sol(0.9; idxs = sys.y) == 2
+    end
+
+    # Compatibility extension: continuous arguments to pre in conditions are
+    # outside §3.7.5/§3.8.4. Use pre(v) = v between events and advance condition
+    # snapshots in §8.6's iteration, including after a body changes the argument.
+    @testset "Q19: pre of a reinitialized state" begin
+        path = iteration_model("""
+            Real 'x'(start = 0.0, fixed = true);
+            discrete Integer 'n'(start = 0);
+          equation
+            der('x') = 1.0;
+            when pre('x') > 0.5 then
+              reinit('x', 0.0);
+              'n' = pre('n') + 1;
+            end when;
+        """)
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 3.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test [sol(t; idxs = sys.n) for t in (0.4, 0.7, 2.9)] == [0, 1, 5]
+        @test sol(0.7; idxs = sys.x) ≈ 0.2 atol = 1.0e-9
+    end
+
+    @testset "Q20: pre of an algebraic continuous Real" begin
+        path = iteration_model("""
+            Real 'x'(start = 0.0, fixed = true);
+            Real 'y';
+            discrete Real 'c'(start = 0.0);
+          equation
+            der('x') = 1.0;
+            'y' = 'x' + 'c';
+            when pre('y') > 1.0 then 'c' = pre('c') - 1.0; end when;
+        """)
+        sys = parse_basemodelica(path; parser, discrete_backend = :mtk)
+        sol = solve(ODEProblem(sys, [], (0.0, 3.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test [sol(t; idxs = sys.c) for t in (0.9, 1.1, 2.1, 2.9)] == [0, -1, -2, -2]
+        @test sol(2.9; idxs = sys.y) ≈ 0.9 atol = 1.0e-9
+    end
+end
