@@ -1,11 +1,21 @@
 # Unreleased
 
-- The `:mtk` backend now rejects plain when-body reads of non-state unknowns coupled
-  through equations to discrete-time quantities, including connection aliases,
-  equation-defined Integers and relation Booleans. These previously could silently
-  return the event-start value instead of the current event-step solution. This is
-  a conservative stop-gap until algebraic affect solves and reinit copies are separated;
-  it also applies to reinit right-hand sides. Explicit `pre(v)` reads remain supported.
+- The `:mtk` backend rejects direct derivative reads in when-bodies (including reinit
+  right-hand sides) with a translation-time diagnostic instead of stale values or `setsym`
+  errors. Its non-state read guard also covers Real targets of `floor`, `ceil`, `integer`,
+  `div`, `mod` and `rem`. Symbolic `div` calls fail explicitly during expression
+  translation, where Symbolics cannot yet construct the quotient. The guard conservatively
+  follows equations connected to discrete values, Integers, relation Booleans and relations,
+  including state-only if-expressions.
+  Explicit continuous definitions from states, parameters and time now stop propagation:
+  a downstream error involving a discrete setpoint no longer prevents sampling its
+  continuous measurement. Implicit dependencies remain conservative. Rejected reads need
+  separate algebraic event-step solves and reinit copies. Explicit `pre(v)` is supported.
+- Models with `pre()` in any when-condition reject a when/elsewhen chain mixing sample
+  clocks and continuous roots: coincident priority replacement after snapshot advancement
+  could otherwise leave the replaced branch's values and cascades in the solution.
+- Reinitializing the same state in separate when-equations now fails during translation;
+  multiple branches of a single when/elsewhen chain remain allowed (§8.3.6).
 - Snapshot advancement between event-iteration steps now includes body-only state and
   algebraic reads. Bodies selected in a later step see a previous step's reinit copy,
   independently of unrelated conditions that happen to read `pre` of those unknowns.
@@ -33,8 +43,8 @@
 - Calls to `floor`, `integer`, `ceil`, `div`, `mod`, or `rem` with continuous arguments
   written directly in when-conditions now raise `UnsupportedFeatureError` instead of
   silently missing required discontinuity events. Discontinuity event generation remains
-  unsupported; calls hidden behind equation-defined intermediate variables are not
-  detected and may still miss events.
+  unsupported; when-conditions using equation-defined intermediates can still miss
+  discontinuity events if the intermediate is not also covered by the body-read guard.
 - Logical use of when-assigned Booleans now raises `UnsupportedFeatureError` with a
   diagnostic explaining the limitation, instead of symbolic type errors.
   This validation also covers if-expression and if-equation conditions.

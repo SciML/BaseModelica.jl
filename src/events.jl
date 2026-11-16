@@ -459,9 +459,11 @@ The built-in discrete backend, registered as `:mtk` (the default). Discrete vari
 sample clocks select rising edges together, respecting `elsewhen` priority. Assignments
 and `reinit` become one symbolic affect solve. States read their event-iteration
 values (`Pre`), and explicit `pre(v)` reads the previous iteration's value. Plain reads
-of non-state unknowns coupled to discrete-time quantities are currently rejected, since
-they require recomputing algebraics before copying reinit values. Sample clocks include
-their initial tick.
+of derivatives and non-state unknowns connected to discrete values or event-generating
+relations/functions are conservatively rejected. Explicit continuous definitions stop
+that propagation. A chain mixing sample clocks and continuous roots is rejected if any
+when-condition reads `pre`, since restoration after snapshot advancement is unsupported.
+Sample clocks include their initial tick.
 """
 struct MTKEventsBackend <: AbstractDiscreteBackend end
 
@@ -682,16 +684,56 @@ function when_body_unknowns!(found, expr, candidates; skip_pre = false)
     return found
 end
 
-function has_event_relation(expr)
+function has_event_discontinuity(expr)
     expr = Symbolics.unwrap(expr)
     SymbolicUtils.iscall(expr) || return false
-    SymbolicUtils.operation(expr) in (<, <=, >, >=, ==, !=) && return true
-    return any(has_event_relation, SymbolicUtils.arguments(expr))
+    SymbolicUtils.operation(expr) in (<, <=, >, >=, ==, !=, floor, ceil, div, mod, rem) && return true
+    return any(has_event_discontinuity, SymbolicUtils.arguments(expr))
+end
+
+# Derivatives are event-step unknowns, not state snapshots. MTK cannot freeze
+# their direct reads reliably (including reinit RHSs), even without an alias.
+function reject_body_derivatives(expr)
+    expr = Symbolics.unwrap(expr)
+    SymbolicUtils.iscall(expr) || return nothing
+    op = SymbolicUtils.operation(expr)
+    op isa ModelingToolkit.Pre && return nothing
+    op isa Symbolics.Differential && unsupported(
+        "plain derivative read `$expr` in a when-body requires an algebraic event-step solve (not yet supported by :mtk)"
+    )
+    foreach(reject_body_derivatives, SymbolicUtils.arguments(expr))
+    return nothing
+end
+
+# Snapshot advancement discards the event-start values needed to undo a late
+# priority replacement, including cascades caused by the replaced branch.
+function validate_when_structure(blocks)
+    reads = Any[]
+    for block in blocks
+        isnothing(block.condition) || condition_pre_arguments!(reads, block.condition)
+    end
+    if !isempty(reads)
+        for block in blocks
+            isnothing(block.sample) && continue
+            any(b -> b.chain == block.chain && !isnothing(b.crossing), blocks) || continue
+            unsupported(
+                "an elsewhen chain mixing sample() and continuous roots in a model with pre() in when-conditions; " *
+                    "coincident priority restoration after snapshot advancement is not yet supported by :mtk"
+            )
+        end
+    end
+    owners = Dict{Any, Int}()
+    for block in blocks, (state, _) in block.reinits
+        if haskey(owners, state) && owners[state] != block.chain
+            unsupported("reinit of `$(symbol_name(state))` in multiple when-equations; use branches of the same when/elsewhen chain")
+        end
+        owners[state] = block.chain
+    end
+    return nothing
 end
 
 function validate_when_body_reads(model::DiscreteModel)
     algebraics = filter(v -> !any(isequal(v), model.states), model.variables)
-    isempty(algebraics) && return nothing
     discrete_quantities = vcat(first.(model.discretes), collect(values(relation_boolean_syms)))
     quantities = unique(vcat(algebraics, discrete_quantities))
     # Derivatives are unknowns too: e.g. der(x) = c; y = der(x). Keep them as
@@ -705,6 +747,23 @@ function validate_when_body_reads(model::DiscreteModel)
         symbol_name(v) in integer_variable_names ||
             SymbolicUtils.symtype(Symbolics.unwrap(v)) <: Integer
     end
+    # Peel off explicitly determined continuous signals. Sharing a downstream
+    # equation with a discrete setpoint does not make y = 2*x event-dependent.
+    # Keep relations/discontinuous functions guarded even on states: a left root
+    # value need not equal their event value. Leave implicit systems conservative.
+    fixed = Any[]
+    while true
+        before = length(fixed)
+        for eq in model.equations, (target, rhs) in ((eq.lhs, eq.rhs), (eq.rhs, eq.lhs))
+            any(isequal(target), algebraics) || continue
+            any(isequal(target), integer_unknowns) && continue
+            has_event_discontinuity(rhs) && continue
+            reads = when_body_unknowns!(Any[], rhs, quantities)
+            all(v -> any(isequal(v), fixed), reads) && union!(fixed, [target])
+        end
+        length(fixed) == before && break
+    end
+    filter!(v -> !any(isequal(v), fixed), quantities)
     affected = unique(vcat(discrete_quantities, integer_unknowns))
     equation_reads = [
         when_body_unknowns!(when_body_unknowns!(Any[], eq.lhs, quantities), eq.rhs, quantities)
@@ -713,7 +772,7 @@ function validate_when_body_reads(model::DiscreteModel)
     # Relations can appear directly in an equation's if-expression rather than
     # through an equation-defined Boolean parameter.
     for (eq, reads) in zip(model.equations, equation_reads)
-        (has_event_relation(eq.lhs) || has_event_relation(eq.rhs)) && union!(affected, reads)
+        (has_event_discontinuity(eq.lhs) || has_event_discontinuity(eq.rhs)) && union!(affected, reads)
     end
     while true
         before = length(affected)
@@ -723,11 +782,13 @@ function validate_when_body_reads(model::DiscreteModel)
         length(affected) == before && break
     end
     for block in model.when_blocks, (_, rhs) in Iterators.flatten((block.assignments, block.reinits))
+        reject_body_derivatives(rhs)
         for var in when_body_unknowns!(Any[], rhs, algebraics; skip_pre = true)
             any(isequal(var), affected) || continue
             unsupported(
                 "plain read of non-state unknown `$(symbol_name(var))` in a when-body; " *
-                    "its equations involve discrete-time quantities and require a simultaneous " *
+                    "its equations may change with discrete values or contain event-generating " *
+                    "relations/functions, requiring a simultaneous " *
                     "algebraic event-step solve before reinit values are copied (not yet supported by :mtk)"
             )
         end
@@ -742,6 +803,7 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     )
     blocks = model.when_blocks
     isempty(blocks) && return lowered
+    validate_when_structure(blocks)
     validate_when_body_reads(model)
     n = length(blocks)
     previous = [only(@discretes($(gensym(:when_previous))(t))) for _ in blocks]

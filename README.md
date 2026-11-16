@@ -25,10 +25,17 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   periodic `SymbolicDiscreteCallback`. In the body, `v = expr` updates a discrete variable
   and `reinit(x, expr)` resets a continuous state at the end of an event-iteration step.
   States stay fixed within each step; `pre(v)` reads the previous iteration's value.
-  Plain body reads of non-state unknowns coupled by equations to discrete-time quantities
-  (including connection aliases) currently raise `UnsupportedFeatureError`: these require
-  recomputing algebraics before copying reinit values. Explicit `pre(v)` reads remain
-  supported.
+  Plain body reads of derivatives are rejected. Non-state unknowns are also rejected
+  when connected by equations to discrete values, Integers, relation Booleans,
+  relations (including state-only if-expressions), or `floor`/`ceil`/`integer`/`div`/`mod`/`rem`.
+  This conservative guard includes reinit right-hand sides and implicit/alias dependencies;
+  explicitly determined continuous signals from states, parameters and time stop propagation.
+  These cases need a separate algebraic event-step solve before reinit copies.
+  Explicit `pre(v)` reads remain supported. A model with `pre()` in any when-condition
+  cannot mix sample clocks and continuous roots within one when/elsewhen chain:
+  restoration of a replaced branch after snapshot advancement is not yet supported.
+  Reinitializing one state in separate when-equations is diagnosed during translation.
+  Symbolic `div` calls are rejected during expression translation.
   The lowering is pluggable: other packages register backends with
   `BaseModelica.register_discrete_backend!`. With `using SynchToolkit` (SynchToolkit.jl
   ships the extension), `discrete_backend = :synchtoolkit` (experimental) makes discrete

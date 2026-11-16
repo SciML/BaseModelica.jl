@@ -52,7 +52,12 @@ function_map = Dict(
 
     # ── Event-triggering mathematical functions (Spec 3.7.2) ──────────────────
     # div: algebraic quotient with truncation toward zero
-    :div => x -> Base.div(x[1], x[2]),
+    :div => x -> begin
+        any(arg -> arg isa Num, x) && unsupported(
+            "div() with symbolic arguments; symbolic quotient lowering and its discontinuity events are not yet supported"
+        )
+        return Base.div(x[1], x[2])
+    end,
     :mod => x -> Base.mod(x[1], x[2]),
     :rem => x -> Base.rem(x[1], x[2]),
     :ceil => x -> Base.ceil(x...),

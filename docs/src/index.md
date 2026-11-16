@@ -114,12 +114,20 @@ whole-system event iterations, after solving the equations and when-conditions t
 (Modelica 3.6 §8.5 and §3.7.5). States stay fixed within a step; reinit values are copied
 at its end, before advancing their pre-values (§8.3.6).
 
-The built-in `:mtk` backend currently rejects plain when-body reads of non-state unknowns
-coupled through equations to discrete-time quantities, including connection aliases and
-reinit right-hand sides. Those reads require recomputing algebraics with the new discrete
-values while holding states fixed, then copying reinit values in a separate phase.
-Explicit `pre(v)` reads remain supported. Backends that delegate event handling can use
-`lower_discrete(MTKEventsBackend(), model)`.
+The built-in `:mtk` backend rejects plain derivative reads in when-bodies and reinit
+right-hand sides. It also conservatively rejects non-state reads connected through equations
+to discrete values, Integers, relation Booleans, relations (even state-only if-expressions),
+or `floor`/`ceil`/`integer`/`div`/`mod`/`rem`. Implicit and alias dependencies are included;
+explicit continuous definitions from states, parameters and time stop propagation, so an
+unrelated downstream discrete setpoint does not prevent sampling a continuous measurement.
+The rejected reads require a separate algebraic event-step solve before reinit copies.
+Explicit `pre(v)` reads remain supported. Models with `pre()` in any when-condition also
+reject a when/elsewhen chain mixing sample clocks and continuous roots, since late
+coincident priority replacement cannot restore values after snapshot advancement.
+Symbolic `div` calls are rejected during expression translation.
+A state may be reinitialized in multiple branches of one chain, but not in separate
+when-equations; the latter is diagnosed during translation.
+Backends that delegate event handling can use `lower_discrete(MTKEventsBackend(), model)`.
 
 Backend compatibility change: `WhenBlock.condition` now preserves `pre(v)` as
 `ModelingToolkit.Pre(v)` instead of replacing it with `v`. Backends must resolve those

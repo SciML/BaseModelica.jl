@@ -26,15 +26,15 @@ end
 
 # A1-A3/B1-B2 are valid Modelica. Until the backend separates algebraic solves
 # from reinit copies, reject them instead of returning the stale values from round 7.
-function reject_step(body, parser, unknown)
+function reject_step(body, parser, unknown; message = "plain read of non-state unknown `$unknown`")
     err = try
         parse_basemodelica(step_model(body); parser, discrete_backend = :mtk)
     catch e
         e
     end
     @test err isa BaseModelica.UnsupportedFeatureError
-    @test occursin("plain read of non-state unknown `$unknown`", sprint(showerror, err))
-    return nothing
+    @test occursin(message, sprint(showerror, err))
+    return err
 end
 
 @testset "Event-step values" begin
@@ -293,4 +293,315 @@ end
         end
     end
 
+end
+
+@testset "Round 9 guard regressions ($parser)" for parser in (:julia, :antlr)
+    @testset "S1/S1b: direct derivative reads ($reinit)" for reinit in (false, true)
+        # §8.6 requires d = 2 (or z := 2), not the old derivative 1.
+        body = reinit ? "reinit('z', der('x'));" : "'d' = der('x');"
+        err = try
+            parse_basemodelica(
+                step_model(
+                    """
+                        Real 'x'(start = 0.0, fixed = true);
+                        Real 'z'(start = 0.0, fixed = true);
+                        discrete Real 'c'(start = 1.0); discrete Real 'd'(start = 0.0);
+                      equation
+                        der('x') = 'c'; der('z') = 0.0;
+                        when 'x' > 0.5 then 'c' = 2.0; $body end when;
+                    """
+                ); parser
+            )
+        catch e
+            e
+        end
+        @test err isa BaseModelica.UnsupportedFeatureError
+        @test occursin("plain derivative read", sprint(showerror, err))
+        @test occursin("event-step solve", sprint(showerror, err))
+    end
+
+    @testset "R1: coincident priority after snapshot advancement" begin
+        # At 0.6 Modelica requires h=10, v=1, c=1, d=-1. Advancing
+        # snapshots loses the sample branch's restore values and its cascades.
+        err = try
+            parse_basemodelica(
+                step_model(
+                    """
+                        Real 'x'(start = 0.0, fixed = true);
+                        Real 'h'(start = 0.0, fixed = true);
+                        Real 'v'(start = 0.0, fixed = true);
+                        discrete Real 'c'(start = 0.0); discrete Real 'd'(start = -1.0);
+                      equation
+                        der('x') = 1.0; der('h') = 0.0; der('v') = 0.0;
+                        when 'x' > 0.5 then reinit('h', 10.0);
+                        elsewhen sample(0, 0.5) then
+                          reinit('v', pre('v') + 1.0); 'c' = pre('c') + 1.0;
+                        end when;
+                        when pre('c') > 1.5 then 'd' = time; end when;
+                    """
+                ); parser
+            )
+        catch e
+            e
+        end
+        @test err isa BaseModelica.UnsupportedFeatureError
+        @test occursin("coincident priority restoration after snapshot advancement", sprint(showerror, err))
+    end
+
+    @testset "G4: continuous signal with downstream discrete error ($reverse)" for reverse in (false, true)
+        equation = reverse ? "2.0 * 'x' = 'y';" : "'y' = 2.0 * 'x';"
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'y'; Real 'e';
+                discrete Real 'r'(start = 0.0); discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = 1.0; $equation 'e' = 'r' - 'y';
+                when 'x' > 0.5 then 'r' = 2.0; 'd' = 'y'; end when;
+            """, parser; stop = 0.9
+        )
+        @test sol(0.9; idxs = sys.d) ≈ 1.0 atol = 1.0e-9
+    end
+
+    @testset "G5b: sampler with continuous measurement and discrete setpoint" begin
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'ymeas'; Real 'e';
+                discrete Real 'r_d'(start = 0.0); discrete Real 'ys'(start = -1.0);
+              equation
+                der('x') = 'e'; 'ymeas' = 'x'; 'e' = 'r_d' - 'ymeas';
+                when sample(0, 0.3) then 'ys' = 'ymeas'; 'r_d' = 1.0; end when;
+            """, parser; stop = 1.0
+        )
+        # x(t) = 1-exp(-t); the last sample before 1.0 is at 0.9.
+        @test sol(1.0; idxs = sys.ys) ≈ 1 - exp(-0.9) atol = 1.0e-5
+    end
+
+    @testset "G1/G6: relations on continuous states remain conservative" begin
+        err = reject_step(
+            """
+                Real 'h'(start = 1.0, fixed = true); Real 'v'(start = 0.0, fixed = true);
+                Real 'speed'; discrete Real 'd'(start = 0.0);
+              equation
+                der('h') = 'v'; der('v') = -9.81;
+                'speed' = if 'v' < 0.0 then -'v' else 'v';
+                when 'h' < 0.0 then reinit('v', -0.8 * pre('v')); 'd' = 'speed'; end when;
+            """, parser, "speed"
+        ) # Modelica d = sqrt(2*9.81).
+        @test occursin("event-generating relations/functions", sprint(showerror, err))
+        @test !occursin("involve discrete-time quantities", sprint(showerror, err))
+        reject_step(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'sat'; Real 'y';
+                discrete Real 'd'(start = 0.0);
+              equation
+                der('x') = 1.0; 'sat' = if 'x' > 2.0 then 2.0 else 'x'; 'y' = 3.0 * 'sat';
+                when 'x' > 0.5 then 'd' = 'y'; end when;
+            """, parser, "y"
+        ) # Modelica d = 1.5.
+        # Removing *all* state-only relations would silently return d=0 here,
+        # since LeftRootFind may stop just below x=0.5. Modelica requires d=1.
+        reject_step(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'y'; discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = 1.0; 'y' = if 'x' > 0.5 then 1.0 else 0.0;
+                when 'x' > 0.5 then 'd' = 'y'; end when;
+            """, parser, "y"
+        )
+    end
+
+    @testset "S3: event-generating functions on Real targets ($expression)" for expression in
+        (
+            "floor(2.0 * 'x')", "ceil(2.0 * 'x')", "integer(2.0 * 'x')",
+            "div(2.0 * 'x', 1.0)", "mod(2.0 * 'x', 1.0)", "rem(2.0 * 'x', 1.0)",
+        )
+        # At the event floor/integer/div are 1; ceil is 1; mod/rem are 0.
+        # The backend does not generate the functions' discontinuity events.
+        message = startswith(expression, "div(") ? "div() with symbolic arguments" :
+            "plain read of non-state unknown `y`"
+        reject_step(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'y'; discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = 1.0; 'y' = $expression;
+                when 'x' > 0.5 then 'd' = 'y'; end when;
+            """, parser, "y"; message
+        )
+    end
+
+    @testset "Constant div remains supported" begin
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'y'; discrete Real 'd'(start = 0.0);
+              equation
+                der('x') = 1.0; 'y' = div(-5.5, 2.0);
+                when 'x' > 0.5 then 'd' = 'y'; end when;
+            """, parser; stop = 0.9
+        )
+        @test sol(0.9; idxs = sys.d) == -2.0
+    end
+
+    @testset "R4: reinit of one state in separate when-equations" begin
+        err = try
+            parse_basemodelica(
+                step_model(
+                    """
+                        Real 'x'(start = 0.0, fixed = true); discrete Real 'c'(start = 0.0);
+                      equation
+                        der('x') = 1.0;
+                        when 'x' > 0.5 then reinit('x', 0.0); 'c' = 1.0; end when;
+                        when 'c' > 0.5 then reinit('x', 'x' + 10.0); end when;
+                    """
+                ); parser
+            )
+        catch e
+            e
+        end
+        @test err isa BaseModelica.UnsupportedFeatureError
+        @test occursin("reinit of `x` in multiple when-equations", sprint(showerror, err))
+        # §8.3.6 permits this only within the same when/elsewhen chain.
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+              equation
+                der('x') = 1.0;
+                when 'x' > 0.5 then reinit('x', 0.0);
+                elsewhen 'x' > 0.75 then reinit('x', 10.0); end when;
+            """, parser; stop = 0.9
+        )
+        @test sol(0.9; idxs = sys.x) ≈ 0.4 atol = 1.0e-9
+    end
+end
+
+@testset "Adjacent whole-step probes ($parser)" for parser in (:julia, :antlr)
+    @testset "R2: bouncing ball with a pre(counter) threshold" begin
+        ball = """
+            Real 'h'(start = 1.0, fixed = true); Real 'v'(start = 0.0, fixed = true);
+            discrete Integer 'n'(start = 0); discrete Real 'd'(start = -1.0);
+          equation
+            der('h') = 'v'; der('v') = -9.81;
+            when 'h' < 0.0 then reinit('v', -0.8 * pre('v')); 'n' = pre('n') + 1; end when;
+        """
+        sys, sol = step_solution(ball * "when pre('n') >= 2 then 'd' = 'v'; end when;", parser; stop = 1.3)
+        ctl, control = step_solution(ball, parser; stop = 1.3)
+        @test sol(1.3; idxs = sys.d) ≈ 0.8^2 * sqrt(2 * 9.81) atol = 1.0e-8
+        @test sol(1.3; idxs = sys.n) == 2
+        for time in (0.4, 0.6, 1.0, 1.3), (var, ref) in ((sys.h, ctl.h), (sys.v, ctl.v))
+            @test sol(time; idxs = var) ≈ control(time; idxs = ref) atol = 1.0e-8
+        end
+    end
+    @testset "R5: later reinit reads the copied state" begin
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'z'(start = 0.0, fixed = true);
+                discrete Real 'c'(start = 0.0);
+              equation
+                der('x') = 1.0; der('z') = 0.0;
+                when 'x' > 0.5 then reinit('x', 0.0); 'c' = 1.0; end when;
+                when pre('c') > 0.5 then reinit('z', 'x' + 5.0); end when;
+            """, parser; stop = 0.9
+        )
+        @test sol(0.9; idxs = sys.z) ≈ 5.0 atol = 1.0e-9
+    end
+    @testset "R6: sample counter, reinit and pre threshold" begin
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Integer 'k'(start = 0); discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = 1.0;
+                when sample(0, 0.5) then 'k' = pre('k') + 1; reinit('x', 0.0); end when;
+                when pre('k') >= 3 then 'd' = 100.0 * pre('k') + 'x'; end when;
+            """, parser; stop = 2.2
+        )
+        @test [sol(t; idxs = sys.k) for t in (0.1, 1.1, 2.2)] == [1, 3, 5]
+        @test [sol(t; idxs = sys.x) for t in (0.1, 1.1, 2.2)] ≈ [0.1, 0.1, 0.2] atol = 1.0e-9
+        @test sol(2.2; idxs = sys.d) ≈ 300.0 atol = 1.0e-9
+    end
+    @testset "R7: reinit and pre counters in both steps" begin
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Integer 'c'(start = 0); discrete Integer 'k'(start = 0);
+                discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = 1.0;
+                when 'x' > 0.5 then reinit('x', 0.0); 'c' = pre('c') + 1; end when;
+                when pre('c') > 0 then 'k' = pre('k') + 1; 'd' = 'x'; end when;
+            """, parser; stop = 0.9
+        )
+        @test sol(0.9; idxs = sys.c) == 1
+        @test sol(0.9; idxs = sys.k) == 1
+        @test sol(0.9; idxs = sys.d) ≈ 0.0 atol = 1.0e-9
+    end
+end
+
+@testset "Adjacent algebraic guard probes ($parser)" for parser in (:julia, :antlr)
+    @testset "G2/G2b: time does not connect independent equations ($relation)" for relation in (false, true)
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'y'; Real 'unrelated';
+                discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = 1.0; 'y' = 2.0 * time;
+                'unrelated' = $(relation ? "if time > 0.25 then 1.0 else 0.0" : "3.0 * time");
+                when 'x' > 0.5 then 'd' = 'y'; end when;
+            """, parser; stop = 0.9
+        )
+        @test sol(0.9; idxs = sys.d) ≈ 1.0 atol = 1.0e-9
+    end
+    @testset "G5: state separates a signal from discrete dynamics" begin
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'ymeas'; Real 'e';
+                discrete Real 'r_d'(start = 1.0); discrete Real 'ys'(start = -1.0);
+              equation
+                der('x') = 'r_d'; 'ymeas' = 2.0 * 'x'; 'e' = 'r_d' - 'ymeas';
+                when time > 0.25 then 'r_d' = 2.0; end when;
+                when time > 0.5 then 'ys' = 'ymeas'; end when;
+            """, parser; stop = 0.7
+        )
+        @test sol(0.7; idxs = sys.ys) ≈ 1.5 atol = 1.0e-8
+    end
+    @testset "S1c: cascaded derivative reads get the same diagnostic" begin
+        err = try
+            parse_basemodelica(
+                step_model(
+                    """
+                        Real 'x'(start = 0.0, fixed = true);
+                        discrete Real 'c'(start = 1.0); discrete Real 'd'(start = 0.0);
+                      equation
+                        der('x') = 'c';
+                        when 'x' > 0.5 then 'c' = 2.0; end when;
+                        when 'c' > 1.5 then 'd' = der('x'); end when;
+                    """
+                ); parser
+            )
+        catch e
+            e
+        end
+        @test err isa BaseModelica.UnsupportedFeatureError
+        @test occursin("plain derivative read", sprint(showerror, err))
+    end
+    @testset "S8/N1: Integer target ($name)" for name in ("n", "ctl.n")
+        reject_step(
+            """
+                Real 'x'(start = 0.0, fixed = true); Integer '$name'; discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = 1.0; '$name' = integer(2.0 * 'x');
+                when 'x' > 0.5 then 'd' = '$name'; end when;
+            """, parser, name
+        )
+    end
+    @testset "S6: array algebraic read" begin
+        reject_step(
+            """
+                Real 'x'(start = 0.0, fixed = true); Real 'y'[2];
+                discrete Real 'c'(start = 0.0); discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = 1.0; 'y' = {'c', 2.0 * 'c'};
+                when 'x' > 0.5 then 'c' = 1.0; 'd' = 'y'[2]; end when;
+            """, parser, "y[2]"
+        )
+    end
 end
