@@ -121,9 +121,11 @@ or `sign`/`floor`/`ceil`/`integer`/`div`/`mod`/`rem`. Implicit and alias depende
 explicit continuous definitions from states, parameters and time stop propagation, so an
 unrelated downstream discrete setpoint does not prevent sampling a continuous measurement.
 The rejected reads require a separate algebraic event-step solve before reinit copies.
-Explicit `pre(v)` reads remain supported. Models with `pre()` in any when-condition also
-reject a when/elsewhen chain mixing sample clocks and non-sample branches, since late
-coincident priority replacement cannot restore values after snapshot advancement.
+`sign` is event-free (MLS 3.6 §3.7.1, `noEvent` expansion); its value at a coincident root
+is numerically ill-defined, so sign-derived non-state reads are guarded conservatively too.
+Explicit `pre(v)` reads remain supported. Models with `pre()` in any when-condition and
+`sample()` anywhere reject every multi-branch when/elsewhen chain with a non-sample branch,
+since late coincident priority replacement cannot restore values after snapshot advancement.
 Symbolic `div` calls are rejected during expression translation.
 A state may be reinitialized in multiple branches of one chain, but not in separate
 when-equations; the latter is diagnosed during translation.

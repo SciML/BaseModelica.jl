@@ -460,9 +460,12 @@ sample clocks select rising edges together, respecting `elsewhen` priority. Assi
 and `reinit` become one symbolic affect solve. States read their event-iteration
 values (`Pre`), and explicit `pre(v)` reads the previous iteration's value. Plain reads
 of derivatives and non-state unknowns connected to discrete values or event-generating
-relations/functions are conservatively rejected. Explicit continuous definitions stop
-that propagation. A chain mixing sample clocks and non-sample branches is rejected if any
-when-condition reads `pre`, since restoration after snapshot advancement is unsupported.
+relations/functions are conservatively rejected. The event-free `sign` function is also
+guarded: without an algebraic event-step solve its value at a coincident root is numerically
+ill-defined. Explicit continuous definitions stop that propagation. If any when-condition
+reads `pre` and any sample clock exists in the model, every multi-branch when/elsewhen chain
+with a non-sample branch is rejected, since restoration after snapshot advancement is
+unsupported.
 Sample clocks include their initial tick.
 """
 struct MTKEventsBackend <: AbstractDiscreteBackend end
@@ -684,6 +687,8 @@ function when_body_unknowns!(found, expr, candidates; skip_pre = false)
     return found
 end
 
+# Includes event-free sign conservatively: its value at a coincident root is
+# numerically ill-defined, and the backend has no algebraic event-step solve.
 function has_event_discontinuity(expr)
     expr = Symbolics.unwrap(expr)
     SymbolicUtils.iscall(expr) || return false
@@ -716,12 +721,12 @@ function validate_when_structure(blocks)
     for block in blocks
         isnothing(block.condition) || condition_pre_arguments!(reads, block.condition)
     end
-    if !isempty(reads)
+    if !isempty(reads) && any(b -> !isnothing(b.sample), blocks)
         for block in blocks
-            isnothing(block.sample) && continue
-            any(b -> b.chain == block.chain && isnothing(b.sample), blocks) || continue
+            isnothing(block.sample) || continue
+            count(b -> b.chain == block.chain, blocks) > 1 || continue
             unsupported(
-                "an elsewhen chain mixing sample() and non-sample branches in a model with pre() in when-conditions; " *
+                "a multi-branch when/elsewhen chain with a non-sample branch in a model with sample() anywhere and pre() in when-conditions; " *
                     "coincident priority restoration after snapshot advancement is not yet supported by :mtk"
             )
         end

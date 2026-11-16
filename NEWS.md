@@ -11,10 +11,14 @@
   a downstream error involving a discrete setpoint no longer prevents sampling its
   continuous measurement. Implicit dependencies remain conservative. Rejected reads need
   separate algebraic event-step solves and reinit copies. Explicit `pre(v)` is supported.
-- Models with `pre()` in any when-condition reject a when/elsewhen chain mixing sample
-  clocks and non-sample branches: coincident priority replacement after snapshot advancement
-  could otherwise leave the replaced branch's values and cascades in the solution.
-  This includes equation-defined Boolean and discrete conditions, even without a direct root.
+- The `sign` body-read guard is conservative: `sign` is event-free (MLS 3.6 §3.7.1,
+  `noEvent` expansion), but its value at a coincident root is numerically ill-defined
+  without an algebraic event-step solve. It does not require discontinuity events.
+- Models with `pre()` in any when-condition and `sample()` anywhere reject every
+  multi-branch when/elsewhen chain with a non-sample branch: coincident priority replacement
+  after snapshot advancement could otherwise leave the replaced branch's values and cascades in the solution.
+  This includes equation-defined Boolean and discrete conditions, even when the sample
+  is in a separate when-equation or the chain has no direct root.
 - Reinitializing the same state in separate when-equations now fails during translation;
   multiple branches of a single when/elsewhen chain remain allowed (§8.3.6).
 - Snapshot advancement between event-iteration steps now includes body-only state and

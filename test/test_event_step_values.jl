@@ -496,7 +496,7 @@ end
         # P3/P3c require h=10, v=k=1, d=-1 at 0.6. Previously v=k=2,
         # d=0.5 when snapshot advancement discarded the priority restore values.
         if advance
-            err = reject_step(body, parser, ""; message = "mixing sample() and non-sample branches")
+            err = reject_step(body, parser, ""; message = "multi-branch when/elsewhen chain with a non-sample branch")
             @test occursin("coincident priority restoration after snapshot advancement", sprint(showerror, err))
         else
             # P3ctl/P3cctl: without pre() in a condition, restoration works.
@@ -547,8 +547,67 @@ end
                 when $condition then 'd' = 'y'; end when;
             """, parser, "y"
         )
-        # §3.7.1: sign generates events. The event value is 1, whereas the
-        # previous implementation silently copied -1 (P1) or 0 (P1v).
+        # §3.7.1: sign is event-free (noEvent expansion). At a coincident root
+        # its value is numerically ill-defined; without an algebraic event-step
+        # solve, reject conservatively rather than asserting a left/right value.
+    end
+end
+
+@testset "Round 11 guard regressions ($parser)" for parser in (:julia, :antlr)
+    @testset "Q1: sample in a separate when ($upper, $lower, $advance)" for upper in (:root, :bool), lower in (:disc, :bool), advance in (false, true)
+        udecl = upper === :bool ? "Boolean 'r';" : ""
+        ueq = upper === :bool ? "'r' = 'x' > 0.5;" : ""
+        ucond = upper === :bool ? "'r'" : "'x' > 0.5"
+        ldecl = lower === :bool ? "Boolean 'b';" : ""
+        leq = lower === :bool ? "'b' = 'c' > 1.5;" : ""
+        lcond = lower === :bool ? "'b'" : "'c' > 1.5"
+        body = """
+            Real 'x'(start = 0.0, fixed = true);
+            Real 'h'(start = 0.0, fixed = true); Real 'v'(start = 0.0, fixed = true);
+            discrete Real 'c'(start = 0.0); discrete Real 'k'(start = 0.0);
+            discrete Real 'd'(start = -1.0);
+            $udecl $ldecl
+          equation
+            der('x') = 1.0; der('h') = 0.0; der('v') = 0.0;
+            $ueq $leq
+            when sample(0, 0.5) then 'c' = pre('c') + 1.0; end when;
+            when $ucond then reinit('h', 10.0);
+            elsewhen $lcond then reinit('v', pre('v') + 1.0); 'k' = pre('k') + 1.0;
+            end when;
+            $(advance ? "when pre('k') > 0.5 then 'd' = time; end when;" : "")
+        """
+        if advance
+            # The sample cascade can select the lower branch before the root.
+            # Advancing pre then loses the values needed to undo that branch.
+            reject_step(body, parser, ""; message = "sample() anywhere and pre() in when-conditions")
+        else
+            sys, sol = step_solution(body, parser; stop = 0.6)
+            @test sol(0.6; idxs = sys.h) ≈ 10.0
+            @test sol(0.6; idxs = sys.v) == 0.0
+            @test sol(0.6; idxs = sys.k) == 0.0
+            @test sol(0.6; idxs = sys.d) == -1.0
+        end
+    end
+
+    @testset "Q2: sample-free coincident roots ($upper, $lower, $advance)" for (upper, lower) in
+        (("time > 0.5", "'x' > 0.5"), ("'x' * 'x' > 0.25", "'x' > 0.5"), ("'x' > 0.5", "time > 0.5")), advance in (false, true)
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                Real 'h'(start = 0.0, fixed = true); Real 'v'(start = 0.0, fixed = true);
+                discrete Real 'k'(start = 0.0); discrete Real 'd'(start = -1.0);
+              equation
+                der('x') = 1.0; der('h') = 0.0; der('v') = 0.0;
+                when $upper then reinit('h', 10.0);
+                elsewhen $lower then reinit('v', pre('v') + 1.0); 'k' = pre('k') + 1.0;
+                end when;
+                $(advance ? "when pre('k') > 0.5 then 'd' = time; end when;" : "")
+            """, parser; stop = 0.6
+        )
+        @test sol(0.6; idxs = sys.h) ≈ 10.0
+        @test sol(0.6; idxs = sys.v) == 0.0
+        @test sol(0.6; idxs = sys.k) == 0.0
+        @test sol(0.6; idxs = sys.d) == -1.0
     end
 end
 
