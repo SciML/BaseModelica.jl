@@ -1009,7 +1009,8 @@ end
             step_model(
                 """
                     Real 'v'(start = 0.0, fixed = true);
-                    Real 'i'; Real 's'; Real 'vd'; Boolean 'off'(start = true);
+                    Real 'i'(start = 0.0); Real 's'(start = 0.0); Real 'vd'(start = 0.0);
+                    Boolean 'off'(start = true);
                   equation
                     der('v') = 'i' - 'v';
                     sin(time) = 'vd' + 'i' + 'v';
