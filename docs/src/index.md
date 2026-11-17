@@ -161,6 +161,7 @@ BaseModelica.unregister_discrete_backend!
 BaseModelica.lower_discrete
 BaseModelica.declare_discrete
 BaseModelica.compile_system
+BaseModelica.check_algebraic_crossings
 BaseModelica.DiscreteModel
 BaseModelica.WhenBlock
 BaseModelica.when_edge
