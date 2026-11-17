@@ -177,7 +177,7 @@ lower them as described at the top of this file. Returns a named tuple with the 
 `equations`, and the `parameters`, `bindings`, `initialization_eqs`, `continuous_events`,
 `discrete_events` and `definitions` (name => definition) for the system.
 """
-function lower_relation_booleans(eqs, model_name)
+function lower_relation_booleans(eqs, model_name; blocks = WhenBlock[])
     has_states = !isempty(differentiated_variables(eqs))
     names = sort!(collect(keys(relation_boolean_syms)))
     syms = [relation_boolean_syms[name] for name in names]
@@ -203,10 +203,12 @@ function lower_relation_booleans(eqs, model_name)
     # Ordinary equations do not share the when backend's event-iteration snapshots.
     # Only self-referencing Boolean definitions can resolve pre locally. Reject other
     # reads before substitution can silently replace the left limit with the current value.
+    hysteresis = Symbol[]
     for (name, definition) in definitions
         reads = condition_pre_arguments!(Num[], definition)
         any(arg -> !isequal(arg, relation_boolean_syms[name]), reads) &&
             unsupported("pre() in ordinary equations is only supported for a Boolean's self-reference (definition of `$name`)")
+        isempty(reads) || push!(hysteresis, name)
     end
     for eq in equations
         reads = condition_pre_arguments!(Num[], eq.lhs)
@@ -225,6 +227,34 @@ function lower_relation_booleans(eqs, model_name)
     equations = Equation[Symbolics.substitute(eq, pre_current) for eq in equations]
     for (name, definition) in definitions
         definitions[name] = Symbolics.substitute(definition, pre_current)
+    end
+
+    # Only edge consumers and memory can latch a wrong-side algebraic root update.
+    # Level-semantic relations (e.g. ideal diode off = s < 0) can re-evaluate their
+    # definition. Follow Boolean dependencies transitively, including through pre.
+    guarded = Dict{Symbol, String}(
+        name => "hysteresis Boolean `$name` condition `$(definitions[name])`" for name in hysteresis
+    )
+    for block in blocks
+        isnothing(block.condition) && continue
+        condition = Symbolics.substitute(block.condition, pre_current)
+        reads = Symbolics.get_variables(condition)
+        for (name, sym) in zip(names, syms)
+            any(isequal(Symbolics.unwrap(sym)), reads) || continue
+            guarded[name] = "when-condition `$(block.condition)` via Boolean `$name`"
+        end
+    end
+    pending = collect(keys(guarded))
+    while !isempty(pending)
+        name = pop!(pending)
+        haskey(definitions, name) || continue
+        reads = Symbolics.get_variables(definitions[name])
+        for (dependency, sym) in zip(names, syms)
+            haskey(guarded, dependency) && continue
+            any(isequal(Symbolics.unwrap(sym)), reads) || continue
+            guarded[dependency] = guarded[name]
+            push!(pending, dependency)
+        end
     end
 
     parameters = Num[]
@@ -292,21 +322,25 @@ function lower_relation_booleans(eqs, model_name)
                 )
             ),
         }(Tuple(Num.(vcat(atoms, abs.(crossings), scales, [t]))))
-        function affect(forced)
+        function affect(forced; ctx = nothing)
             update = RelationBooleanUpdate(
                 definitions_, values[defined], atoms, crossing_of, forced, depends
             )
-            return ModelingToolkitBase.ImperativeAffect(update; modified, observed)
+            return ModelingToolkitBase.ImperativeAffect(update; modified, observed, ctx)
         end
         for (j, c) in enumerate(crossings)
             crossed = findall(==(j), crossing_of)
+            owner = findfirst(eachindex(defined)) do k
+                haskey(guarded, names[defined[k]]) && any(in(crossed), depends[k])
+            end
+            ctx = isnothing(owner) ? nothing : AlgebraicCrossingCondition(guarded[names[defined[owner]]])
             after(sign) = Dict{Int, Bool}(
                 i => relation_value_after(atoms[i], sign * crossing_sign[i]) for i in crossed
             )
             push!(
                 continuous_events, ModelingToolkitBase.SymbolicContinuousCallback(
-                    continuous_conditions([c], has_states), affect(after(1));
-                    affect_neg = affect(after(-1)), reinitializealg = EVENT_REINITIALIZATION
+                    continuous_conditions([c], has_states), affect(after(1); ctx);
+                    affect_neg = affect(after(-1); ctx), reinitializealg = EVENT_REINITIALIZATION
                 )
             )
         end

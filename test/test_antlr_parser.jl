@@ -381,12 +381,10 @@ BM = BaseModelica
         # Verify the when-equation produces a continuous callback
         @test !isempty(ModelingToolkit.continuous_events(triac_system))
 
-        # These circuit roots read retained algebraic currents. Parsing and
-        # lowering remain supported; compilation must reject unsafe crossings.
-        @test_throws BM.UnsupportedFeatureError BM.baseModelica_to_ModelingToolkit(triac_package)
+        @test BM.baseModelica_to_ModelingToolkit(triac_package) isa System
         for parser in (:julia, :antlr)
             @test parse_basemodelica(triac_path; parser, simplify = false) isa System
-            @test_throws BM.UnsupportedFeatureError parse_basemodelica(triac_path; parser)
+            @test parse_basemodelica(triac_path; parser) isa System
         end
     end
 
@@ -401,10 +399,30 @@ BM = BaseModelica
         @test diode_system isa System
 
         @test !isempty(ModelingToolkit.continuous_events(diode_system))
-        @test_throws BM.UnsupportedFeatureError BM.baseModelica_to_ModelingToolkit(diode_package)
+        @test BM.baseModelica_to_ModelingToolkit(diode_package) isa System
         for parser in (:julia, :antlr)
             @test parse_basemodelica(diode_path; parser, simplify = false) isa System
-            @test_throws BM.UnsupportedFeatureError parse_basemodelica(diode_path; parser)
+            sys = parse_basemodelica(diode_path; parser)
+            prob = ODEProblem(
+                sys, [], (0.0, 2.0);
+                missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0)
+            )
+            # Stateless models need a step bound to resolve their relation roots.
+            for alg in (nothing, Rodas5P(), FBDF())
+                sol = isnothing(alg) ? solve(prob; dtmax = 1.0e-3, reltol = 1.0e-8, abstol = 1.0e-10) :
+                    solve(prob, alg; dtmax = 1.0e-3, reltol = 1.0e-8, abstol = 1.0e-10)
+                @test sol.retcode == ReturnCode.Success
+                times = 0.0:0.0005:2.0
+                @test maximum(abs(sol(t; idxs = sys.var"R1.i") - max(0.0, 10sin(2pi * t)) / 1.0e-3) for t in times) < 1.0e-4
+                for name in (:Ideal, :With_Ron_Goff, :With_Ron_Goff_Vknee)
+                    s = getproperty(sys, Symbol(name, ".s"))
+                    off = getproperty(sys, Symbol(name, ".off"))
+                    @test all(times) do t
+                        value = sol(t; idxs = s)
+                        abs(value) < 1.0e-7 || (sol(t; idxs = off) > 0.5) == (value < 0)
+                    end
+                end
+            end
         end
     end
 

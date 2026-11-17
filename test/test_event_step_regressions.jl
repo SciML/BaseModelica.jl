@@ -677,8 +677,8 @@ end
 
     @testset "An exact-zero later root preserves its rising direction" begin
         # Vern9 can duplicate either root independently, depending on code
-        # generation. Check positive edges here; the deterministic history
-        # regression below guards against an extra edge from BaseModelica.
+        # generation. Bound the end-to-end count too; the deterministic history
+        # regression below isolates an extra edge from BaseModelica.
         sys, sol = step_solution(
             """
                 Real 'x'(start = 0.0, fixed = true);
@@ -689,8 +689,8 @@ end
                 when 'x'^2 > 0.25 then 'k' = pre('k') + 1.0; end when;
             """, parser; stop = 0.8, alg = Vern9()
         )
-        @test sol(0.8; idxs = sys.c) >= 1.0
-        @test sol(0.8; idxs = sys.k) >= 1.0
+        @test 1.0 <= sol(0.8; idxs = sys.c) <= 2.0
+        @test 1.0 <= sol(0.8; idxs = sys.k) <= 2.0
     end
 
     @testset "Exact-zero root history does not invent an edge" begin
@@ -961,5 +961,77 @@ end
         sol = isnothing(alg) ? solve(prob; dtmax = 0.05) : solve(prob, alg; dtmax = 0.05)
         @test sol.retcode == ReturnCode.Success
         @test sol(10.0; idxs = sys.k) == 10.0
+    end
+end
+
+@testset "Round 19 algebraic Boolean consumers ($parser)" for parser in (:julia, :antlr)
+    @testset "Transitive when-condition ($condition)" for condition in ("'c'", "pre('c')")
+        err = reject_step(
+            """
+                Real 'phi'(start = -1.0, fixed = true); Real 'y'(start = 0.0);
+                Boolean 'b'; Boolean 'c'; discrete Real 'k'(start = 0.0);
+              equation
+                der('phi') = $(2pi); 'y'^3 + 'y' = sin('phi');
+                'b' = 'y' > 0.0; 'c' = not 'b';
+                when $condition then 'k' = pre('k') + 1.0; end when;
+            """, parser, ""; message = "crossing depends on retained algebraic unknown"
+        )
+        @test occursin("when-condition", sprint(showerror, err))
+    end
+
+    @testset "Hysteresis can latch an algebraic root glitch ($indirect)" for indirect in (false, true)
+        err = reject_step(
+            """
+                Real 'phi'(start = -1.0, fixed = true); Real 'y'(start = 0.0);
+                Boolean 'b'(start = false); $(indirect ? "Boolean 'c';" : "")
+              equation
+                der('phi') = $(2pi); 'y'^3 + 'y' = sin('phi');
+                $(indirect ? "'c' = 'y' > 0.3;" : "")
+                'b' = pre('b') and 'y' > -0.3 or $(indirect ? "'c'" : "'y' > 0.3");
+            """, parser, ""; message = "crossing depends on retained algebraic unknown"
+        )
+        @test occursin("hysteresis Boolean `b` condition", sprint(showerror, err))
+        @test !occursin("when-", sprint(showerror, err))
+    end
+end
+
+@testset "Round 19 level-semantic half-wave rectifier" begin
+    # A capacitor state plus the ideal diode's algebraic loop. The reference ODE
+    # eliminates the loop analytically: i = max(0, sin(t) - v).
+    reference = solve(
+        ODEProblem((v, p, t) -> max(0.0, sin(t) - v) - v, 0.0, (0.0, 50.0)),
+        Vern9(); reltol = 1.0e-12, abstol = 1.0e-12, dtmax = 0.01
+    )
+    @test reference.retcode == ReturnCode.Success
+    times = 0.0:0.05:50.0
+    @testset "$parser" for parser in (:julia, :antlr)
+        sys = parse_basemodelica(
+            step_model(
+                """
+                    Real 'v'(start = 0.0, fixed = true);
+                    Real 'i'; Real 's'; Real 'vd'; Boolean 'off'(start = true);
+                  equation
+                    der('v') = 'i' - 'v';
+                    sin(time) = 'vd' + 'i' + 'v';
+                    'vd' = if 'off' then 's' else 0.0;
+                    'i' = if 'off' then 0.0 else 's';
+                    'off' = 's' < 0.0;
+                """
+            ); parser
+        )
+        prob = ODEProblem(sys, [], (0.0, 50.0))
+        @test !isone(prob.f.mass_matrix)
+        @test BaseModelica.check_algebraic_crossings(sys) === sys
+        @testset "$(nameof(typeof(alg)))" for alg in (Rodas5P(), FBDF(), nothing)
+            sol = isnothing(alg) ? solve(prob; reltol = 1.0e-8, abstol = 1.0e-10, dtmax = 0.05) :
+                solve(prob, alg; reltol = 1.0e-8, abstol = 1.0e-10, dtmax = 0.05)
+            @test sol.retcode == ReturnCode.Success
+            @test maximum(abs(sol(t; idxs = sys.v) - reference(t)) for t in times) < 2.0e-5
+            @test maximum(abs(sol(t; idxs = sys.i) - max(0.0, sin(t) - reference(t))) for t in times) < 2.0e-5
+            @test all(times) do t
+                s = sol(t; idxs = sys.s)
+                abs(s) < 1.0e-7 || (sol(t; idxs = sys.off) > 0.5) == (s < 0)
+            end
+        end
     end
 end

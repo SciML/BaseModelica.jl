@@ -469,10 +469,17 @@ ill-defined. Explicit continuous definitions stop that propagation. If any when-
 reads `pre` and any sample clock exists in the model, every multi-branch when/elsewhen chain
 with a non-sample branch is rejected, since restoration after snapshot advancement is
 unsupported.
-Continuous crossings that read retained algebraic unknowns, including observed aliases,
-are rejected during compilation. Sample clocks include their initial tick.
+When-crossings and hysteresis Boolean crossings that read retained algebraic unknowns,
+including observed aliases, are rejected during compilation. Level-semantic relation
+Booleans without downstream when-conditions remain supported. Sample clocks include their
+initial tick.
 """
 struct MTKEventsBackend <: AbstractDiscreteBackend end
+
+# Carried by relation-Boolean affects through MTK's callback substitutions.
+struct AlgebraicCrossingCondition
+    description::String
+end
 
 # Algebraic interpolants can locate a crossing on its old side, then report it
 # again after initialization. Direction preservation at one instant cannot make
@@ -483,8 +490,9 @@ compile_system(::MTKEventsBackend, sys) = check_algebraic_crossings(mtkcompile(s
 """
     check_algebraic_crossings(compiled)
 
-Check a compiled BaseModelica system for unsupported algebraic event crossings in the
-`:mtk` backend, throwing [`UnsupportedFeatureError`](@ref) if one is found. Return the
+Check a compiled BaseModelica system for when-crossings and hysteresis Boolean crossings
+that depend on retained algebraic unknowns in the `:mtk` backend, throwing
+[`UnsupportedFeatureError`](@ref) if one is found. Return the
 system unchanged otherwise. This check runs automatically for `simplify = true` and
 `simplify = f`. After `simplify = false`, call it on the result of your own compilation.
 """
@@ -501,18 +509,29 @@ function check_algebraic_crossings(compiled)
     )
     isempty(algebraic) && return compiled
     definitions = Dict(Symbolics.unwrap(eq.lhs) => eq.rhs for eq in ModelingToolkitBase.observed(compiled))
-    for callback in callbacks, condition in callback.conditions
-        pending = collect(Symbolics.get_variables(condition.lhs - condition.rhs))
-        seen = Set{Any}()
-        while !isempty(pending)
-            var = Symbolics.unwrap(pop!(pending))
-            var in seen && continue
-            push!(seen, var)
-            var in algebraic && unsupported(
-                "continuous event crossing depends on retained algebraic unknown `$var` " *
-                    "(zero mass-matrix row); algebraic when-crossings are not supported by the :mtk backend"
-            )
-            haskey(definitions, var) && append!(pending, Symbolics.get_variables(definitions[var]))
+    for callback in callbacks
+        affect = callback.affect
+        affect isa ModelingToolkitBase.ImperativeAffect || continue
+        description = if affect.f isa WhenSelection
+            "when-condition `$(affect.f.blocks[affect.f.root].condition)`"
+        elseif affect.ctx isa AlgebraicCrossingCondition
+            affect.ctx.description
+        else
+            continue
+        end
+        for condition in callback.conditions
+            pending = collect(Symbolics.get_variables(condition.lhs - condition.rhs))
+            seen = Set{Any}()
+            while !isempty(pending)
+                var = Symbolics.unwrap(pop!(pending))
+                var in seen && continue
+                push!(seen, var)
+                var in algebraic && unsupported(
+                    "$description: crossing depends on retained algebraic unknown `$var` " *
+                        "(zero mass-matrix row); algebraic crossings for this condition are not supported by the :mtk backend"
+                )
+                haskey(definitions, var) && append!(pending, Symbolics.get_variables(definitions[var]))
+            end
         end
     end
     return compiled

@@ -52,7 +52,9 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   variables clocked variables on an `EventClock`/`Clock`, compiled by SynchToolkit.
 - Boolean variables defined by an equation (`off = s < 0`, hysteresis with `pre`) keep their
   value between events and are solved consistently at initialization and re-evaluated at
-  events. `if time < startTime` conditions become solver `tstops` on the system, and
+  events. Level-semantic relations such as ideal diode `off = s < 0` can read algebraic
+  signals. Hysteresis with `pre(b)` requires crossings free of retained algebraic unknowns.
+  `if time < startTime` conditions become solver `tstops` on the system, and
   `assert` in an `initial algorithm` is checked at initialization. See the "Booleans,
   events and the solver" section of the documentation.
 - User-defined functions with an `algorithm` section (`:=`, `if` and `for` statements over
@@ -80,11 +82,13 @@ Not supported: records, arrays of records, Boolean- or enumeration-indexed dimen
 sizes that depend on a time-varying value, `when`-equations inside `for`-equations, algorithm sections
 in models, `while` loops, multiple-output function calls, external functions, compound
 continuous `when` conditions (`a and b`), `floor`/`integer`/`ceil`/`div`/`mod`/`rem`
-with continuous arguments written directly in when-conditions, continuous event crossings
-that depend on retained algebraic unknowns (zero mass-matrix rows), including through
-observed aliases, logical use of when-assigned Booleans, and `edge`/`change`/`initial()`.
+with continuous arguments written directly in when-conditions, when-crossings that depend
+on retained algebraic unknowns (zero mass-matrix rows), including through observed aliases
+or chains of equation-defined Booleans, hysteresis Boolean crossings on such unknowns,
+logical use of when-assigned Booleans, and `edge`/`change`/`initial()`.
 These raise a `BaseModelica.UnsupportedFeatureError` instead of producing a different
-model. Syntax errors raise `BaseModelica.BaseModelicaParseError` (`:antlr`) or a
+model. The algebraic-crossing check runs after compilation with `simplify = true` or a
+function; see "Unsimplified systems and Dyad" for manual compilation. Syntax errors raise `BaseModelica.BaseModelicaParseError` (`:antlr`) or a
 `ParserCombinator.ParserException` (`:julia`).
 
 Discontinuity event generation for `floor`/`integer`/`ceil`/`div`/`mod`/`rem` is

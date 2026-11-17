@@ -671,7 +671,8 @@ function eval_AST(
     end
 
     # Booleans defined by an equation (`off = s < 0`), see relation_booleans.jl
-    booleans = lower_relation_booleans(Equation[declaration_eqs..., eqs...], class_specifier.name)
+    blocks = when_blocks(when_clause_list)
+    booleans = lower_relation_booleans(Equation[declaration_eqs..., eqs...], class_specifier.name; blocks)
     real_eqs = booleans.equations
 
     # Collect all parameters from variable_map after all passes have applied defaults.
@@ -696,7 +697,7 @@ function eval_AST(
     discrete_model = DiscreteModel(
         real_eqs, copy(vars), differentiated_variables(real_eqs),
         Pair{Any, Any}[variable_map[name] => discrete_starts[name] for name in sort!(collect(keys(discrete_starts)))],
-        when_blocks(when_clause_list)
+        blocks
     )
     lowered = lower_discrete(backend, discrete_model)
     real_eqs = lowered.equations

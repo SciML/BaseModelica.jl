@@ -67,6 +67,17 @@ How declarations map to ModelingToolkit, and what `remake` can change afterwards
   are re-evaluated until none changes. They are also re-evaluated after any step at which
   one disagrees with its definition, which catches relations that jump at another event
   (`reinit`, `when` assignments).
+  Level-semantic relations such as ideal diode `off = s < 0` also support retained
+  algebraic signals. When-conditions that read those relations, directly or through
+  other Booleans, are rejected with `UnsupportedFeatureError` if their crossings depend
+  on retained algebraic unknowns (including observed aliases). Direct when-crossings have
+  the same restriction. Hysteresis definitions using `pre(b)` are also rejected when
+  their crossings depend on such unknowns: a wrong-side root update can latch their
+  memory even after the relation moves away from zero. Differential-state crossings and
+  explicit signals eliminated by compilation remain supported.
+  The `:mtk` backend checks both `simplify = true` and `simplify = f` results.
+  With `simplify = false`, call `BaseModelica.check_algebraic_crossings(compiled)` after
+  compiling the returned system yourself; the raw system is not checked.
 - **Time events**: the instants at which an if-condition comparing `time` with a number or
   an expression of parameters switches (`if time < startTime then ...`) are stored as
   `tstops` on the system. ModelingToolkit passes them to every problem built from it, so
