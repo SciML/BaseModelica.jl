@@ -298,7 +298,7 @@ end
     end
 
     @testset "Q2: sample-free coincident roots ($upper, $lower, $advance)" for (upper, lower) in
-        (("time > 0.5", "'x' > 0.5"), ("'x' * 'x' > 0.25", "'x' > 0.5"), ("'x' > 0.5", "time > 0.5")), advance in (false, true)
+            (("time > 0.5", "'x' > 0.5"), ("'x' * 'x' > 0.25", "'x' > 0.5"), ("'x' > 0.5", "time > 0.5")), advance in (false, true)
         parser === :antlr && (upper != "time > 0.5" || advance) && continue
         sys, sol = step_solution(
             """
@@ -597,7 +597,7 @@ end
         @test sol(0.4; idxs = sys.a) == 1.0
     end
 
-    @testset "N1: oscillator threshold offsets ($clock, $offset)" for clock in (0.10, 0.14, 0.18, 0.21), offset in (-3.0e-5, -1.0e-6, -1.0e-8, 1.0e-8, 1.0e-6, 3.0e-5)
+    @testset "N1: oscillator threshold offsets ($clock, $offset)" for clock in (0.1, 0.14, 0.18, 0.21), offset in (-3.0e-5, -1.0e-6, -1.0e-8, 1.0e-8, 1.0e-6, 3.0e-5)
         threshold = sin(10clock) + offset
         sys, sol = step_solution(
             """
@@ -639,7 +639,7 @@ end
     # can hide a second firing. Rodas5P used to double-fire M1-unit and M2;
     # Vern9 and FBDF also exposed the pending-root/interpolant problem.
     @testset "M1: $variant ($(nameof(typeof(alg))))" for alg in (Rodas5P(), Vern9(), FBDF()),
-        variant in (:unit, :slow)
+            variant in (:unit, :slow)
 
         slope = variant === :unit ? 1.0 : 0.001
         sys, sol = step_solution(
@@ -676,10 +676,9 @@ end
     end
 
     @testset "An exact-zero later root preserves its rising direction" begin
-        # Vern9 may report duplicate roots outside the coincidence window,
-        # depending on code generation. BaseModelica must not invent an extra
-        # edge for x^2 when a later x pass sees both crossings exactly zero.
-        # The solver can duplicate only x's report, so k need not equal c.
+        # Vern9 can duplicate either root independently, depending on code
+        # generation. Check positive edges here; the deterministic history
+        # regression below guards against an extra edge from BaseModelica.
         sys, sol = step_solution(
             """
                 Real 'x'(start = 0.0, fixed = true);
@@ -691,13 +690,40 @@ end
             """, parser; stop = 0.8, alg = Vern9()
         )
         @test sol(0.8; idxs = sys.c) >= 1.0
-        @test 1.0 <= sol(0.8; idxs = sys.k) <= sol(0.8; idxs = sys.c)
+        @test sol(0.8; idxs = sys.k) >= 1.0
+    end
+
+    @testset "Exact-zero root history does not invent an edge" begin
+        t = ModelingToolkit.t_nounits
+        D = Differential(t)
+        @variables x(t)
+        sys = mtkcompile(System([D(x) ~ 1.0 - x^3], t; name = :ExactZeroHistory))
+        x = sys.x
+        integ = init(ODEProblem(sys, [x => 0.5], (0.0, 1.0)), Vern9())
+        body = Pair{Any, Any}[]
+        blocks = [
+            BaseModelica.WhenBlock(x > 0.5, x - 0.5, nothing, body, body),
+            BaseModelica.WhenBlock(x^2 > 0.25, x^2 - 0.25, nothing, body, body),
+        ]
+        # x^2's rising root was already handled at a prior solver root report.
+        history = (
+            previous_x = 0.0, previous_square = 1.0, active_x = 0.0, active_square = 1.0,
+            root_time = -1.0e-12, sample_time = -Inf, event_time = -1.0e-12, ready = 0.0,
+            execute_x = 0.0, execute_square = 0.0, tolerance_x = 1.0e-9, tolerance_square = 1.0e-9,
+        )
+        at_root = (time = 0.0, condition1 = false, condition2 = false, crossing1 = 0.0, crossing2 = 0.0)
+        selected = BaseModelica.WhenSelection(blocks, 1, 1, 0)(history, at_root, nothing, integ)
+        @test selected.previous_square == 1.0
+        # A later accepted step must not see a new false-to-true edge for x^2.
+        after_root = (time = 0.1, condition1 = true, condition2 = true, crossing1 = 0.1, crossing2 = 0.11)
+        stepped = BaseModelica.WhenSelection(blocks, 0, 0, 0)(selected, after_root, nothing, integ)
+        @test stepped.active_square == 0.0
     end
 end
 
 @testset "Round 15 rate-scaled root history ($parser)" for parser in (:julia,)
     @testset "50 Hz mains at $start ($(nameof(typeof(alg))))" for start in (100.0, 1000.0),
-        alg in (Tsit5(), Rodas5P())
+            alg in (Tsit5(), Rodas5P())
 
         w = 2pi * 50
         # Start at the negative peak so neither endpoint is a rising root.
@@ -786,7 +812,7 @@ end
 
     @testset "$frequency Hz sine at $start ($angle, $(nameof(typeof(alg))))" for
         (frequency, start, duration) in ((50, 6.7e5, 1.0), (50, 2.0e6, 1.0), (1000, 33554.0, 0.1)),
-        angle in (false, true), alg in (Tsit5(), Rodas5P())
+            angle in (false, true), alg in (Tsit5(), Rodas5P())
 
         w = 2pi * frequency
         # At these starts sqrt(eps)*t spans nearly an integer multiple of pi,
@@ -817,7 +843,7 @@ end
 
 @testset "Round 17 diagonal-mass root tangents ($parser)" for parser in (:julia,)
     @testset "$(coupled ? "p2: coupled" : "p3: unrelated") loop ($(nameof(typeof(alg))))" for coupled in (false, true),
-        alg in (Rodas5P(), FBDF(), nothing)
+            alg in (Rodas5P(), FBDF(), nothing)
 
         # Both an unrelated algebraic loop (p3) and one coupled to the phase
         # (p2) retain an algebraic unknown. At late times aligned root/step
