@@ -375,13 +375,19 @@ BM = BaseModelica
         composition = triac_package.model.long_class_specifier.composition
         @test any(eq -> eq isa BM.BaseModelicaWhenEquation, composition.equations)
 
-        triac_system = BM.baseModelica_to_ModelingToolkit(triac_package)
+        triac_system = BM.baseModelica_to_ModelingToolkit(triac_package; simplify = false)
         @test triac_system isa System
 
         # Verify the when-equation produces a continuous callback
         @test !isempty(ModelingToolkit.continuous_events(triac_system))
 
-        @test parse_basemodelica(triac_path, parser = :antlr) isa System
+        # These circuit roots read retained algebraic currents. Parsing and
+        # lowering remain supported; compilation must reject unsafe crossings.
+        @test_throws BM.UnsupportedFeatureError BM.baseModelica_to_ModelingToolkit(triac_package)
+        for parser in (:julia, :antlr)
+            @test parse_basemodelica(triac_path; parser, simplify = false) isa System
+            @test_throws BM.UnsupportedFeatureError parse_basemodelica(triac_path; parser)
+        end
     end
 
     @testset "Characteristic Ideal Diodes" begin
@@ -391,15 +397,15 @@ BM = BaseModelica
         diode_package = BM.parse_file_antlr(diode_path)
         @test diode_package isa BM.BaseModelicaPackage
 
-        diode_system = BM.baseModelica_to_ModelingToolkit(diode_package)
+        diode_system = BM.baseModelica_to_ModelingToolkit(diode_package; simplify = false)
         @test diode_system isa System
 
-        prob = ODEProblem(
-            diode_system, [], (0.0, 1.0);
-            missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0)
-        )
-        sol = solve(prob)
-        @test sol.retcode == ReturnCode.Success
+        @test !isempty(ModelingToolkit.continuous_events(diode_system))
+        @test_throws BM.UnsupportedFeatureError BM.baseModelica_to_ModelingToolkit(diode_package)
+        for parser in (:julia, :antlr)
+            @test parse_basemodelica(diode_path; parser, simplify = false) isa System
+            @test_throws BM.UnsupportedFeatureError parse_basemodelica(diode_path; parser)
+        end
     end
 
     @testset "Parameter String" begin
