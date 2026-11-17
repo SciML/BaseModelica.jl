@@ -98,9 +98,21 @@ and state roots as separate instants, changing `elsewhen` priority. In the event
 probes, FBDF errors were about `1e-10` to `1e-6`, and Rodas5P/Verner errors about
 `1e-14`; these are observations, not solver accuracy guarantees.
 
-The root-history tolerance uses the solution tangent before any event reinitialization.
-If a reinit stops a fast state and lands it within that tolerance of another
-threshold, the newly enabled clause can fire one solver step late.
+The root-history tolerance normally uses the interpolated solution tangent before
+event reinitialization. If that tangent is non-finite, identity- and diagonal-mass
+ODEs use the RHS at the current, possibly post-reinit, state instead. For a diagonal
+mass matrix, only differential rows have an RHS-derived tangent; crossings that
+read algebraic unknowns retain the `1e-9` tolerance floor when their rate is non-finite.
+If a reinit stops a fast state and lands it within the root-history tolerance of
+another threshold, the newly enabled clause is not detected until the end of the
+next accepted step, which may be much later (with no dynamics to limit the step,
+the end of the simulation).
+
+Nonlinear periodic crossings such as `sin(w*t)` can still multi-fire at very large
+`w*t` (roughly `4e11` or more).
+
+A sample tick coinciding with a state root can cause an upstream OrdinaryDiffEq
+callback loop ending in `MaxIters`; off-phase roots avoid this known limitation.
 
 Vern9 can also report the same root twice in upstream OrdinaryDiffEq/DiffEqBase:
 a plain `VectorContinuousCallback` on `[x - 0.5, z - 2]` with `x' = 1 - x^3`,

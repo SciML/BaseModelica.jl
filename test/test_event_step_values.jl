@@ -1102,3 +1102,34 @@ end
         @test sol(stop; idxs = sys.k) == frequency * duration
     end
 end
+
+@testset "Round 17 diagonal-mass root tangents ($parser)" for parser in (:julia, :antlr)
+    @testset "$(coupled ? "p2: coupled" : "p3: unrelated") loop ($(nameof(typeof(alg))))" for coupled in (false, true),
+        alg in (Rodas5P(), FBDF(), nothing)
+
+        # Both an unrelated algebraic loop (p3) and one coupled to the phase
+        # (p2) retain an algebraic unknown. At late times aligned root/step
+        # boundaries can leave a zero-length interpolant with NaN derivatives.
+        start = 1.0e5
+        sys = parse_basemodelica(
+            step_model(
+                """
+                    Real 'phi'(start = -1.0, fixed = true);
+                    discrete Real 'k'(start = 0.0);
+                    Real 'q'(start = 0.0, fixed = true); Real 'y'(start = 0.0);
+                  equation
+                    der('phi') = $(2pi * 50);
+                    der('q') = -'q' + 'y';
+                    'y'^3 + 'y' = $(coupled ? "'phi'" : "1.0");
+                    when sin('phi') > 0.0 then 'k' = pre('k') + 1.0; end when;
+                """
+            ); parser, discrete_backend = :mtk
+        )
+        prob = ODEProblem(sys, [], (start, start + 1))
+        @test !isone(prob.f.mass_matrix)
+        sol = isnothing(alg) ? solve(prob; dtmax = 1.0e-3) :
+            solve(prob, alg; dtmax = 1.0e-3)
+        @test sol.retcode == ReturnCode.Success
+        @test sol(start + 1; idxs = sys.k) == 50.0
+    end
+end

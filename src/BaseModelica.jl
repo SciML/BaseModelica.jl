@@ -2,6 +2,7 @@ module BaseModelica
 
 import CondaPkg
 using DiffEqBase: BrownFullBasicInit
+using LinearAlgebra: Diagonal
 using MLStyle: @data, @match
 import ModelingToolkit
 using ModelingToolkitBase: @discretes, @named, @parameters, System, equations, mtkcompile

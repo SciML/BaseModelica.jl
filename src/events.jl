@@ -569,15 +569,23 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
         window = 32eps(Float64) * max(1, abs(time))
         h = 1024window
         du = integ(time, Val{1})
-        # Some solvers have a zero-length interpolant after a root. For an
-        # identity-mass ODE its RHS still gives the tangent at the current state.
-        if !all(isfinite, du) && integ.sol.prob isa ODEProblem && isone(integ.f.mass_matrix)
+        # Some solvers have a zero-length interpolant after a root. Identity-
+        # and diagonal-mass ODEs still give differential tangents via their RHS.
+        if !all(isfinite, du) && integ.sol.prob isa ODEProblem &&
+                (isone(integ.f.mass_matrix) || integ.f.mass_matrix isa Diagonal)
             du = if SciMLBase.isinplace(integ.sol.prob)
                 rate = similar(integ.u)
                 integ.f(rate, integ.u, integ.p, time)
                 rate
             else
                 integ.f(integ.u, integ.p, time)
+            end
+            if integ.f.mass_matrix isa Diagonal
+                # M * du = f determines only differential rows. Keep algebraic
+                # tangents unknown so crossings reading them use the finite floor.
+                du = map(du, integ.f.mass_matrix.diag) do rate, mass
+                    iszero(mass) ? NaN : rate / mass
+                end
             end
         end
         ahead = SymbolicIndexingInterface.ProblemState(;
