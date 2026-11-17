@@ -17,9 +17,9 @@ function step_model(body)
     return path
 end
 
-function step_solution(body, parser; stop = 1.0, alg = Tsit5())
+function step_solution(body, parser; start = 0.0, stop = 1.0, alg = Tsit5())
     sys = parse_basemodelica(step_model(body); parser, discrete_backend = :mtk)
-    prob = ODEProblem(sys, [], (0.0, stop))
+    prob = ODEProblem(sys, [], (start, stop))
     sol = isnothing(alg) ? solve(prob) : solve(prob, alg)
     @test sol.retcode == ReturnCode.Success
     return sys, sol
@@ -980,5 +980,71 @@ end
         )
         @test sol(0.8; idxs = sys.c) == 1.0
         @test sol(0.8; idxs = sys.k) == 1.0
+    end
+end
+
+@testset "Round 15 rate-scaled root history ($parser)" for parser in (:julia, :antlr)
+    @testset "50 Hz mains at $start ($(nameof(typeof(alg))))" for start in (100.0, 1000.0),
+        alg in (Tsit5(), Rodas5P())
+
+        w = 2pi * 50
+        # Start at the negative peak so neither endpoint is a rising root.
+        sys, sol = step_solution(
+            """
+                Real 'v'(start = -325.0, fixed = true);
+                Real 'i'(start = 0.0, fixed = true);
+                discrete Real 'k'(start = 0.0);
+              equation
+                der('v') = 'i'; der('i') = -$(w^2) * 'v';
+                when 'v' > 0.0 then 'k' = pre('k') + 1.0; end when;
+            """, parser; start, stop = start + 1, alg
+        )
+        @test sol(start + 1; idxs = sys.k) == 50.0
+    end
+
+    @testset "50 Hz threshold after one day ($(nameof(typeof(alg))))" for alg in (Tsit5(), Rodas5P())
+        w = 2pi * 50
+        sys, sol = step_solution(
+            """
+                Real 'y'(start = 0.0, fixed = true);
+                Real 'v'(start = $(10w), fixed = true);
+                discrete Real 'k'(start = 0.0);
+              equation
+                der('y') = 'v'; der('v') = -$(w^2) * 'y';
+                when 'y' > 5.0 then 'k' = pre('k') + 1.0; end when;
+            """, parser; start = 86400.0, stop = 86401.0, alg
+        )
+        @test sol(86401.0; idxs = sys.k) == 50.0
+    end
+
+    @testset "Late ramp and relation-Boolean control ($boolean)" for boolean in (false, true)
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                discrete Real 'k'(start = 0.0);
+                $(boolean ? "Boolean 'b';" : "")
+              equation
+                der('x') = 1000.0;
+                $(boolean ? "'b' = 'x' > 0.5;" : "")
+                when $(boolean ? "'b'" : "'x' > 0.5") then 'k' = pre('k') + 1.0; end when;
+            """, parser; start = 1.0e4, stop = 1.0e4 + 0.001
+        )
+        @test sol(1.0e4 + 0.001; idxs = sys.k) == 1.0
+    end
+
+    @testset "Reinit still enables another block at a root" begin
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                Real 'z'(start = -1.0, fixed = true);
+                discrete Real 'c'(start = 0.0); discrete Real 'k'(start = 0.0);
+              equation
+                der('x') = 1000.0; der('z') = 0.0;
+                when 'x' > 0.5 then reinit('z', 1.0); 'c' = pre('c') + 1.0; end when;
+                when 'z' > 0.0 then 'k' = pre('k') + 1.0; end when;
+            """, parser; start = 1.0e4, stop = 1.0e4 + 0.001
+        )
+        @test sol(1.0e4 + 0.001; idxs = sys.c) == 1.0
+        @test sol(1.0e4 + 0.001; idxs = sys.k) == 1.0
     end
 end

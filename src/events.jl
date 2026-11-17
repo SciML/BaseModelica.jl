@@ -556,15 +556,30 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
     end
     selected_before = old[(n + 1):(2n)] .> 0.5
     active = copy(selected_before)
+    tolerance_offset = 3n + 4 + select.nsnapshots
     # Every root pass must handle its own crossing (and proportional crossings):
     # later roots at this instant can lie outside the crossing-value tolerance.
     # On the first pass, also check for a sign change within the event-time window.
     # This selects steep/late coincident roots before lower-priority cascades can run.
     if select.root != 0
         first_root = !same_event_time(time, old[2n + 1])
+        # Estimate changes along the solution tangent over the event-time window.
+        # Use a larger differencing step to avoid noise in local interpolants.
+        window = 32eps(Float64) * max(1, abs(time))
+        h = sqrt(eps(Float64)) * max(1, abs(time))
+        du = integ(time, Val{1})
+        ahead = SymbolicIndexingInterface.ProblemState(;
+            u = integ.u .+ h .* du,
+            p = SymbolicIndexingInterface.parameter_values(integ), t = time + h
+        )
         for (i, block) in enumerate(select.blocks)
             isnothing(block.crossing) && continue
             crossing = observed[Symbol(:crossing, i)]
+            g = SymbolicIndexingInterface.getsym(integ, block.crossing)
+            change = (g(ahead) - crossing) * (window / h)
+            # Retain this scale for discrete iteration at this root. Its symbolic
+            # mismatch guard must use the same tolerance or it would never settle.
+            old[tolerance_offset + i] = max(ROOT_TOLERANCE, abs(change))
             if select.root_directions[i] != 0
                 current[i] = select.direction * select.root_directions[i] > 0
                 # A rising root is an edge even if no accepted solver step observed
@@ -577,18 +592,7 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
                 if abs(crossing) <= WHEN_ROOT_TOLERANCE && !pending && !iszero(crossing)
                     current[i] = !previous[i]
                 else
-                    # Estimate the root's change along the solution tangent. A
-                    # sqrt(eps) step avoids differencing noisy (notably Verner)
-                    # interpolants over the much smaller event-time window.
-                    window = 32eps(Float64) * max(1, abs(time))
-                    h = sqrt(eps(Float64)) * max(1, abs(time))
-                    du = integ(time, Val{1})
-                    ahead = SymbolicIndexingInterface.ProblemState(;
-                        u = integ.u .+ h .* du,
-                        p = SymbolicIndexingInterface.parameter_values(integ), t = time + h
-                    )
-                    g = SymbolicIndexingInterface.getsym(integ, block.crossing)
-                    value = crossing + (g(ahead) - crossing) * (window / h)
+                    value = crossing + change
                     if iszero(crossing)
                         # A later root pass must not invent a falling edge for an
                         # already handled rising root that now evaluates to zero.
@@ -597,7 +601,7 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
                         current[i] = crossing < 0
                     end
                 end
-            elseif !first_root && abs(crossing) <= ROOT_TOLERANCE
+            elseif !first_root && abs(crossing) <= old[tolerance_offset + i]
                 current[i] = previous[i]
             end
         end
@@ -607,7 +611,8 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
         # Preserve the direction selected by the continuous callback.
         for (i, block) in enumerate(select.blocks)
             isnothing(block.crossing) && continue
-            abs(observed[Symbol(:crossing, i)]) <= ROOT_TOLERANCE &&
+            tolerance = same_event_time(time, old[2n + 1]) ? old[tolerance_offset + i] : ROOT_TOLERANCE
+            abs(observed[Symbol(:crossing, i)]) <= tolerance &&
                 (current[i] = previous[i])
         end
     end
@@ -858,11 +863,12 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     snapshot_sources = unique(vcat(model.variables, first.(model.discretes), collect(values(relation_boolean_syms))))
     snapshots = [only(@discretes($(gensym(:when_pre))(t))) for _ in snapshot_sources]
     execute = [only(@discretes($(gensym(:when_execute))(t))) for _ in blocks]
-    bookkeeping = vcat(previous, active, [root_time, sample_time, event_time, ready], snapshots, execute)
+    root_tolerances = [only(@discretes($(gensym(:when_root_tolerance))(t))) for _ in blocks]
+    bookkeeping = vcat(previous, active, [root_time, sample_time, event_time, ready], snapshots, execute, root_tolerances)
     append!(lowered.parameters, vcat(bookkeeping, [next_sample]))
     append!(
         lowered.initial_conditions,
-        [p => 0.0 for p in vcat(previous, active, snapshots, execute, [ready])]
+        [p => 0.0 for p in vcat(previous, active, snapshots, execute, root_tolerances, [ready])]
     )
     append!(lowered.initial_conditions, [root_time => -Inf, sample_time => -Inf, event_time => -Inf, next_sample => Inf])
     modified = NamedTuple{(Tuple(Symbol(:m, i) for i in eachindex(bookkeeping))..., :next_sample)}(
@@ -914,11 +920,13 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     # Check discrete Boolean transitions after the relation-Boolean iteration, rather
     # than trying to find a continuous root in a piecewise constant parameter.
     mismatch = Num(false)
+    at_root = abs(t - root_time) <= 32eps(Float64) * max(1, abs(t))
     for (i, block) in enumerate(blocks)
         isnothing(block.condition) && continue
         changed = Num(condition_value(block)) != (previous[i] > 0.5)
         if !isnothing(block.crossing)
-            changed &= Num(abs(block.crossing) > ROOT_TOLERANCE)
+            tolerance = ifelse(at_root, root_tolerances[i], ROOT_TOLERANCE)
+            changed &= Num(abs(block.crossing) > tolerance)
         end
         mismatch |= changed
     end
