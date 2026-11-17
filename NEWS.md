@@ -3,9 +3,16 @@
 - Direct when-relations preserve their root direction during event iteration using
   a crossing-rate-scaled tolerance at that instant. A shorter tangent step reduces
   rate-estimate cancellation for late-time sine/angle crossings. Non-finite estimates
-  fall back to `1e-9` so reinit-enabled events can still iterate. The estimate uses
-  the pre-reinit rate; landing near another threshold can delay its firing by
-  one solver step (see README).
+  fall back to `1e-9` so reinit-enabled events can still iterate. The tangent normally
+  comes from the pre-reinit interpolant; if non-finite, identity- and diagonal-mass
+  ODEs use the RHS at the current, possibly post-reinit, state. Only differential
+  rows of a diagonal mass matrix have an RHS-derived tangent. Landing within another
+  threshold's tolerance can delay its firing until the end of the next accepted
+  step, possibly the simulation stop time (see README).
+- The `:mtk` backend's default compilation rejects continuous event crossings that
+  depend on retained algebraic unknowns (zero mass-matrix rows), including through
+  observed aliases, with `UnsupportedFeatureError`. Algebraic interpolants can
+  otherwise cause repeated or wrong-direction firings even at default settings.
 - Coincident when roots handle their own crossing on every callback pass, including
   steep and late-time roots outside the crossing-value tolerance. Pending roots use
   a sign check along the solution tangent instead of a blind near-zero flip, avoiding

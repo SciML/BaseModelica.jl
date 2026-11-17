@@ -469,9 +469,45 @@ ill-defined. Explicit continuous definitions stop that propagation. If any when-
 reads `pre` and any sample clock exists in the model, every multi-branch when/elsewhen chain
 with a non-sample branch is rejected, since restoration after snapshot advancement is
 unsupported.
-Sample clocks include their initial tick.
+Continuous crossings that read retained algebraic unknowns, including observed aliases,
+are rejected during compilation. Sample clocks include their initial tick.
 """
 struct MTKEventsBackend <: AbstractDiscreteBackend end
+
+# Algebraic interpolants can locate a crossing on its old side, then report it
+# again after initialization. Direction preservation at one instant cannot make
+# those distinct root reports safe. Check after compilation, when retained
+# algebraic unknowns and eliminated (observed) aliases are known.
+function compile_system(::MTKEventsBackend, sys)
+    compiled = mtkcompile(sys)
+    callbacks = ModelingToolkitBase.continuous_events(compiled)
+    isempty(callbacks) && return compiled
+    mass = ModelingToolkitBase.calculate_massmatrix(compiled)
+    isone(mass) && return compiled
+    # A zero column has no differential contribution. In MTK's diagonal
+    # mass layout these are also the zero rows of the retained unknowns.
+    algebraic = Set(
+        Symbolics.unwrap(var) for (i, var) in enumerate(ModelingToolkitBase.unknowns(compiled))
+            if all(iszero, view(mass, :, i))
+    )
+    isempty(algebraic) && return compiled
+    definitions = Dict(Symbolics.unwrap(eq.lhs) => eq.rhs for eq in ModelingToolkitBase.observed(compiled))
+    for callback in callbacks, condition in callback.conditions
+        pending = collect(Symbolics.get_variables(condition.lhs - condition.rhs))
+        seen = Set{Any}()
+        while !isempty(pending)
+            var = Symbolics.unwrap(pop!(pending))
+            var in seen && continue
+            push!(seen, var)
+            var in algebraic && unsupported(
+                "continuous event crossing depends on retained algebraic unknown `$var` " *
+                    "(zero mass-matrix row); algebraic when-crossings are not supported by the :mtk backend"
+            )
+            haskey(definitions, var) && append!(pending, Symbolics.get_variables(definitions[var]))
+        end
+    end
+    return compiled
+end
 
 # Remove a common numeric scale before comparing roots. A small multiplier of a
 # relation must not make a distant root look simultaneous with the current event.

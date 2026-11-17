@@ -23,7 +23,13 @@ run_tests(;
         @safetestset "Precompile Workload Tests" include("test_precompile_workload.jl")
         return nothing
     end,
+    groups = Dict(
+        "EventSteps" => function ()
+            @safetestset "Event Step Regression Tests" include("test_event_step_regressions.jl")
+            return nothing
+        end,
+    ),
     qa = (; env = joinpath(@__DIR__, "qa"), body = qa_group),
     umbrellas = Dict("Quality" => ["QA"]),
-    all = ["Core", "QA"],
+    all = ["Core", "EventSteps", "QA"],
 )

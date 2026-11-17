@@ -80,10 +80,11 @@ Not supported: records, arrays of records, Boolean- or enumeration-indexed dimen
 sizes that depend on a time-varying value, `when`-equations inside `for`-equations, algorithm sections
 in models, `while` loops, multiple-output function calls, external functions, compound
 continuous `when` conditions (`a and b`), `floor`/`integer`/`ceil`/`div`/`mod`/`rem`
-with continuous arguments written directly in when-conditions, logical use of
-when-assigned Booleans, and `edge`/`change`/`initial()`. These raise a
-`BaseModelica.UnsupportedFeatureError` instead of producing a different model. Syntax
-errors raise `BaseModelica.BaseModelicaParseError` (`:antlr`) or a
+with continuous arguments written directly in when-conditions, continuous event crossings
+that depend on retained algebraic unknowns (zero mass-matrix rows), including through
+observed aliases, logical use of when-assigned Booleans, and `edge`/`change`/`initial()`.
+These raise a `BaseModelica.UnsupportedFeatureError` instead of producing a different
+model. Syntax errors raise `BaseModelica.BaseModelicaParseError` (`:antlr`) or a
 `ParserCombinator.ParserException` (`:julia`).
 
 Discontinuity event generation for `floor`/`integer`/`ceil`/`div`/`mod`/`rem` is
@@ -101,8 +102,10 @@ probes, FBDF errors were about `1e-10` to `1e-6`, and Rodas5P/Verner errors abou
 The root-history tolerance normally uses the interpolated solution tangent before
 event reinitialization. If that tangent is non-finite, identity- and diagonal-mass
 ODEs use the RHS at the current, possibly post-reinit, state instead. For a diagonal
-mass matrix, only differential rows have an RHS-derived tangent; crossings that
-read algebraic unknowns retain the `1e-9` tolerance floor when their rate is non-finite.
+mass matrix, only differential rows have an RHS-derived tangent; algebraic rows stay
+unknown. The default compilation rejects continuous event crossings that read retained
+algebraic unknowns, including through observed equations, because their interpolants
+can report repeated or wrong-direction events even at default tolerances.
 If a reinit stops a fast state and lands it within the root-history tolerance of
 another threshold, the newly enabled clause is not detected until the end of the
 next accepted step, which may be much later (with no dynamics to limit the step,
@@ -110,6 +113,8 @@ the end of the simulation).
 
 Nonlinear periodic crossings such as `sin(w*t)` can still multi-fire at very large
 `w*t` (roughly `4e11` or more).
+Periodic crossings can also be missed if one solver step spans several periods;
+bound `dtmax` to resolve the crossings, especially with the default solver.
 
 A sample tick coinciding with a state root can cause an upstream OrdinaryDiffEq
 callback loop ending in `MaxIters`; off-phase roots avoid this known limitation.
