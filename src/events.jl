@@ -564,10 +564,22 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
     if select.root != 0
         first_root = !same_event_time(time, old[2n + 1])
         # Estimate changes along the solution tangent over the event-time window.
-        # Use a larger differencing step to avoid noise in local interpolants.
+        # Extrapolate the tangent, not the interpolant. A step of 1024 windows
+        # resolves the rate above roundoff while keeping nonlinear error local.
         window = 32eps(Float64) * max(1, abs(time))
-        h = sqrt(eps(Float64)) * max(1, abs(time))
+        h = 1024window
         du = integ(time, Val{1})
+        # Some solvers have a zero-length interpolant after a root. For an
+        # identity-mass ODE its RHS still gives the tangent at the current state.
+        if !all(isfinite, du) && integ.sol.prob isa ODEProblem && isone(integ.f.mass_matrix)
+            du = if SciMLBase.isinplace(integ.sol.prob)
+                rate = similar(integ.u)
+                integ.f(rate, integ.u, integ.p, time)
+                rate
+            else
+                integ.f(integ.u, integ.p, time)
+            end
+        end
         ahead = SymbolicIndexingInterface.ProblemState(;
             u = integ.u .+ h .* du,
             p = SymbolicIndexingInterface.parameter_values(integ), t = time + h
@@ -579,7 +591,8 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
             change = (g(ahead) - crossing) * (window / h)
             # Retain this scale for discrete iteration at this root. Its symbolic
             # mismatch guard must use the same tolerance or it would never settle.
-            old[tolerance_offset + i] = max(ROOT_TOLERANCE, abs(change))
+            # Extrapolation may leave a crossing's domain (e.g. sqrt near zero).
+            old[tolerance_offset + i] = isfinite(change) ? max(ROOT_TOLERANCE, abs(change)) : ROOT_TOLERANCE
             if select.root_directions[i] != 0
                 current[i] = select.direction * select.root_directions[i] > 0
                 # A rising root is an edge even if no accepted solver step observed
@@ -591,7 +604,7 @@ function (select::WhenSelection)(modified, observed, ctx, integ)
                 pending = previous[i] ? crossing > 0 : crossing < 0
                 if abs(crossing) <= WHEN_ROOT_TOLERANCE && !pending && !iszero(crossing)
                     current[i] = !previous[i]
-                else
+                elseif isfinite(change)
                     value = crossing + change
                     if iszero(crossing)
                         # A later root pass must not invent a falling edge for an

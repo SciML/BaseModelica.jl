@@ -1048,3 +1048,57 @@ end
         @test sol(1.0e4 + 0.001; idxs = sys.k) == 1.0
     end
 end
+
+@testset "Round 16 local tangent estimates ($parser)" for parser in (:julia, :antlr)
+    @testset "Domain boundary before reinit ($event, $(nameof(typeof(alg))))" for
+        event in (0.999999995, 1.0 - 5.0e-13), alg in (Tsit5(), nothing, Rodas5P())
+
+        # The tangent can leave sqrt's domain before the time root's reinit.
+        # The second event is close enough to exercise the finite fallback even
+        # with the shorter tangent step. A NaN tolerance loses/delays this edge.
+        sys, sol = step_solution(
+            """
+                Real 'x'(start = 1.0, fixed = true);
+                discrete Real 'c'(start = 0.0); discrete Real 'k'(start = 0.0);
+                discrete Real 'tb'(start = -1.0);
+              equation
+                der('x') = if 'c' > 0.5 then -1000.0 else -1.0;
+                when time > $event then reinit('x', 0.0026); 'c' = pre('c') + 1.0; end when;
+                when sqrt('x') > 0.05 then 'k' = pre('k') + 1.0; 'tb' = time; end when;
+            """, parser; stop = 1.000001, alg
+        )
+        @test sol(1.000001; idxs = sys.c) == 1.0
+        @test sol(1.000001; idxs = sys.k) == 1.0
+        @test sol(1.000001; idxs = sys.tb) ≈ event atol = 32eps(Float64) rtol = 0
+    end
+
+    @testset "$frequency Hz sine at $start ($angle, $(nameof(typeof(alg))))" for
+        (frequency, start, duration) in ((50, 6.7e5, 1.0), (50, 2.0e6, 1.0), (1000, 33554.0, 0.1)),
+        angle in (false, true), alg in (Tsit5(), Rodas5P())
+
+        w = 2pi * frequency
+        # At these starts sqrt(eps)*t spans nearly an integer multiple of pi,
+        # making a long forward difference underestimate the crossing rate.
+        # State angles also exercise non-finite interpolant derivatives after roots.
+        sys = parse_basemodelica(
+            step_model(
+                """
+                    Real 'phi'(start = -1.0, fixed = true);
+                    discrete Real 'k'(start = 0.0);
+                  equation
+                    der('phi') = $w;
+                    when sin($(angle ? "'phi'" : "$w * (time - $start) - 1.0")) > 0.0 then
+                      'k' = pre('k') + 1.0;
+                    end when;
+                """
+            ); parser, discrete_backend = :mtk
+        )
+        stop = start + duration
+        prob = ODEProblem(sys, [], (start, stop))
+        # Resolve every half-cycle, including the time-explicit detector whose
+        # otherwise trivial ODE would allow arbitrarily large solver steps.
+        sol = solve(prob, alg; dtmax = 1 / (20frequency))
+        @test sol.retcode == ReturnCode.Success
+        @test sol(stop; idxs = sys.k) == frequency * duration
+    end
+end

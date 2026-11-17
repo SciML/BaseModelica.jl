@@ -98,6 +98,10 @@ and state roots as separate instants, changing `elsewhen` priority. In the event
 probes, FBDF errors were about `1e-10` to `1e-6`, and Rodas5P/Verner errors about
 `1e-14`; these are observations, not solver accuracy guarantees.
 
+The root-history tolerance uses the solution tangent before any event reinitialization.
+If a reinit stops a fast state and lands it within that tolerance of another
+threshold, the newly enabled clause can fire one solver step late.
+
 Vern9 can also report the same root twice in upstream OrdinaryDiffEq/DiffEqBase:
 a plain `VectorContinuousCallback` on `[x - 0.5, z - 2]` with `x' = 1 - x^3`,
 `z' = 4(1 - x^3)`, starting from `x = z = 0`, can fire both indices twice

@@ -1,8 +1,11 @@
 # Unreleased
 
 - Direct when-relations preserve their root direction during event iteration using
-  a crossing-rate-scaled tolerance at that instant. Steep and late-time crossings
-  no longer fire extra times when root-location roundoff exceeds `1e-9`.
+  a crossing-rate-scaled tolerance at that instant. A shorter tangent step reduces
+  rate-estimate cancellation for late-time sine/angle crossings. Non-finite estimates
+  fall back to `1e-9` so reinit-enabled events can still iterate. The estimate uses
+  the pre-reinit rate; landing near another threshold can delay its firing by
+  one solver step (see README).
 - Coincident when roots handle their own crossing on every callback pass, including
   steep and late-time roots outside the crossing-value tolerance. Pending roots use
   a sign check along the solution tangent instead of a blind near-zero flip, avoiding
