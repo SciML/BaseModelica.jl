@@ -185,6 +185,11 @@ read with `experiment_settings(sys)`.
 
 ## Unsimplified systems and Dyad
 
+For the `:mtk` events backend, both `simplify = true` and `simplify = f` check the compiled
+result for unsupported algebraic crossings. `simplify = false` does not apply this check.
+After compiling such a system yourself, call `BaseModelica.check_algebraic_crossings(compiled)`
+before constructing a problem.
+
 By default `parse_basemodelica` returns a system already compiled with `mtkcompile`.
 Pass `simplify = false` to get the unsimplified `System`, for example to use the Dyad
 pipeline (`DyadInterface.simplify_model` also adds the SynchToolkit pass when SynchToolkit

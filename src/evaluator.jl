@@ -733,7 +733,8 @@ function eval_AST(
     elseif simplify === false
         return sys
     else
-        return simplify(sys)
+        compiled = simplify(sys)
+        return backend isa MTKEventsBackend ? check_algebraic_crossings(compiled) : compiled
     end
 end
 

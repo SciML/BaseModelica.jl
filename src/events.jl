@@ -478,8 +478,17 @@ struct MTKEventsBackend <: AbstractDiscreteBackend end
 # again after initialization. Direction preservation at one instant cannot make
 # those distinct root reports safe. Check after compilation, when retained
 # algebraic unknowns and eliminated (observed) aliases are known.
-function compile_system(::MTKEventsBackend, sys)
-    compiled = mtkcompile(sys)
+compile_system(::MTKEventsBackend, sys) = check_algebraic_crossings(mtkcompile(sys))
+
+"""
+    check_algebraic_crossings(compiled)
+
+Check a compiled BaseModelica system for unsupported algebraic event crossings in the
+`:mtk` backend, throwing [`UnsupportedFeatureError`](@ref) if one is found. Return the
+system unchanged otherwise. This check runs automatically for `simplify = true` and
+`simplify = f`. After `simplify = false`, call it on the result of your own compilation.
+"""
+function check_algebraic_crossings(compiled)
     callbacks = ModelingToolkitBase.continuous_events(compiled)
     isempty(callbacks) && return compiled
     mass = ModelingToolkitBase.calculate_massmatrix(compiled)

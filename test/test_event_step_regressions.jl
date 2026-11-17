@@ -895,6 +895,23 @@ end
 end
 
 @testset "Round 18 retained algebraic crossings ($parser)" for parser in (:julia, :antlr)
+    @testset "Custom compilation and manual compilation are checked" begin
+        path = step_model(
+            """
+                Real 'phi'(start = -1.0, fixed = true);
+                discrete Real 'k'(start = 0.0); Real 'y'(start = 0.0);
+              equation
+                der('phi') = $(2pi); 'y'^3 + 'y' = sin('phi');
+                when 'y' > 0.0 then 'k' = pre('k') + 1.0; end when;
+            """
+        )
+        @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path; parser, simplify = mtkcompile)
+        raw = parse_basemodelica(path; parser, simplify = false)
+        @test raw isa System
+        compiled = mtkcompile(raw)
+        @test_throws BaseModelica.UnsupportedFeatureError BaseModelica.check_algebraic_crossings(compiled)
+    end
+
     @testset "1 Hz $variant crossing" for variant in (:direct, :threshold, :alias)
         # Without the guard these default-tolerance 10-second solves return
         # k > 10 with Rodas5P, FBDF and the default solver, instead of 10.

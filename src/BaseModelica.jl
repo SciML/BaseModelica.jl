@@ -54,7 +54,10 @@ Parse a BaseModelica source file into a ModelingToolkit system.
 - `simplify = true`: `true` returns the system compiled by the backend's
   [`compile_system`](@ref) (`mtkcompile`, plus any compiler passes the backend needs).
   `false` returns the unsimplified system, for example to pass to
-  `DyadInterface.simplify_model`. A function `f` returns `f(system)`.
+  `DyadInterface.simplify_model`. A function `f` returns `f(system)`. The `:mtk` backend
+  checks compiled results for unsupported algebraic crossings on both the `true` and
+  function routes. With `false`, this check is not applied; call
+  [`check_algebraic_crossings`](@ref) after compiling the system yourself.
 
 ## Returns
 - A `ModelingToolkitBase.System` representing the equations, variables, parameters,
@@ -312,7 +315,8 @@ export parse_basemodelica, create_odeproblem, parse_experiment_annotation,
         Meta.parse(
             "public AbstractDiscreteBackend, MTKEventsBackend, DiscreteModel, WhenBlock, " *
                 "LoweredDiscrete, lower_discrete, declare_discrete, compile_system, when_edge, " *
-                "register_discrete_backend!, unregister_discrete_backend!, UnsupportedFeatureError"
+                "register_discrete_backend!, unregister_discrete_backend!, UnsupportedFeatureError, " *
+                "check_algebraic_crossings"
         )
     )
 end
