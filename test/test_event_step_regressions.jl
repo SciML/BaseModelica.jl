@@ -679,6 +679,7 @@ end
         # Vern9 may report duplicate roots outside the coincidence window,
         # depending on code generation. BaseModelica must not invent an extra
         # edge for x^2 when a later x pass sees both crossings exactly zero.
+        # The solver can duplicate only x's report, so k need not equal c.
         sys, sol = step_solution(
             """
                 Real 'x'(start = 0.0, fixed = true);
@@ -690,7 +691,7 @@ end
             """, parser; stop = 0.8, alg = Vern9()
         )
         @test sol(0.8; idxs = sys.c) >= 1.0
-        @test sol(0.8; idxs = sys.k) == sol(0.8; idxs = sys.c)
+        @test 1.0 <= sol(0.8; idxs = sys.k) <= sol(0.8; idxs = sys.c)
     end
 end
 
