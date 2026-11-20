@@ -1,0 +1,10 @@
+//! base 0.1.0
+package 'P'
+record 'R' Real 'v'[2]; end 'R';
+model 'M'
+  parameter 'R' 'r'[2]('v' = {1.0, 2.0});
+  Real 'a'; Real 'b';
+equation
+  'a' = 'r'[1].'v'[2]; 'b' = 'r'[2].'v'[1];
+end 'M';
+end 'P';

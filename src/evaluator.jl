@@ -13,7 +13,7 @@ using DiffEqBase: BrownFullBasicInit
     RTString()
 end
 
-function modelica_type_to_julia(type_str::String)
+function modelica_type_to_julia(type_str::AbstractString)
     if type_str == "Integer"
         return Int
     elseif type_str == "Boolean"
@@ -971,7 +971,7 @@ end
 function reference_value(names)
     scope = LOCAL_SCOPE[]
     if !isnothing(scope) && haskey(scope, Symbol(first(names)))
-        value = scope[Symbol(first(names))]
+        value = function_local_value(scope[Symbol(first(names))], first(names))
         for field in names[2:end]
             value = record_field(value, Symbol(field))
         end
@@ -981,7 +981,7 @@ function reference_value(names)
         key = Symbol(join(names[1:n], "."))
         found = true
         value = if !isnothing(scope) && haskey(scope, key)
-            scope[key]
+            function_local_value(scope[key], key)
         elseif haskey(record_components, key) || haskey(record_arrays, key)
             record_component_value(key)
         elseif haskey(array_components, key)

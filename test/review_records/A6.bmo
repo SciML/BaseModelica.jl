@@ -1,0 +1,17 @@
+//! base 0.1.0
+package 'P'
+record 'R' Real 'x'; Real 'y' = 7.0; end 'R';
+function 'f'
+  input Real 'u';
+  output 'R' 'r';
+algorithm
+  'r'.'x' := 2 * 'u';
+end 'f';
+model 'M'
+  'R' 'r';
+  Real 'q'(start = 0.0, fixed = true);
+equation
+  'r' = 'f'(time);
+  der('q') = 'r'.'y';
+end 'M';
+end 'P';

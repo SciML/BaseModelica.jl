@@ -30,6 +30,16 @@ const INLINE_DEPTH = Ref(0)
 const MAX_INLINE_DEPTH = 32
 const MAX_UNROLL = 10_000
 
+# A declared function variable shadows model scope even before its first assignment.
+# Keep this marker through symbolic branches: dead branch-local temporaries are fine,
+# but reading one without a value must fail rather than resolve in the caller.
+struct UnassignedFunctionLocal end
+const UNASSIGNED_FUNCTION_LOCAL = UnassignedFunctionLocal()
+function function_local_value(value, var)
+    value isa UnassignedFunctionLocal && unsupported("function local `$var` is unassigned on some execution paths")
+    return value
+end
+
 function with_local_scope(f, scope)
     old = LOCAL_SCOPE[]
     LOCAL_SCOPE[] = scope
@@ -79,7 +89,6 @@ function UserFunction(name::String, class::BaseModelicaLongClass)
                 default = clause.type_prefix.io == "input" &&
                     (isnothing(decl.modification) || isempty(decl.modification)) ? nothing :
                     RecordDefault(type, decl.modification)
-                isnothing(subscripts) || literal_record_size(String(var), subscripts)
             end
             entry = (var, default)
             io = clause.type_prefix.io
@@ -125,7 +134,10 @@ function inline_user_function(f::UserFunction, arg_asts)
         unsupported("function `$(f.name)`: call depth exceeds $MAX_INLINE_DEPTH (recursive functions are not supported)")
 
     args = bind_call_arguments(first.(f.inputs), arg_asts, f.name)
-    scope = Dict{Symbol, Any}()
+    scope = Dict{Symbol, Any}(
+        var => UNASSIGNED_FUNCTION_LOCAL
+        for (var, _) in Iterators.flatten((f.inputs, f.outputs, f.locals))
+    )
     INLINE_DEPTH[] += 1
     try
         with_local_scope(scope) do
@@ -153,6 +165,7 @@ function inline_user_function(f::UserFunction, arg_asts)
                 end
             end
             for (var, default) in Iterators.flatten((f.outputs, f.locals))
+                scope[var] = UNASSIGNED_FUNCTION_LOCAL
                 if default isa RecordDefault && haskey(f.array_dims, var)
                     dims = literal_record_size(String(var), f.array_dims[var])
                     scope[var] = record_array_default(default, dims)
@@ -171,7 +184,7 @@ function inline_user_function(f::UserFunction, arg_asts)
     end
     output = f.outputs[1][1]
     haskey(scope, output) || error("function `$(f.name)` does not assign its output `$output`")
-    value = scope[output]
+    value = function_local_value(scope[output], output)
     if haskey(f.record_types, output)
         require_assigned_record(value, "function `$(f.name)` output `$output`")
         with_local_scope(scope) do
@@ -244,12 +257,16 @@ function run_statement!(scope, st::BaseModelicaIfStatement, f)
         for var in union(keys(then_scope), keys(else_scope))
             if haskey(then_scope, var) && haskey(else_scope, var)
                 a, b = then_scope[var], else_scope[var]
-                scope[var] = a === b ? a : modelica_ifelse(cond, a, b)
+                scope[var] = if a isa UnassignedFunctionLocal || b isa UnassignedFunctionLocal
+                    UNASSIGNED_FUNCTION_LOCAL
+                else
+                    a === b ? a : modelica_ifelse(cond, a, b)
+                end
             elseif any(entry -> entry[1] == var, f.outputs)
                 unsupported("function `$(f.name)`: `$var` is assigned in only some branches of an if-statement")
+            else
+                scope[var] = UNASSIGNED_FUNCTION_LOCAL
             end
-            # A local first assigned in only one branch can be used inside that branch,
-            # but has no value after the if-statement. Do not leak its value to siblings.
         end
         return scope
     end

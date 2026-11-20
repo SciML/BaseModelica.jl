@@ -1,0 +1,15 @@
+//! base 0.1.0
+package 'P'
+record 'R' Real 'x'; Real 'y'; end 'R';
+function 'f'
+  input Real 'u';
+  output 'R' 'r';
+algorithm
+  'r'.'x' := 'u';
+end 'f';
+model 'M'
+  Real 'z';
+equation
+  'z' = 'f'(time).'x';
+end 'M';
+end 'P';

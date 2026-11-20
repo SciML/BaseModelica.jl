@@ -1,0 +1,44 @@
+//! base 0.1.0
+package 'P'
+record 'Rec.Point' Real 'x'; Real 'y'; end 'Rec.Point';
+function '-Rec.Point'
+  input Real 'x';
+  input Real 'y';
+  output 'Rec.Point' _result('x' = 'x', 'y' = 'y');
+end '-Rec.Point';
+function 'make'
+  input Real 'a';
+  input Real 'k' = 2;
+  output 'Rec.Point' 'p';
+algorithm
+  'p' := '-Rec.Point'('a', 'k' * 'a');
+end 'make';
+function '-make().x'
+  input Real 'a';
+  input Real 'k' = 2;
+  output Real '-member';
+  'Rec.Point' '-record';
+algorithm
+  '-record' := 'make'('a', 'k');
+  '-member' := '-record'.'x';
+end '-make().x';
+function '-make().y'
+  input Real 'a';
+  input Real 'k' = 2;
+  output Real '-member';
+  'Rec.Point' '-record';
+algorithm
+  '-record' := 'make'('a', 'k');
+  '-member' := '-record'.'y';
+end '-make().y';
+model 'M'
+  Real 'w.x';
+  Real 'w.y';
+  parameter Real 'q.x' = '-make().x'(3, 2);
+  Real 'z';
+equation
+  'w.x' = '-make().x'(time);
+  'w.y' = '-make().y'(time, 3);
+  'z' = 'q.x';
+end 'M';
+end 'P';

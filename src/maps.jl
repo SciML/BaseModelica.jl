@@ -97,7 +97,7 @@ function_map = Dict(
     :size => x -> length(x) == 1 ? collect(Base.size(x[1])) : Base.size(x[1], to_dim(x[2])),
 
     # ── Array reduction functions (Spec 10.3.4) ──────────────────────────────
-    :sum => x -> Base.sum(x...),
+    :sum => x -> isempty(only(x)) ? 0 : Base.sum(only(x)),
     :product => x -> Base.prod(x...),
 
     # ── Matrix and vector algebra (Spec 10.3.5) ──────────────────────────────

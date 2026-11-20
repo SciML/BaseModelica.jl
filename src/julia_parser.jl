@@ -369,7 +369,11 @@ end
 
 function component_reference_or_function_call(input_list)
     if length(input_list) >= 2 && input_list[2] isa BaseModelicaFunctionArgs
-        return BaseModelicaFunctionCall(input_list[1], input_list[2])
+        value = BaseModelicaFunctionCall(input_list[1], input_list[2])
+        for field in input_list[3:end]
+            value = BaseModelicaFieldAccess(value, String(field.name))
+        end
+        return value
     else
         return input_list[1]
     end
@@ -509,7 +513,7 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
             component_reference_or_function_call
     ) |
         (
-        (component_reference + function_call_args[0:1]) |>
+        (component_reference + (function_call_args + Star(spc + E"." + spc + IDENT))[0:1]) |>
             component_reference_or_function_call
     ) |
         ParserCombinator.Transform(

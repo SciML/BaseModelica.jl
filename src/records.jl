@@ -4,6 +4,7 @@
 struct RecordType
     name::String
     fields::Vector{Any}
+    unsupported_reason::Union{Nothing, String}
 end
 
 const record_type_map = Dict{String, RecordType}()
@@ -15,30 +16,38 @@ function register_record_types!(class_defs)
     for cd in class_defs
         cd isa BaseModelicaClassDefinition && string(cd.class_type) == "record" || continue
         class = cd.class
-        class isa BaseModelicaLongClass || unsupported("short record definitions")
         name = identifier_name(class.name)
+        if !(class isa BaseModelicaLongClass)
+            record_type_map[name] = RecordType(name, Any[], "short record definitions")
+            continue
+        end
         c = class.composition
-        isempty(c.equations) && isempty(c.initial_equations) && isempty(c.parameter_equations) ||
-            unsupported("record `$name` with equations or algorithms")
+        reason = isempty(c.equations) && isempty(c.initial_equations) && isempty(c.parameter_equations) ?
+            nothing : "record `$name` with equations or algorithms"
         fields = Any[]
         names = Set{String}()
-        for clause in c.components, component in clause.component_list
-            field = String(component.declaration.ident[1].name)
-            field in names && unsupported("record `$name` has duplicate field `$field`")
-            push!(names, field)
-            push!(fields, BaseModelicaComponentClause(clause.type_prefix, clause.type_specifier, [component]))
+        for clause in c.components
+            if !(clause isa BaseModelicaComponentClause)
+                reason = "record `$name` with unsupported declarations"
+                continue
+            end
+            for component in clause.component_list
+                field = String(component.declaration.ident[1].name)
+                field in names && (reason = "record `$name` has duplicate field `$field`")
+                push!(names, field)
+                push!(fields, BaseModelicaComponentClause(clause.type_prefix, clause.type_specifier, [component]))
+            end
         end
-        isempty(fields) && unsupported("record `$name` has no fields (short record definitions are not supported)")
+        isempty(fields) && (reason = "record `$name` has no fields (short record definitions are not supported)")
         haskey(record_type_map, name) && unsupported("duplicate record type `$name`")
-        record_type_map[name] = RecordType(name, fields)
-    end
-    for name in keys(record_type_map)
-        validate_record_type(name, String[])
+        record_type_map[name] = RecordType(name, fields, reason)
     end
     return record_type_map
 end
 
-function validate_record_type(name, ancestors)
+function validate_record_type(name, ancestors = String[])
+    reason = record_type_map[name].unsupported_reason
+    isnothing(reason) || unsupported(reason)
     name in ancestors && unsupported("recursive record type `$name`")
     for field in record_type_map[name].fields
         type = field.type_specifier.type
@@ -88,6 +97,7 @@ function record_field(value, field; allow_unassigned = false)
 end
 
 function record_default(type, mods; depth = 0)
+    validate_record_type(type)
     depth < MAX_INLINE_DEPTH || unsupported("record default nesting exceeds $MAX_INLINE_DEPTH")
     mod = modification_value(mods)
     if !isnothing(mod.expr) && !isempty(mod.expr)
@@ -148,6 +158,7 @@ function record_default(type, mods; depth = 0)
 end
 
 function check_record_value(type, value)
+    validate_record_type(type)
     value isa NamedTuple || unsupported("value of record `$type` must be a record")
     fields = Tuple(Symbol(c.component_list[1].declaration.ident[1].name) for c in record_type_map[type].fields)
     keys(value) == fields || unsupported("record `$type` requires fields $(fields), got $(keys(value))")
@@ -188,6 +199,7 @@ function check_record_value(type, value)
 end
 
 function record_constructor(type, arg_asts)
+    validate_record_type(type)
     fields = record_type_map[type].fields
     names = Symbol[Symbol(c.component_list[1].declaration.ident[1].name) for c in fields]
     args = bind_call_arguments(names, arg_asts, type)
@@ -282,6 +294,7 @@ function expand_record_component!(result, clause)
         push!(result, clause)
         return
     end
+    validate_record_type(type)
     comp = only(clause.component_list)
     decl = comp.declaration
     name = String(decl.ident[1].name)
@@ -320,6 +333,13 @@ function expand_record_component!(result, clause)
             unsupported("record `$type` has no field or supported attribute `$field`")
         end
     end
+    if !isnothing(mod.expr) && !isempty(mod.expr)
+        for (field, mods) in fieldmods
+            expr = modification_value(mods).expr
+            isnothing(expr) || isempty(expr) ||
+                unsupported("record `$name.$field` has both a record binding and a field binding")
+        end
+    end
     mapping = Pair{Symbol, Symbol}[]
     for (field, fieldclause) in zip(fields, schema.fields)
         fieldcomp = only(fieldclause.component_list)
@@ -349,6 +369,13 @@ function expand_record_component!(result, clause)
         dpc = isnothing(clause.type_prefix.dpc) ? prefix.dpc : clause.type_prefix.dpc
         newprefix = BaseModelicaTypePrefix(clause.type_prefix.final_flag, dpc, clause.type_prefix.io)
         subscripts = qualify_record_fields(fielddecl.array_subs, name, String.(fields))
+        if !isnothing(declaration_subscripts(fielddecl))
+            value = modification_value(merged)
+            if !isnothing(value.expr) && !isempty(value.expr)
+                merged = [BaseModelicaModification(value.class_modifications,
+                    [BaseModelicaArrayFieldBinding(value.expr[end], fullname)])]
+            end
+        end
         newdecl = BaseModelicaDeclaration([BaseModelicaIdentifier(fullname)], subscripts, merged)
         expand_record_component!(
             result, BaseModelicaComponentClause(
@@ -447,6 +474,12 @@ function has_record_binding(default)
     mod = modification_value(default.modification)
     return (!isnothing(mod.expr) && !isempty(mod.expr)) ||
         (!isnothing(mod.class_modifications) && !isempty(mod.class_modifications))
+end
+
+function eval_AST(x::BaseModelicaArrayFieldBinding)
+    value = eval_AST(x.expression)
+    is_array(value) || unsupported("record array field `$(x.name)` requires an array binding; use `each` to broadcast a field modifier")
+    return value
 end
 
 # A modifier of a record array can have extra trailing dimensions for an array field.

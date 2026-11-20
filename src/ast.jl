@@ -126,5 +126,6 @@ BaseModelicaClassModificationArg(name, modification) =
     # `Real x[3](start = s)` gets start `BaseModelicaArrayElement(s, (i,))`.
     BaseModelicaArrayElement(expression, index)
     BaseModelicaArraySlice(expression, index) # leading indices of a record array modifier
+    BaseModelicaArrayFieldBinding(expression, name) # array record fields cannot broadcast scalar bindings
     BaseModelicaUnsupportedExpression(description)  # parsed but not convertible
 end

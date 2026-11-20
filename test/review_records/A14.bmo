@@ -1,0 +1,10 @@
+//! base 0.1.0
+package 'P'
+record 'V' Real 'v'[3]; end 'V';
+record 'O' 'V' 'a'; Real 'z'; end 'O';
+model 'M'
+  'O' 'o'('a'('v'(each start = 2.0, each fixed = true)), 'z'(start = 4.0, fixed = true));
+equation
+  der('o'.'a'.'v') = {0.0, 0.0, 0.0}; der('o'.'z') = 0.0;
+end 'M';
+end 'P';
