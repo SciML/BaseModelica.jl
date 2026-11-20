@@ -16,9 +16,10 @@ function review_initialization_model(body)
     return path
 end
 
-function review_initialization_member(sys, name, i)
-    hasproperty(sys, Symbol("$name[$i]")) && return getproperty(sys, Symbol("$name[$i]"))
-    return getproperty(sys, Symbol(name))[i]
+function review_initialization_member(sys, name, indices...)
+    element = Symbol(BaseModelica.element_name(name, indices))
+    hasproperty(sys, element) && return getproperty(sys, element)
+    return getproperty(sys, Symbol(name))[indices...]
 end
 
 # The optional filters let the review repros run one model per foreground process.
@@ -190,7 +191,7 @@ review_selected(values, selection) = isempty(selection) ? values :
             @test sol(0.75; idxs = y) ≈ -i * exp(-0.75) rtol = 1.0e-3
         end
         for i in 1:2, j in 1:2
-            m = arrays === :keep ? sys.m[i,j] : getproperty(sys, Symbol("m[$i,$j]"))
+            m = review_initialization_member(sys, "m", i, j)
             @test sol(0.25; idxs = m) ≈ i * exp(-0.25) + j rtol = 1.0e-3
             @test sol(0.75; idxs = m) ≈ -i * exp(-0.75) - j rtol = 1.0e-3
         end
