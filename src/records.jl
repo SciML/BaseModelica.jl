@@ -124,7 +124,7 @@ function record_default(type, mods; depth = 0)
                 eval_AST(expr[end])
             else
                 isnothing(subs) || any(s -> s isa BMColon, subs) ? nothing :
-                    fill!(Array{Any}(undef, (to_dim(eval_AST(s)) for s in subs)...), nothing)
+                    fill!(Array{Any}(undef, (to_dim(eval_dimension(s)) for s in subs)...), nothing)
             end
         end
         push!(values, value)
@@ -146,7 +146,7 @@ function check_record_value(type, value)
         if !isnothing(subs)
             is_array(item) || unsupported("record `$type` field `$field` must be an array")
             dims = map(subs) do sub
-                sub isa BMColon ? nothing : with_local_scope(() -> to_dim(eval_AST(sub)), scope)
+                sub isa BMColon ? nothing : with_local_scope(() -> to_dim(eval_dimension(sub)), scope)
             end
             ndims(item) == length(dims) && all(isnothing(d) || size(item, i) == d for (i, d) in enumerate(dims)) ||
                 unsupported("record `$type` field `$field` has incompatible array size $(size(item))")
@@ -162,8 +162,10 @@ function check_record_value(type, value)
         else
             leaves = is_array(item) ? item : (item,)
             for leaf in leaves
-                valid = isnothing(leaf) || (fieldtype == "String" ? leaf isa AbstractString :
-                    leaf isa Union{Number, SymbolicUtils.BasicSymbolic})
+                valid = isnothing(leaf) || (
+                    fieldtype == "String" ? leaf isa AbstractString :
+                        leaf isa Union{Number, SymbolicUtils.BasicSymbolic}
+                )
                 valid || unsupported("record `$type` field `$field` has an invalid `$fieldtype` value")
             end
         end
@@ -175,10 +177,14 @@ function record_constructor(type, arg_asts)
     fields = record_type_map[type].fields
     names = Symbol[Symbol(c.component_list[1].declaration.ident[1].name) for c in fields]
     args = bind_call_arguments(names, arg_asts, type)
-    mods = [BaseModelicaModification([
-        BaseModelicaClassModificationArg(String(k), BaseModelicaModification([], [v]))
-            for (k, v) in args
-    ], [])]
+    mods = [
+        BaseModelicaModification(
+            [
+                BaseModelicaClassModificationArg(String(k), BaseModelicaModification([], [v]))
+                    for (k, v) in args
+            ], []
+        ),
+    ]
     # Arguments have been evaluated in the caller. Keep them as literal value ASTs while
     # resolving field defaults in declaration order.
     return require_assigned_record(check_record_value(type, record_default(type, mods)), "constructor `$type`")
@@ -263,8 +269,12 @@ function expand_record_component!(result, clause)
             # A record array binding/start is projected by element before by field.
             mods = split_modification(decl.modification, Tuple(index))
             newdecl = BaseModelicaDeclaration([BaseModelicaIdentifier(element)], nothing, mods)
-            expand_record_component!(result, BaseModelicaComponentClause(clause.type_prefix,
-                clause.type_specifier, [BaseModelicaComponentDeclaration(newdecl, comp.comment)]))
+            expand_record_component!(
+                result, BaseModelicaComponentClause(
+                    clause.type_prefix,
+                    clause.type_specifier, [BaseModelicaComponentDeclaration(newdecl, comp.comment)]
+                )
+            )
         end
         record_arrays[Symbol(name)] = names
         return
@@ -314,8 +324,12 @@ function expand_record_component!(result, clause)
         newprefix = BaseModelicaTypePrefix(clause.type_prefix.final_flag, dpc, clause.type_prefix.io)
         subscripts = qualify_record_fields(fielddecl.array_subs, name, String.(fields))
         newdecl = BaseModelicaDeclaration([BaseModelicaIdentifier(fullname)], subscripts, merged)
-        expand_record_component!(result, BaseModelicaComponentClause(newprefix, fieldclause.type_specifier,
-            [BaseModelicaComponentDeclaration(newdecl, comp.comment)]))
+        expand_record_component!(
+            result, BaseModelicaComponentClause(
+                newprefix, fieldclause.type_specifier,
+                [BaseModelicaComponentDeclaration(newdecl, comp.comment)]
+            )
+        )
     end
     record_components[Symbol(name)] = mapping
     return
@@ -377,10 +391,12 @@ function qualify_record_fields(node, prefix, fields)
         if first(parts).name in fields
             parts[1] = BaseModelicaIdentifier(prefix * "." * first(parts).name)
         end
-        return BaseModelicaComponentReference([
-            p isa BaseModelicaArraySubscripts ? qualify_record_fields(p, prefix, fields) : p
-                for p in parts
-        ])
+        return BaseModelicaComponentReference(
+            [
+                p isa BaseModelicaArraySubscripts ? qualify_record_fields(p, prefix, fields) : p
+                    for p in parts
+            ]
+        )
     elseif node isa BaseModelicaFunctionCall
         return BaseModelicaFunctionCall(node.func_name, qualify_record_fields(node.args, prefix, fields))
     elseif node isa BaseModelicaArrayComprehension

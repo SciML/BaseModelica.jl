@@ -18,6 +18,8 @@ run_tests(;
         @safetestset "Initialization Regression Tests" include("test_initialization_regressions.jl")
         @safetestset "Discrete Backend Tests" include("test_discrete_backends.jl")
         @safetestset "Function Tests" include("test_functions.jl")
+        @safetestset "Loader Fix Tests" include("test_loader_fixes.jl")
+        @safetestset "Grammar Fix Tests" include("test_grammar_fixes.jl")
         @safetestset "Record Tests" include("test_records.jl")
         @safetestset "Array Tests" include("test_arrays.jl")
         @safetestset "Constants and Structural Parameter Tests" include("test_parameters.jl")

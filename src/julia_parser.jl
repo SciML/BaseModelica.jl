@@ -485,7 +485,8 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
             (E"," + function_arguments_non_first)[0:1]
     ) |
         named_arguments |> build_function_args
-    function_call_args = E"(" + function_arguments[0:1] + E")"
+    function_call_args = (E"(" + function_arguments[0:1] + E")") |>
+        (args -> isempty(args) ? BaseModelicaFunctionArgs([]) : only(args))
     output_expression_list = Delayed()
     expression_list = Delayed()
     # `|` and `+` have the same precedence in Julia, so the `for` alternative needs its own
@@ -565,8 +566,10 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
                 build_algorithm_section
         )
     ) +
-        ((decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";") |>
-            (_ -> BaseModelicaUnsupportedStatement("external function")))[0:1] +
+        (
+        (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";") |>
+            (_ -> BaseModelicaUnsupportedStatement("external function"))
+    )[0:1] +
         Star(base_partition) + (annotation_comment + E";")[0:1] |>
         BaseModelicaComposition
 
@@ -591,8 +594,10 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
         )
     )
     class_prefixes = e"type" | e"record" |
-        ((e"pure" | e"impure")[0:1] + spc + e"constant"[0:1] + spc + e"function" |>
-            (x -> join(x, " ")))
+        (
+        (e"pure" | e"impure")[0:1] + spc + e"constant"[0:1] + spc + e"function" |>
+            (x -> join(x, " "))
+    )
     der_class_specifier = IDENT + E"=" + E" "[0:1] + E"der" + E" " + E"(" + type_specifier +
         E"," + IDENT + Star(E"," + IDENT) + E")" + comment
     class_specifier = long_class_specifier | short_class_specifier | der_class_specifier

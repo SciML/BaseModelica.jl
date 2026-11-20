@@ -14,17 +14,21 @@ grammar_names(composition) = [
 
 @testset "ANTLR grammar fixes" begin
     @testset "each modifiers retain names, values and nesting" begin
-        pkg = grammar_ast(grammar_package("""
-            model 'M'
-              Real 'x'[3](each start = 2.0, each fixed = true, each unit = "1");
-              Real 'y'[3](start = {1, 2, 3}, each nominal = 4.0);
-              Real 'z'[2](each outer(each start = 5.0 "nested"));
-            equation
-              der('x') = -'x';
-              der('y') = -'y';
-              der('z') = -'z';
-            end 'M';
-            """))
+        pkg = grammar_ast(
+            grammar_package(
+                """
+                model 'M'
+                  Real 'x'[3](each start = 2.0, each fixed = true, each unit = "1");
+                  Real 'y'[3](start = {1, 2, 3}, each nominal = 4.0);
+                  Real 'z'[2](each outer(each start = 5.0 "nested"));
+                equation
+                  der('x') = -'x';
+                  der('y') = -'y';
+                  der('z') = -'z';
+                end 'M';
+                """
+            )
+        )
         composition = grammar_composition(pkg)
         @test grammar_names(composition) == ["x", "y", "z"]
         x, y, z = [only(c.component_list).declaration for c in composition.components]
@@ -41,26 +45,30 @@ grammar_names(composition) = [
     end
 
     @testset "public and protected declarations remain in source order" begin
-        pkg = grammar_ast(grammar_package("""
-            model 'M'
-              Real 'before';
-            protected
-              parameter Real 'gain' = 2;
-              Real 'hidden';
-            public
-              Real 'after';
-            equation
-              'before' = 'gain';
-              'hidden' = 'before';
-            protected
-              Real 'later';
-            equation
-              'later' = 'hidden';
-              'after' = 'later';
-            public
-            protected
-            end 'M';
-            """))
+        pkg = grammar_ast(
+            grammar_package(
+                """
+                model 'M'
+                  Real 'before';
+                protected
+                  parameter Real 'gain' = 2;
+                  Real 'hidden';
+                public
+                  Real 'after';
+                equation
+                  'before' = 'gain';
+                  'hidden' = 'before';
+                protected
+                  Real 'later';
+                equation
+                  'later' = 'hidden';
+                  'after' = 'later';
+                public
+                protected
+                end 'M';
+                """
+            )
+        )
         composition = grammar_composition(pkg)
         @test grammar_names(composition) == ["before", "gain", "hidden", "after", "later"]
         @test composition.components[2].type_prefix.dpc == "parameter"
@@ -68,30 +76,34 @@ grammar_names(composition) = [
     end
 
     @testset "visibility sections around function algorithms" begin
-        pkg = grammar_ast(grammar_package("""
-            function 'f'
-            public
-              input Real 'x';
-              output Real 'y';
-            protected
-              Real 'tmp';
-            algorithm
-              'tmp' := 'x' + 1;
-              'y' := 'tmp';
-            public
-            end 'f';
-            model 'M'
-            public
-              Real 'x';
-            initial equation
-              'x' = 1;
-            protected
-              Real 'hidden';
-            equation
-              der('x') = -'x';
-              'hidden' = 'x';
-            end 'M';
-            """))
+        pkg = grammar_ast(
+            grammar_package(
+                """
+                function 'f'
+                public
+                  input Real 'x';
+                  output Real 'y';
+                protected
+                  Real 'tmp';
+                algorithm
+                  'tmp' := 'x' + 1;
+                  'y' := 'tmp';
+                public
+                end 'f';
+                model 'M'
+                public
+                  Real 'x';
+                initial equation
+                  'x' = 1;
+                protected
+                  Real 'hidden';
+                equation
+                  der('x') = -'x';
+                  'hidden' = 'x';
+                end 'M';
+                """
+            )
+        )
         function_composition = only(pkg.class_defs).class.composition
         @test grammar_names(function_composition) == ["x", "y", "tmp"]
         algorithm = only(function_composition.equations)
@@ -103,7 +115,8 @@ grammar_names(composition) = [
     end
 
     @testset "each starts and protected states reach ModelingToolkit" begin
-        source = grammar_package("""
+        source = grammar_package(
+            """
             model 'M'
             protected
               Real 'x'[3](each start = 2.0, each fixed = true, each unit = "1");
@@ -113,7 +126,8 @@ grammar_names(composition) = [
               der('x') = -'x';
               'y' = sum('x');
             end 'M';
-            """)
+            """
+        )
         mktemp() do path, io
             write(io, source)
             close(io)
@@ -132,15 +146,19 @@ grammar_names(composition) = [
     end
 
     @testset "quoted keywords and malformed syntax" begin
-        pkg = grammar_ast(grammar_package("""
-            model 'M'
-              Real 'each', 'protected', 'public';
-            equation
-              'each' = 1;
-              'protected' = 2;
-              'public' = 3;
-            end 'M';
-            """))
+        pkg = grammar_ast(
+            grammar_package(
+                """
+                model 'M'
+                  Real 'each', 'protected', 'public';
+                equation
+                  'each' = 1;
+                  'protected' = 2;
+                  'public' = 3;
+                end 'M';
+                """
+            )
+        )
         @test grammar_names(grammar_composition(pkg)) == ["each", "protected", "public"]
         for declaration in (
                 "Real 'x'[2](each = 1);",
