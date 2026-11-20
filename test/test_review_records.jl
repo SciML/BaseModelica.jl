@@ -66,7 +66,6 @@ end
             "B3" => ["x" => (1, 1), "y" => (2, 2)],
         ]
         for (case, values) in expected
-            case == "B3" && continue # Covered with the initial-equation regressions.
             sys = parse_basemodelica(path(case); parser, arrays)
             sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Rodas5P(); reltol = 1e-9, abstol = 1e-11)
             @test sol.retcode == ReturnCode.Success
@@ -74,8 +73,14 @@ end
                 @test sol(t; idxs = review_record_member(sys, name)) ≈ target atol = 1e-8
             end
         end
-        for case in ("A4", "A5", "A6", "A11", "A13")
-            @test_throws Exception parse_basemodelica(path(case); parser, arrays)
+        for case in ("A4", "A5", "A13")
+            @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path(case); parser, arrays)
+        end
+        @test_throws Exception parse_basemodelica(path("A6"); parser, arrays)
+        if parser === :julia
+            @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path("A11"); parser, arrays)
+        else
+            @test_throws BaseModelica.BaseModelicaParseError parse_basemodelica(path("A11"); parser, arrays)
         end
     end
 end
