@@ -284,7 +284,8 @@ function expand_record_component!(result, clause)
     for (field, fieldclause) in zip(fields, schema.fields)
         fieldcomp = only(fieldclause.component_list)
         fielddecl = fieldcomp.declaration
-        merged = merge_record_modification(fielddecl.modification, get(fieldmods, field, nothing))
+        defaults = qualify_record_fields(fielddecl.modification, name, String.(fields))
+        merged = merge_record_modification(defaults, get(fieldmods, field, nothing))
         inherited = Any[]
         for arg in attributes
             amod = arg.modification
@@ -307,7 +308,8 @@ function expand_record_component!(result, clause)
         prefix = fieldclause.type_prefix
         dpc = isnothing(clause.type_prefix.dpc) ? prefix.dpc : clause.type_prefix.dpc
         newprefix = BaseModelicaTypePrefix(clause.type_prefix.final_flag, dpc, clause.type_prefix.io)
-        newdecl = BaseModelicaDeclaration([BaseModelicaIdentifier(fullname)], fielddecl.array_subs, merged)
+        subscripts = qualify_record_fields(fielddecl.array_subs, name, String.(fields))
+        newdecl = BaseModelicaDeclaration([BaseModelicaIdentifier(fullname)], subscripts, merged)
         expand_record_component!(result, BaseModelicaComponentClause(newprefix, fieldclause.type_specifier,
             [BaseModelicaComponentDeclaration(newdecl, comp.comment)]))
     end
@@ -360,4 +362,36 @@ function assign_function_path(value, parts, replacement, context)
     field = Symbol(part.name)
     item = record_field(value, field; allow_unassigned = true)
     return merge(value, NamedTuple{(field,)}((assign_function_path(item, rest, replacement, context),)))
+end
+
+# Defaults and dimensions written in a record definition refer to that record's fields.
+# Component modifiers, in contrast, are written in the enclosing model's scope. Qualify
+# only expressions originating in the type definition before merging those modifiers.
+function qualify_record_fields(node, prefix, fields)
+    if node isa BaseModelicaComponentReference
+        parts = collect(Any, node.ref_list)
+        if first(parts).name in fields
+            parts[1] = BaseModelicaIdentifier(prefix * "." * first(parts).name)
+        end
+        return BaseModelicaComponentReference([
+            p isa BaseModelicaArraySubscripts ? qualify_record_fields(p, prefix, fields) : p
+                for p in parts
+        ])
+    elseif node isa BaseModelicaFunctionCall
+        return BaseModelicaFunctionCall(node.func_name, qualify_record_fields(node.args, prefix, fields))
+    elseif node isa BaseModelicaArrayComprehension
+        index = node.index
+        local_fields = filter(!=(String(loop_index_name(index))), fields)
+        return BaseModelicaArrayComprehension(
+            qualify_record_fields(node.expression, prefix, local_fields),
+            BaseModelicaForIndex(index.ident, qualify_record_fields(index.expression, prefix, fields))
+        )
+    elseif node isa AbstractVector
+        return [qualify_record_fields(x, prefix, fields) for x in node]
+    elseif node isa Tuple
+        return map(x -> qualify_record_fields(x, prefix, fields), node)
+    elseif node isa BaseModelicaASTNode
+        return typeof(node)((qualify_record_fields(getfield(node, key), prefix, fields) for key in fieldnames(typeof(node)))...)
+    end
+    return node
 end

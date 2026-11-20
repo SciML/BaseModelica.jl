@@ -60,9 +60,17 @@ end '-Vec';
 
     @testset "Record components, parameters, starts and equations" begin
         path = record_file(RECORD_DEFS * """
+        record StateVec
+          Real x;
+          Real y[2];
+        end StateVec;
+        record StateOuter
+          StateVec v;
+          Real z;
+        end StateOuter;
         model M
           parameter Outer p(v(x=2, y={3,4}), z=5);
-          Outer a(start=Outer(Vec(1,{2,3}),4), fixed=true);
+          StateOuter a(start=StateOuter(StateVec(1,{2,3}),4), fixed=true);
           Outer b = p;
           Real s;
         equation
@@ -119,6 +127,61 @@ end '-Vec';
         """)
         sys = parse_basemodelica(path; parser)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
+        @test sol(0.2; idxs=sys.x) ≈ 1
+    end
+
+    @testset "Field defaults and dimensions use record scope" begin
+        path = record_file("""
+        record Sized
+          Integer n = 2;
+          Real v[n] = fill(n,n);
+        end Sized;
+        function total
+          input Sized p;
+          output Real y;
+        algorithm
+          y := sum(p.v);
+        end total;
+        model M
+          parameter Integer n=7;
+          parameter Sized p(n=3);
+          Real x(start=0, fixed=true);
+        equation
+          der(x) = total(p) + total(Sized(n=4)) + n;
+        end M;
+        """)
+        sys = parse_basemodelica(path; parser)
+        sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.2; idxs=sys.x) ≈ 6.4
+    end
+
+    @testset "Record equations and nested arrays of records" begin
+        path = record_file("""
+        record R
+          Real x;
+        end R;
+        record A
+          R rs[2];
+        end A;
+        function total
+          input A a;
+          output Real y;
+        algorithm
+          y := a.rs[1].x + a.rs[2].x;
+        end total;
+        model M
+          parameter A p = A({R(2),R(3)});
+          A a;
+          Real x(start=0, fixed=true);
+        equation
+          a = p;
+          der(x) = total(a);
+        end M;
+        """)
+        sys = parse_basemodelica(path; parser)
+        sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
         @test sol(0.2; idxs=sys.x) ≈ 1
     end
 
