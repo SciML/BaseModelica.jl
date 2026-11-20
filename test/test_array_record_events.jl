@@ -59,3 +59,32 @@ nothing
     @test size(getproperty(raw, Symbol("r.y"))) == (2,)
 end
 nothing
+
+
+@testset "Parameter-valued array pre starts ($parser)" for parser in (:julia, :antlr)
+    file = tempname() * ".bmo"
+    write(
+        file, """
+        //! base 0.1.0
+        package P
+        model M
+          parameter Real p=3;
+          Real x(start=0,fixed=true);
+          discrete Real d[2](start=0);
+        initial equation
+          pre(d[1])=p;
+          pre(d[2])=p+1;
+        equation
+          der(x)=1;
+          when time >= 0.5 then d=pre(d)+{1,2}; end when;
+        end M;
+        end P;
+        """
+    )
+    sys = parse_basemodelica(file; parser, arrays = :keep)
+    sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5(); reltol = 1.0e-10, abstol = 1.0e-12)
+    @test sol.retcode == ReturnCode.Success
+    @test sol(0.25; idxs = sys.d) == [3, 4]
+    @test sol(1.0; idxs = sys.d) == [4, 6]
+end
+nothing

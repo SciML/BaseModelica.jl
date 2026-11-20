@@ -795,7 +795,7 @@ function array_discrete_initial!(starts, eq)
     haskey(kept_array_dims, name) && name in discrete_variable_names || return false
     _, subs = reference_parts(ref)
     isnothing(subs) && return false
-    values = copy(array_attribute(name, starts[name]))
+    values = Num.(array_attribute(name, starts[name]))
     indices = [sub isa BMColon ? Colon() : to_index(eval_dimension(sub)) for sub in subs]
     value = with_eval_mode(() -> eval_AST(inner.rhs), :initial)
     values[indices...] = value
