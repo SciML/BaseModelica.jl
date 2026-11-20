@@ -1036,3 +1036,98 @@ end
         end
     end
 end
+
+
+@testset "Round 20 relation Boolean affect inputs" begin
+    @testset "When body at a shared Boolean root ($parser)" for parser in (:julia, :antlr)
+        sys = parse_basemodelica(step_model("""
+            Real 'x'(start = 0.0, fixed = true);
+            Boolean 'off'(start = false);
+            discrete Real 'current'(start = -1.0);
+            discrete Real 'previous'(start = -1.0);
+          equation
+            der('x') = 1.0;
+            'off' = 'x' > 0.5;
+            when 'x' > 0.5 then
+              'current' = if 'off' then 1.0 else 0.0;
+              'previous' = if pre('off') then 1.0 else 0.0;
+            end when;
+            """); parser)
+        prob = ODEProblem(sys, [], (0.0, 1.0))
+        for alg in (Rodas5P(), FBDF(), nothing)
+            sol = isnothing(alg) ? solve(prob; dtmax = 0.01) : solve(prob, alg; dtmax = 0.01)
+            @test sol.retcode == ReturnCode.Success
+            @test sol(1.0; idxs = sys.current) == 1.0
+            @test sol(1.0; idxs = sys.previous) == 0.0
+        end
+    end
+
+    @testset "When body reads a relation Boolean ($parser)" for parser in (:julia, :antlr)
+        sys = parse_basemodelica(step_model("""
+            Real 'x'(start = 0.0, fixed = true);
+            Boolean 'off'(start = false);
+            discrete Real 'k'(start = 0.0);
+            discrete Real 'old'(start = 0.0);
+          equation
+            der('x') = 1.0;
+            'off' = sin(6.283185307179586 * time + 0.3) < 0.0;
+            when sample(0.0, 0.25) then
+              'k' = pre('k') + (if 'off' then 1.0 else 0.0);
+              'old' = pre('old') + (if pre('off') then 1.0 else 0.0);
+            end when;
+            """); parser)
+        prob = ODEProblem(sys, [], (0.0, 2.1))
+        for alg in (Rodas5P(), FBDF(), nothing)
+            sol = isnothing(alg) ? solve(prob; dtmax = 0.01) : solve(prob, alg; dtmax = 0.01)
+            @test sol.retcode == ReturnCode.Success
+            for time in 0.1:0.25:2.1
+                expected = count(t -> sin(2pi * t + 0.3) < 0, 0.0:0.25:time)
+                @test sol(time; idxs = sys.k) ≈ expected
+                @test sol(time; idxs = sys.old) ≈ expected
+            end
+        end
+    end
+
+    # Independent reference eliminates the ideal-diode algebraic loop.
+    stop = 20.0
+    reference = solve(
+        ODEProblem((v, p, t) -> max(0.0, sin(t) - v) - v, 0.0, (0.0, stop)),
+        Vern9(); reltol = 1.0e-12, abstol = 1.0e-12, dtmax = 0.01
+    )
+    @test reference.retcode == ReturnCode.Success
+    grid = 0.0:0.01:stop
+    rising = [grid[i] for i in 2:length(grid) if reference(grid[i-1]) <= 0.2 < reference(grid[i])]
+    @test length(rising) == 4
+    @testset "Algebraic rectifier plus when ($parser)" for parser in (:julia, :antlr)
+        sys = parse_basemodelica(step_model("""
+            Real 'v'(start = 0.0, fixed = true);
+            Real 'i'(start = 0.0); Real 's'(start = 0.0); Real 'vd'(start = 0.0);
+            Boolean 'off'(start = true);
+            discrete Real 'k'(start = 0.0);
+          equation
+            der('v') = 'i' - 'v';
+            sin(time) = 'vd' + 'i' + 'v';
+            'vd' = if 'off' then 's' else 0.0;
+            'i' = if 'off' then 0.0 else 's';
+            'off' = 's' < 0.0;
+            when 'v' > 0.2 then 'k' = pre('k') + 1.0; end when;
+            """); parser)
+        prob = ODEProblem(sys, [], (0.0, stop))
+        @test !isone(prob.f.mass_matrix)
+        for alg in (Rodas5P(), FBDF(), nothing)
+            sol = isnothing(alg) ? solve(prob; reltol = 1.0e-8, abstol = 1.0e-10, dtmax = 0.01) :
+                solve(prob, alg; reltol = 1.0e-8, abstol = 1.0e-10, dtmax = 0.01)
+            @test sol.retcode == ReturnCode.Success
+            times = 0.0:0.05:stop
+            @test maximum(abs(sol(t; idxs = sys.v) - reference(t)) for t in times) < 2.0e-5
+            @test maximum(abs(sol(t; idxs = sys.i) - max(0.0, sin(t) - reference(t))) for t in times) < 2.0e-5
+            for time in (2.0, 8.0, 14.0, 20.0)
+                @test sol(time; idxs = sys.k) ≈ count(<=(time), rising)
+            end
+            @test all(times) do t
+                s = sol(t; idxs = sys.s)
+                abs(s) < 1.0e-7 || (sol(t; idxs = sys.off) > 0.5) == (s < 0)
+            end
+        end
+    end
+end

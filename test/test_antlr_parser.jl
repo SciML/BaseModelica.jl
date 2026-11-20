@@ -384,7 +384,19 @@ BM = BaseModelica
         @test BM.baseModelica_to_ModelingToolkit(triac_package) isa System
         for parser in (:julia, :antlr)
             @test parse_basemodelica(triac_path; parser, simplify = false) isa System
-            @test parse_basemodelica(triac_path; parser) isa System
+            sys = parse_basemodelica(triac_path; parser)
+            sol = solve(ODEProblem(sys, [], (0.0, 0.001)), Rodas5P();
+                reltol = 1.0e-8, abstol = 1.0e-10, dtmax = 5.0e-7)
+            @test sol.retcode == ReturnCode.Success
+            @test create_odeproblem(triac_path; parser) isa ODEProblem
+            count_sym = getproperty(sys, Symbol("trapezoidCurrent.signalSource.count"))
+            start_sym = getproperty(sys, Symbol("trapezoidCurrent.signalSource.T_start"))
+            # Independent reference for the fixture's 50 μs periodic source.
+            for time in (0.00004, 0.00024, 0.00099)
+                expected = floor((time - 2.0e-5) / 5.0e-5)
+                @test sol(time; idxs = count_sym) ≈ expected
+                @test sol(time; idxs = start_sym) ≈ 2.0e-5 + expected * 5.0e-5
+            end
         end
     end
 

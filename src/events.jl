@@ -1160,6 +1160,14 @@ function mtk_affect(block::WhenBlock, model::DiscreteModel)
         any(r -> isequal(first(r), state), block.reinits) ||
             push!(affects, state ~ ModelingToolkit.Pre(state))
     end
+    # Relation callbacks update these before each when-body solve. Hold their
+    # current iteration values explicitly: otherwise MTK's discrete affect system
+    # shifts plain Boolean reads (including those in algebraic equations) without
+    # supplying the corresponding pre-value to the generated affect.
+    for sym in values(relation_boolean_syms)
+        push!(affects, sym ~ ModelingToolkit.Pre(sym))
+        push!(discretes, sym)
+    end
     return affects, discretes
 end
 
