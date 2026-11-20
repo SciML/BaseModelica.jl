@@ -16,6 +16,7 @@ run_tests(;
         @safetestset "Event Iteration Regression Tests" include("test_event_iteration_regressions.jl")
         @safetestset "Event Step Value Tests" include("test_event_step_values.jl")
         @safetestset "Initialization Regression Tests" include("test_initialization_regressions.jl")
+        @safetestset "Review Initialization Tests" include("test_review_initialization.jl")
         @safetestset "Discrete Backend Tests" include("test_discrete_backends.jl")
         @safetestset "Function Tests" include("test_functions.jl")
         @safetestset "Loader Fix Tests" include("test_loader_fixes.jl")
