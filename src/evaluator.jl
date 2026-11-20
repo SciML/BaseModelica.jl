@@ -350,7 +350,7 @@ function eval_AST(
     # Array components become one scalar component per element, see arrays.jl
     components = scalarize_components(
         expand_record_components(composition.components); arrays,
-        equations = composition.equations, parameter_equations = composition.parameter_equations
+        equations = composition.equations, parameter_equations = composition.parameter_equations, backend
     )
     equations = composition.equations
     initial_equations = composition.initial_equations
@@ -388,11 +388,13 @@ function eval_AST(
             parameter = type_prefix == "parameter"
             evaluated = parameter && is_evaluate_annotated(comp)
             evaluated && push!(evaluated_parameter_names, name)
+            discrete = type_prefix == "discrete" || name in discrete_variable_names
+            discrete && push!(discrete_variable_names, name)
             variable_map[name] = declare_array(
                 name, kept_array_dims[name], modelica_type_to_julia(comp.type_specifier.type);
-                parameter, tunable = !evaluated
+                parameter, tunable = !evaluated, discrete
             )
-            parameter || push!(vars, variable_map[name])
+            parameter || discrete || push!(vars, variable_map[name])
             continue
         end
 
@@ -713,15 +715,16 @@ function eval_AST(
     append!(bindings, booleans.bindings)
 
     # Lower when-equations through the discrete backend.
+    event_eqs, event_vars = array_event_view(real_eqs, vars, blocks)
     discrete_model = DiscreteModel(
-        real_eqs, copy(vars), differentiated_variables(real_eqs),
-        Pair{Any, Any}[variable_map[name] => discrete_starts[name] for name in sort!(collect(keys(discrete_starts)))],
+        event_eqs, copy(event_vars), differentiated_variables(event_eqs),
+        array_discrete_starts(discrete_starts),
         blocks
     )
     backend isa MTKEventsBackend &&
         validate_relation_boolean_body_reads(discrete_model, booleans.definitions)
     lowered = lower_discrete(backend, discrete_model)
-    real_eqs = lowered.equations
+    real_eqs = backend isa MTKEventsBackend ? real_eqs : lowered.equations
     append!(all_pars, lowered.parameters)
 
     # Discrete variables that the backend represents as (clocked) unknowns

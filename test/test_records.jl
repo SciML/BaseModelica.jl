@@ -40,7 +40,7 @@ function '-Vec'
 end '-Vec';
 """
 
-@testset "Records ($parser)" for parser in (:julia, :antlr)
+@testset "Records ($parser, $arrays)" for parser in (:julia, :antlr), arrays in (:scalarize, :keep)
     @testset "Constructors, nested values and function fields" begin
         path = record_file(
             RECORD_DEFS * """
@@ -54,7 +54,7 @@ end '-Vec';
                 end M;
                 """
         )
-        sys = parse_basemodelica(path; parser)
+        sys = parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5(); reltol = 1.0e-10, abstol = 1.0e-12)
         @test sol.retcode == ReturnCode.Success
         @test experiment_settings(sys).StopTime == 0.2
@@ -86,11 +86,11 @@ end '-Vec';
                 end M;
                 """
         )
-        sys = parse_basemodelica(path; parser)
+        sys = parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5(); reltol = 1.0e-10, abstol = 1.0e-12)
         @test sol.retcode == ReturnCode.Success
         @test sol(0.2; idxs = getproperty(sys, Symbol("a.v.x"))) ≈ exp(-0.2) atol = 1.0e-8
-        @test sol(0.2; idxs = getproperty(sys, Symbol("a.v.y[2]"))) ≈ 3exp(-0.2) atol = 1.0e-8
+        @test sol(0.2; idxs = (arrays === :keep ? getproperty(sys, Symbol("a.v.y"))[2] : getproperty(sys, Symbol("a.v.y[2]")))) ≈ 3exp(-0.2) atol = 1.0e-8
         @test sol(0.2; idxs = sys.s) ≈ 14
     end
 
@@ -111,7 +111,7 @@ end '-Vec';
                 end M;
                 """
         )
-        sys = parse_basemodelica(path; parser)
+        sys = parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
         @test sol.retcode == ReturnCode.Success
         @test sol(0.2; idxs = sys.x) ≈ 3.4
@@ -141,7 +141,7 @@ end '-Vec';
             end M;
             """
         )
-        sys = @test_logs parse_basemodelica(path; parser)
+        sys = @test_logs parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
         @test sol.retcode == ReturnCode.Success
         @test sol(0.2; idxs = sys.x) ≈ 657.6
@@ -165,7 +165,7 @@ end '-Vec';
                 end M;
                 """
         )
-        sys = parse_basemodelica(path; parser)
+        sys = parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
         @test sol(0.2; idxs = sys.x) ≈ 1
     end
@@ -199,7 +199,7 @@ end '-Vec';
                 end M;
                 """
         )
-        sys = parse_basemodelica(path; parser)
+        sys = parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
         @test sol.retcode == ReturnCode.Success
         @test sol(0.2; idxs = sys.x) ≈ 2.2
@@ -232,7 +232,7 @@ end '-Vec';
             end M;
             """
         )
-        sys = parse_basemodelica(path; parser)
+        sys = parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
         @test sol.retcode == ReturnCode.Success
         @test sol(0.2; idxs = sys.x) ≈ 7.2
@@ -260,7 +260,7 @@ end '-Vec';
             end M;
             """
         )
-        sys = parse_basemodelica(path; parser)
+        sys = parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
         @test sol.retcode == ReturnCode.Success
         @test sol(0.2; idxs = sys.x) ≈ 6.4
@@ -291,7 +291,7 @@ end '-Vec';
             end M;
             """
         )
-        sys = parse_basemodelica(path; parser)
+        sys = parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
         @test sol.retcode == ReturnCode.Success
         @test sol(0.2; idxs = sys.x) ≈ 1
@@ -328,7 +328,7 @@ end '-Vec';
                 end M;
                 """
         )
-        sys = parse_basemodelica(path; parser)
+        sys = parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 2.0)), Tsit5(); reltol = 1.0e-10)
         @test sol.retcode == ReturnCode.Success
         @test sol(0.25; idxs = sys.y) ≈ 8.5

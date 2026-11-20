@@ -6,14 +6,15 @@ const ARRAY_MODE = Ref(:scalarize)
 const kept_array_dims = Dict{Symbol, Tuple}()
 
 function validate_array_mode(arrays)
-    arrays in (:scalarize, :keep) ||
+    (arrays === :scalarize || arrays === :keep) ||
         throw(ArgumentError("arrays must be :scalarize or :keep, got $(repr(arrays))"))
     return arrays
 end
 
 # Runtime axes allow arbitrary rank without eval or generated code.
-function declare_array(name, dims, type; parameter = false, tunable = true)
+function declare_array(name, dims, type; parameter = false, tunable = true, discrete = false)
     ranges = map(Base.OneTo, dims)
+    discrete && return only(@discretes $name(t)[ranges...])
     if parameter
         return only(@parameters $name[ranges...]::type [tunable = tunable])
     end
@@ -112,7 +113,14 @@ end
 
 function to_index(x)
     if x isa AbstractArray
-        return [to_int(v, "array subscript") for v in x]
+        indices = [to_int(v, "array subscript") for v in x]
+        isempty(indices) && return 1:0
+        length(indices) == 1 && return first(indices):first(indices)
+        step = indices[2] - indices[1]
+        if step != 0 && all(i -> indices[i] - indices[i - 1] == step, 2:length(indices))
+            return first(indices):step:last(indices)
+        end
+        return indices
     end
     x isa Bool && unsupported("Boolean array subscripts are not supported")
     return to_int(x, "array subscript")
@@ -165,6 +173,11 @@ function apply_subscripts(value, subscripts)
     for (k, sub) in enumerate(subscripts)
         sub isa BMColon && continue
         indices[k] = to_index(with_end_size(() -> eval_AST(sub), size(value, k)))
+    end
+    # MTK symbolic arrays accept range slices but not arbitrary vector subscripts.
+    # Materialize only this indexing operation when the selection is non-affine.
+    if value isa Symbolics.Arr && any(i -> i isa AbstractVector && !(i isa AbstractRange), indices)
+        return collect(value)[indices...]
     end
     return value[indices...]
 end
@@ -257,9 +270,9 @@ function modelica_mul(a, b)
         check_same_size(a, b, "*")
         return sum(a .* b)
     elseif ndims(a) == 1 && ndims(b) == 2
-        return vec(permutedims(a) * b)
+        return Symbolics.wrap(vec(permutedims(a) * b))
     end
-    return a * b
+    return Symbolics.wrap(a * b)
 end
 
 function modelica_div(a, b)
@@ -275,7 +288,7 @@ function modelica_pow(a, b)
     n >= 0 || unsupported("negative matrix power")
     result = [i == j ? one(eltype(a)) : zero(eltype(a)) for i in axes(a, 1), j in axes(a, 2)]
     for _ in 1:n
-        result = result * a
+        result = Symbolics.wrap(result * a)
     end
     return result
 end
@@ -296,7 +309,11 @@ function equate(lhs, rhs)
     if any(x -> x isa NamedTuple, left) || any(x -> x isa NamedTuple, right)
         return reduce(vcat, (vcat(equate(l, r)) for (l, r) in zip(left, right)); init = Equation[])
     end
-    ARRAY_MODE[] === :keep && return Equation(left, right)
+    scalar_boolean = !isempty(relation_boolean_syms) && (
+        (left isa Array && any(x -> !isnothing(relation_boolean_name(x)), left)) ||
+        (right isa Array && any(x -> !isnothing(relation_boolean_name(x)), right))
+    )
+    ARRAY_MODE[] === :keep && !scalar_boolean && return Equation(left, right)
     return vec(Equation[l ~ r for (l, r) in zip(left, right)])
 end
 
@@ -324,7 +341,10 @@ function call_builtin(name::Symbol, args)
             end
         end
     end
-    name === :der && ARRAY_MODE[] === :keep && return D(only(args))
+    if name === :der && ARRAY_MODE[] === :keep
+        arg = only(args)
+        return is_array(arg) && !(arg isa Symbolics.Arr) ? D.(arg) : D(arg)
+    end
     if name in ELEMENTWISE_FUNCTIONS && any(is_array, args)
         return broadcast((xs...) -> f(collect(Any, xs)), args...)
     end
@@ -465,7 +485,7 @@ split_modification(::Nothing, index) = nothing
 named like `x[1]` or `A[1,2]`, in column-major order. Fills `array_components` and
 `scalarized_from`.
 """
-function scalarize_components(components; arrays = :scalarize, equations = [], parameter_equations = [])
+function scalarize_components(components; arrays = :scalarize, equations = [], parameter_equations = [], backend = MTKEventsBackend())
     empty!(kept_array_dims)
     ARRAY_MODE[] = validate_array_mode(arrays)
     empty!(array_components)
@@ -489,7 +509,7 @@ function scalarize_components(components; arrays = :scalarize, equations = [], p
         end
         name = String(declaration.ident[1].name)
         dims = array_size(name, subscripts, declaration, scope)
-        reason = array_fallback_reason(comp, subscripts, scope, equations, parameter_equations)
+        reason = array_fallback_reason(comp, subscripts, scope, equations, parameter_equations, backend)
         if arrays === :keep && isnothing(reason)
             kept_array_dims[Symbol(name)] = dims
             push!(result, comp)
@@ -568,16 +588,16 @@ end
 
 # Fallbacks are local to a declaration. Event-updated arrays use the scalar backend
 # interface; continuous array states (including reinit targets) stay arrays.
-function array_fallback_reason(comp, subscripts, scope, equations, parameter_equations)
+function array_fallback_reason(comp, subscripts, scope, equations, parameter_equations, backend)
     decl = only(comp.component_list).declaration
     name = Symbol(first(decl.ident).name)
-    comp.type_specifier.type == "Boolean" && comp.type_prefix.dpc != "parameter" &&
+    event_updated = comp.type_prefix.dpc == "discrete" || name in collect_when_body_var_names(equations)
+    comp.type_specifier.type == "Boolean" && comp.type_prefix.dpc != "parameter" && !event_updated &&
         return "relation-defined Boolean uses scalar 0/1 discretes"
     refs = referenced_names!(Set{String}(), subscripts)
     any(n -> Symbol(n) in keys(scope), refs) && return "parameter-dependent size evaluated at load"
     comp.type_prefix.dpc == "constant" && return "constant array is inlined elementwise"
-    comp.type_prefix.dpc == "discrete" && return "scalar discrete backend interface"
-    name in collect_when_body_var_names(equations) && return "scalar discrete backend interface"
+    event_updated && !(backend isa MTKEventsBackend) && return "scalar discrete backend interface"
     for eq in parameter_equations
         ref = eq.component_reference
         names, subs = reference_parts(ref)
@@ -604,6 +624,7 @@ function elementwise_loop_ast(node, index)
         if !isnothing(subs)
             count(sub -> string(index) in referenced_names!(Set{String}(), sub), subs) <= 1 ||
                 return nothing
+            all(sub -> affine_loop_subscript(sub, index), subs) || return nothing
         end
         return node
     elseif node isa Union{BaseModelicaNumber, BaseModelicaBool, BaseModelicaString}
@@ -655,7 +676,7 @@ function vectorize_for_equation(for_eq)
         for (lhs, rhs) in templates
             (is_array(eval_AST(lhs)) || is_array(eval_AST(rhs))) && return nothing
         end
-        scope[index] = collect(range)
+        scope[index] = range
         result = Equation[]
         for (lhs, rhs) in templates
             left, right = eval_AST(lhs), eval_AST(rhs)
@@ -664,4 +685,52 @@ function vectorize_for_equation(for_eq)
         end
         return result
     end
+end
+
+# Keep the event IR scalar without changing event/relation lowering. MTK's backend
+# returns these equations unchanged, so the caller restores the whole-array equations
+# after it has built callbacks from this scalar view.
+function array_event_view(equations, variables, blocks)
+    if ARRAY_MODE[] === :keep && !isempty(blocks)
+        scalar_equations = ModelingToolkitBase.flatten_equations(Equation[equations...])
+        scalar_variables = Any[]
+        for var in variables
+            append!(scalar_variables, is_array(var) ? vec(collect(var)) : [var])
+        end
+        return scalar_equations, scalar_variables
+    end
+    return equations, variables
+end
+
+function array_discrete_starts(starts)
+    pairs = Pair{Any, Any}[]
+    for name in sort!(collect(keys(starts)))
+        var = variable_map[name]
+        value = array_attribute(name, starts[name])
+        if is_array(var)
+            append!(pairs, [var[i] => value[i] for i in CartesianIndices(var)])
+        else
+            push!(pairs, var => value)
+        end
+    end
+    return pairs
+end
+
+# A varying subscript must be affine and contain the index once. Static subscripts
+# (including size/end and ranges) keep their ordinary evaluation semantics.
+function affine_loop_subscript(node, index)
+    string(index) in referenced_names!(Set{String}(), node) || return true
+    if node isa BaseModelicaComponentReference
+        return length(node.ref_list) == 1 && Symbol(first(node.ref_list).name) == index
+    elseif node isa Union{BaseModelicaSum, BaseModelicaMinus, BaseModelicaProd, BaseModelicaDivide}
+        left, right = getfield(node, 1), getfield(node, 2)
+        varies_left = string(index) in referenced_names!(Set{String}(), left)
+        varies_right = string(index) in referenced_names!(Set{String}(), right)
+        varies_left && varies_right && return false
+        node isa BaseModelicaDivide && varies_right && return false
+        return affine_loop_subscript(left, index) && affine_loop_subscript(right, index)
+    elseif node isa Union{BaseModelicaUnaryMinus, BaseModelicaParens}
+        return affine_loop_subscript(getfield(node, 1), index)
+    end
+    return false
 end

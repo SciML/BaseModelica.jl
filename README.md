@@ -67,8 +67,7 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   `sys.x`, and `sol[sys.x]` returns vectors. Flattened component names remain literal
   names: use `getproperty(sys, Symbol("body.frame_a.r_0"))` for a record field array.
   Parameter-dependent dimensions are evaluated at load and scalarized per declaration;
-  relation-defined Boolean arrays, element parameter overrides, and scalar discrete
-  backend declarations also use per-variable fallbacks (logged at `@debug`). Whole-array
+  relation-defined Boolean arrays and element parameter overrides also use per-variable fallbacks (logged at `@debug`). Whole-array
   parameter overrides should be used for retained array parameters: MTK cannot override
   one element of an array that has an array default. Sizes must be constants or
   parameters with constant values (`'k'['n'] = fill(1.0, 'n')`), including dimensions

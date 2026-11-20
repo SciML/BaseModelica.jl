@@ -7,20 +7,27 @@ BM = BaseModelica
 
 testfile(name) = joinpath(dirname(dirname(pathof(BM))), "test", "testfiles", name * ".bmo")
 
-function solve_model(name, parser; tspan = (0.0, 10.0), alg = Tsit5())
-    sys = parse_basemodelica(testfile(name); parser)
+function solve_model(name, parser; tspan = (0.0, 10.0), alg = Tsit5(), arrays = :scalarize)
+    sys = parse_basemodelica(testfile(name); parser, arrays)
     prob = ODEProblem(
         sys, [], tspan;
         missing_guess_value = BM.ModelingToolkitBase.MissingGuessValue.Constant(0.0)
     )
-    return sys, solve(prob, alg; reltol = 1.0e-8, abstol = 1.0e-10)
+    return sys, solve(prob, alg; reltol = 1.0e-10, abstol = 1.0e-12)
 end
 
-final(sol, sys, name) = sol[getproperty(sys, Symbol(name))][end]
+function array_member(sys, name)
+    hasproperty(sys, Symbol(name)) && return getproperty(sys, Symbol(name))
+    match_element = match(r"^(.*)\[([0-9,]+)\]$", name)
+    isnothing(match_element) && return getproperty(sys, Symbol(name))
+    return getproperty(sys, Symbol(match_element[1]))[parse.(Int, split(match_element[2], ','))...]
+end
 
-@testset "Array variables ($parser)" for parser in (:antlr, :julia)
+final(sol, sys, name) = sol[array_member(sys, name)][end]
+
+@testset "Array variables ($parser, $arrays)" for parser in (:antlr, :julia), arrays in (:scalarize, :keep)
     @testset "vector states, matrix-vector, for-equations, slices" begin
-        sys, sol = solve_model("ArrayModel", parser)
+        sys, sol = solve_model("ArrayModel", parser; arrays)
         @test sol.retcode == ReturnCode.Success
         # der(x[i]) = k[i] * (1 - x[i]) with k = fill(1.0, n), x(0) = 0
         for i in 1:3
@@ -38,7 +45,7 @@ final(sol, sys, name) = sol[getproperty(sys, Symbol(name))][end]
     end
 
     @testset "arrays passed to and returned from functions" begin
-        sys, sol = solve_model("ArrayFunction", parser; tspan = (0.0, 1.0))
+        sys, sol = solve_model("ArrayFunction", parser; arrays, tspan = (0.0, 1.0))
         @test sol.retcode == ReturnCode.Success
         @test final(sol, sys, "x[1]") ≈ 3 * exp(-1) rtol = 1.0e-6
         @test final(sol, sys, "x[2]") ≈ 4 * exp(-1) rtol = 1.0e-6
@@ -46,8 +53,8 @@ final(sol, sys, name) = sol[getproperty(sys, Symbol(name))][end]
     end
 
     @testset "array-form MSL example: PID_Controller" begin
-        scalar_sys, scalar_sol = solve_model("PID_Controller", parser; tspan = (0.0, 4.0), alg = Rodas5P())
-        array_sys, array_sol = solve_model("PID_ControllerArray", parser; tspan = (0.0, 4.0), alg = Rodas5P())
+        scalar_sys, scalar_sol = solve_model("PID_Controller", parser; arrays, tspan = (0.0, 4.0), alg = Rodas5P())
+        array_sys, array_sol = solve_model("PID_ControllerArray", parser; arrays, tspan = (0.0, 4.0), alg = Rodas5P())
         @test array_sol.retcode == ReturnCode.Success
         for name in ("inertia1.phi", "inertia2.w", "kinematicPTP.y[1]")
             @test final(array_sol, array_sys, name) ≈ final(scalar_sol, scalar_sys, name) rtol = 1.0e-5
@@ -88,4 +95,23 @@ end
         """
     )
     @test_throws BM.UnsupportedFeatureError parse_basemodelica(path)
+end
+
+
+@testset "Array mode solution parity ($parser)" for parser in (:antlr, :julia)
+    for (fixture, names, stop, alg) in (
+            ("ArrayModel", ["x[1]", "v[2]", "w[1]", "tail[2]", "row[1]", "total"], 1.0, Tsit5()),
+            ("ArrayFunction", ["x[1]", "x[2]", "r"], 1.0, Tsit5()),
+            ("PID_ControllerArray", ["inertia1.phi", "inertia2.w", "kinematicPTP.y[1]"], 4.0, Rodas5P()),
+        )
+        scalar, scalar_sol = solve_model(fixture, parser; tspan = (0.0, stop), alg)
+        kept, kept_sol = solve_model(fixture, parser; arrays = :keep, tspan = (0.0, stop), alg)
+        @test kept_sol.retcode == ReturnCode.Success
+        for name in names
+            for time in range(0.0, stop; length = 21)
+                @test kept_sol(time; idxs = array_member(kept, name)) ≈
+                    scalar_sol(time; idxs = array_member(scalar, name)) rtol = 1e-8 atol = 1e-9
+            end
+        end
+    end
 end
