@@ -234,6 +234,8 @@ end '-Vec';
             "record R Real x; end R; model M R r = R(1,x=2); end M;",
             "record R Real x[2]; end R; model M R r = R({1,2,3}); end M;",
             "record R String x; end R; model M R r; end M;",
+            "record R Real x=1; end R; function f output R r(x=1); external; end f; model M R r=f(); end M;",
+            "record R Real x; end R; function f output R r; end f; model M R r=f(); end M;",
         )
             path = record_file(body)
             @test_throws BM.UnsupportedFeatureError parse_basemodelica(path; parser, simplify=false)

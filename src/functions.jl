@@ -89,6 +89,10 @@ function UserFunction(name::String, class::BaseModelicaLongClass)
     sections = filter(eq -> eq isa BaseModelicaAlgorithmSection, composition.equations)
     statements = isempty(sections) ? nothing :
         reduce(vcat, [collect(section.statements) for section in sections])
+    unsupported_sections = filter(x -> x isa BaseModelicaUnsupportedStatement, composition.equations)
+    if !isempty(unsupported_sections)
+        statements = isnothing(statements) ? collect(Any, unsupported_sections) : [statements; unsupported_sections]
+    end
     return UserFunction(name, inputs, outputs, locals, statements, array_dims, record_types)
 end
 
@@ -112,7 +116,7 @@ Evaluate a call of user function `f` with argument expressions `arg_asts` (evalu
 caller's scope) and return the symbolic value of its first output.
 """
 function inline_user_function(f::UserFunction, arg_asts)
-    isnothing(f.statements) && !all(x -> x[2] isa RecordDefault, f.outputs) &&
+    isnothing(f.statements) && !all(x -> has_record_binding(x[2]), f.outputs) &&
         unsupported("function `$(f.name)` has no algorithm section; external functions are not supported")
     isempty(f.outputs) && unsupported("function `$(f.name)` has no output")
     length(arg_asts) > length(f.inputs) &&

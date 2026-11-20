@@ -237,6 +237,10 @@ function expand_record_components(components)
             expand_record_component!(result, single)
         end
     end
+    if !isempty(record_components)
+        names = String[c.component_list[1].declaration.ident[1].name for c in result]
+        length(unique(names)) == length(names) || unsupported("record expansion produces duplicate component names")
+    end
     return result
 end
 
@@ -394,4 +398,11 @@ function qualify_record_fields(node, prefix, fields)
         return typeof(node)((qualify_record_fields(getfield(node, key), prefix, fields) for key in fieldnames(typeof(node)))...)
     end
     return node
+end
+
+function has_record_binding(default)
+    default isa RecordDefault || return false
+    mod = modification_value(default.modification)
+    return (!isnothing(mod.expr) && !isempty(mod.expr)) ||
+        (!isnothing(mod.class_modifications) && !isempty(mod.class_modifications))
 end

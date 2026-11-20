@@ -343,7 +343,8 @@ function BaseModelicaComposition(input_list)
             push!(parameter_equations, input)
         elseif input isa BaseModelicaInitialEquation
             push!(initial_equations, input)
-        elseif input isa BaseModelicaAnyEquation || input isa BaseModelicaAlgorithmSection
+        elseif input isa BaseModelicaAnyEquation || input isa BaseModelicaAlgorithmSection ||
+                input isa BaseModelicaUnsupportedStatement
             push!(equations, input)
         elseif input isa BaseModelicaAnnotation
             annotation = input
@@ -564,7 +565,8 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
                 build_algorithm_section
         )
     ) +
-        (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";")[0:1] +
+        ((decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";") |>
+            (_ -> BaseModelicaUnsupportedStatement("external function")))[0:1] +
         Star(base_partition) + (annotation_comment + E";")[0:1] |>
         BaseModelicaComposition
 

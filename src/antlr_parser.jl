@@ -402,7 +402,10 @@ function visit_composition(visitor::ASTBuilderVisitor, ctx::Py)
             is_initial = i > 0 && pyconvert(String, ctx.getChild(i - 1).getText()) == "initial"
             section = BaseModelicaAlgorithmSection([], is_initial)
             push!(equations, section)
-        elseif text in ("equation", "initial", "external")
+        elseif text == "external"
+            push!(equations, BaseModelicaUnsupportedStatement("external function"))
+            section = nothing
+        elseif text in ("equation", "initial")
             section = nothing
         elseif !isnothing(section) && pyhasattr(child, "ifStatement")
             push!(section.statements, visit_statement(visitor, child))
