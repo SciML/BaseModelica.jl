@@ -249,13 +249,23 @@ function modelica_pow(a, b)
     return result
 end
 
-modelica_ifelse(c, a, b) = is_array(a) || is_array(b) ? ifelse.(c, a, b) : ifelse(c, a, b)
+function modelica_ifelse(c, a, b)
+    (a isa NamedTuple || b isa NamedTuple) &&
+        unsupported("if branches must return records with matching fields")
+    return is_array(a) || is_array(b) ? broadcast((x, y) -> modelica_ifelse(c, x, y), a, b) : ifelse(c, a, b)
+end
 
 # An equation between two expressions, one equation per element for arrays
 function equate(lhs, rhs)
+    (lhs isa NamedTuple || rhs isa NamedTuple) &&
+        unsupported("record equation requires records with the same fields on both sides")
     is_array(lhs) || is_array(rhs) || return lhs ~ rhs
     is_array(lhs) && is_array(rhs) && check_same_size(lhs, rhs, "=")
-    return vec(Equation[l ~ r for (l, r) in zip(broadcast_pair(lhs, rhs)...)])
+    left, right = broadcast_pair(lhs, rhs)
+    if any(x -> x isa NamedTuple, left) || any(x -> x isa NamedTuple, right)
+        return reduce(vcat, (vcat(equate(l, r)) for (l, r) in zip(left, right)); init = Equation[])
+    end
+    return vec(Equation[l ~ r for (l, r) in zip(left, right)])
 end
 
 broadcast_pair(a, b) = (is_array(a) ? a : fill(a, size(b)), is_array(b) ? b : fill(b, size(a)))

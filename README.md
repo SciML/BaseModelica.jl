@@ -77,8 +77,14 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   are not tunable. Loading warns about `Evaluate = true` parameters and about parameters
   nothing references, since changing them does not change the model. See the
   "Constants and parameters" section of the documentation.
+- Records with nested fields, constructors (positional or named arguments), record-valued
+  user functions, and field access/assignment (`r.x`, `r.v[2]`). Function record values are
+  `NamedTuple`s internally. Record components and parameters expand into field components,
+  with starts and bindings applied per field. Literal-sized arrays of records are expanded
+  into components such as `r[1].x`; numeric field arrays use the ordinary array lowering.
 
-Not supported: records, arrays of records, Boolean- or enumeration-indexed dimensions, array
+Not supported: recursive records, record definitions with equations/algorithms, model record
+String fields, nonliteral dimensions for arrays of records, Boolean- or enumeration-indexed dimensions, array
 sizes that depend on a time-varying value, `when`-equations inside `for`-equations, algorithm sections
 in models, `while` loops, multiple-output function calls, external functions, compound
 continuous `when` conditions (`a and b`), `floor`/`integer`/`ceil`/`div`/`mod`/`rem`

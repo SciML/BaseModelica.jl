@@ -935,6 +935,13 @@ end
 # dotted reference (`r.x`) both find the same field, while function records stay values.
 function reference_value(names)
     scope = LOCAL_SCOPE[]
+    if !isnothing(scope) && haskey(scope, Symbol(first(names)))
+        value = scope[Symbol(first(names))]
+        for field in names[2:end]
+            value = record_field(value, Symbol(field))
+        end
+        return value
+    end
     for n in length(names):-1:1
         key = Symbol(join(names[1:n], "."))
         found = true

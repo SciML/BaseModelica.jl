@@ -29,6 +29,7 @@ function register_record_types!(class_defs)
             push!(fields, BaseModelicaComponentClause(clause.type_prefix, clause.type_specifier, [component]))
         end
         isempty(fields) && unsupported("record `$name` has no fields (short record definitions are not supported)")
+        haskey(record_type_map, name) && unsupported("duplicate record type `$name`")
         record_type_map[name] = RecordType(name, fields)
     end
     for name in keys(record_type_map)
@@ -104,25 +105,25 @@ function record_default(type, mods; depth = 0)
         decl = clause.component_list[1].declaration
         merged = merge_record_modification(decl.modification, get(overrides, field, nothing))
         fieldtype = clause.type_specifier.type
+        subs = declaration_subscripts(decl)
         value = with_local_scope(scope) do
+            expr = modification_value(merged).expr
+            bound = !isnothing(expr) && !isempty(expr)
             if haskey(record_type_map, fieldtype)
-                record_default(fieldtype, merged; depth = depth + 1)
-            else
-                expr = modification_value(merged).expr
-                if !isnothing(expr) && !isempty(expr)
+                if isnothing(subs)
+                    record_default(fieldtype, merged; depth = depth + 1)
+                elseif bound
                     eval_AST(expr[end])
                 else
-                    subs = declaration_subscripts(decl)
-                    isnothing(subs) || any(s -> s isa BMColon, subs) ? nothing :
-                        fill!(Array{Any}(undef, (to_dim(eval_AST(s)) for s in subs)...), nothing)
+                    dims = literal_record_size(type * "." * String(field), subs)
+                    [record_default(fieldtype, merged; depth = depth + 1) for _ in CartesianIndices(dims)]
                 end
+            elseif bound
+                eval_AST(expr[end])
+            else
+                isnothing(subs) || any(s -> s isa BMColon, subs) ? nothing :
+                    fill!(Array{Any}(undef, (to_dim(eval_AST(s)) for s in subs)...), nothing)
             end
-        end
-        # Record fields may themselves be literal-sized arrays of records.
-        subs = declaration_subscripts(decl)
-        if haskey(record_type_map, fieldtype) && !isnothing(subs)
-            dims = literal_record_size(type * "." * String(field), subs)
-            value = [record_default(fieldtype, merged; depth = depth + 1) for _ in CartesianIndices(dims)]
         end
         push!(values, value)
         scope[field] = value
@@ -290,6 +291,8 @@ function expand_record_component!(result, clause)
         # then override inherited record attributes.
         merged = merge_record_modification(merged, [BaseModelicaModification(inherited, binding)])
         merged = merge_record_modification(merged, get(fieldmods, field, nothing))
+        fieldclause.type_specifier.type == "String" &&
+            unsupported("String field `$name.$field` in a model record component")
         fullname = name * "." * String(field)
         push!(mapping, field => Symbol(fullname))
         prefix = fieldclause.type_prefix

@@ -76,7 +76,10 @@ function UserFunction(name::String, class::BaseModelicaLongClass)
             default = declaration_default(decl)
             if haskey(record_type_map, type)
                 record_types[var] = type
-                default = RecordDefault(type, decl.modification)
+                default = clause.type_prefix.io == "input" &&
+                    (isnothing(decl.modification) || isempty(decl.modification)) ? nothing :
+                    RecordDefault(type, decl.modification)
+                isnothing(subscripts) || literal_record_size(String(var), subscripts)
             end
             entry = (var, default)
             io = clause.type_prefix.io
@@ -130,11 +133,27 @@ function inline_user_function(f::UserFunction, arg_asts)
                 else
                     error("function `$(f.name)`: missing value for input `$var`")
                 end
+                if haskey(f.record_types, var)
+                    value = scope[var]
+                    if haskey(f.array_dims, var)
+                        dims = literal_record_size(String(var), f.array_dims[var])
+                        is_array(value) && size(value) == dims ||
+                            unsupported("function `$(f.name)`: record input `$var` requires array size $dims")
+                        foreach(x -> check_record_value(f.record_types[var], x), value)
+                    else
+                        check_record_value(f.record_types[var], value)
+                    end
+                    require_assigned_record(value, "function `$(f.name)` input `$var`")
+                end
             end
             for (var, default) in Iterators.flatten((f.outputs, f.locals))
                 if default isa RecordDefault && haskey(f.array_dims, var)
                     dims = literal_record_size(String(var), f.array_dims[var])
-                    scope[var] = [eval_AST(default) for _ in CartesianIndices(dims)]
+                    mod = modification_value(default.modification)
+                    scope[var] = isnothing(mod.expr) || isempty(mod.expr) ?
+                        [eval_AST(default) for _ in CartesianIndices(dims)] : eval_AST(mod.expr[end])
+                    is_array(scope[var]) && size(scope[var]) == dims ||
+                        unsupported("function `$(f.name)`: record output/local `$var` requires array size $dims")
                 elseif !isnothing(default)
                     scope[var] = eval_AST(default)
                 elseif haskey(f.array_dims, var)
