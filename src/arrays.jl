@@ -795,11 +795,14 @@ function array_discrete_initial!(starts, eq)
     haskey(kept_array_dims, name) && name in discrete_variable_names || return false
     _, subs = reference_parts(ref)
     isnothing(subs) && return false
-    values = Num.(array_attribute(name, starts[name]))
+    values = Num.(collect(array_attribute(name, starts[name])))
     indices = [sub isa BMColon ? Colon() : to_index(eval_dimension(sub)) for sub in subs]
     value = with_eval_mode(() -> eval_AST(inner.rhs), :initial)
     values[indices...] = value
-    starts[name] = values
+    # MTK cannot evaluate a fully numeric symbolic array literal as a parameter
+    # initial value. Preserve symbolic starts, but store concrete arrays numerically.
+    numbers = map(concrete_value, values)
+    starts[name] = all(!isnothing, numbers) ? typed_numeric_array(numbers) : values
     return true
 end
 
