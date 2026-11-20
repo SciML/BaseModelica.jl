@@ -458,3 +458,18 @@ function record_array_default(default::RecordDefault, dims)
             for index in CartesianIndices(dims)
         ] : eval_AST(mod.expr[end])
 end
+
+# A reference to a record (including one passed as a function argument) uses its fields.
+# Keep the unused-parameter diagnostic conservative for record-array subscripts.
+function record_reference_names!(names, name)
+    if haskey(record_arrays, name)
+        foreach(n -> record_reference_names!(names, n), record_arrays[name])
+    elseif haskey(record_components, name)
+        for (_, field) in record_components[name]
+            record_reference_names!(names, field)
+        end
+    else
+        push!(names, String(name))
+    end
+    return names
+end

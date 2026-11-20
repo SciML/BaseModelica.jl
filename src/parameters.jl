@@ -92,7 +92,9 @@ is_inlined(x) = x isa Number && !(x isa Num)
 # Names referenced by component references in `node`, skipping annotations.
 function referenced_names!(names::Set{String}, node)
     if node isa BaseModelicaComponentReference
-        push!(names, node.ref_list[1].name)
+        name = node.ref_list[1].name
+        push!(names, name)
+        record_reference_names!(names, Symbol(name))
         foreach(ref -> referenced_names!(names, ref), node.ref_list)
     elseif node isa BaseModelicaAnnotation
         return names

@@ -141,7 +141,7 @@ end '-Vec';
             end M;
             """
         )
-        sys = parse_basemodelica(path; parser)
+        sys = @test_logs parse_basemodelica(path; parser)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
         @test sol.retcode == ReturnCode.Success
         @test sol(0.2; idxs = sys.x) ≈ 657.6
