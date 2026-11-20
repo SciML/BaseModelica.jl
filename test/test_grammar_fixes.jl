@@ -171,3 +171,38 @@ grammar_names(composition) = [
         end
     end
 end
+
+
+@testset "Visibility and each agree between parsers ($parser)" for parser in (:julia, :antlr)
+    mktemp() do path, io
+        write(
+            io, grammar_package(
+                """
+                model M
+                protected
+                  Real x[2](each start=1, each fixed=true);
+                public
+                  Real y;
+                equation
+                  der(x) = -x;
+                  y = sum(x);
+                initial algorithm
+                  assert(y >= 0, "initial");
+                annotation(experiment(StopTime=2));
+                end M;
+                """
+            )
+        )
+        close(io)
+        package = BM.parse_package(path, parser)
+        composition = grammar_composition(package)
+        @test grammar_names(composition) == ["x", "y"]
+        section = only(filter(x -> x isa BM.BaseModelicaAlgorithmSection, composition.equations))
+        @test length(section.statements) == 1
+        @test BM.function_call_name(only(section.statements)) == "assert"
+        sys = BM.baseModelica_to_ModelingToolkit(package; simplify = false)
+        @test length(ModelingToolkit.unknowns(sys)) == 3
+        @test length(ModelingToolkit.equations(sys)) == 3
+        @test experiment_settings(sys).StopTime == 2
+    end
+end

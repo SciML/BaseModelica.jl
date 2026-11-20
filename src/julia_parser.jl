@@ -406,7 +406,8 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
     ) |> (x -> BaseModelicaNumber(parse(Float64, only(x))))
 
     #component clauses
-    name = Not(Lookahead(e"end")) + Not(Lookahead(E"equation")) +
+    name = Not(Lookahead(p"(?:external|public|protected|annotation)\b")) +
+        Not(Lookahead(e"end")) + Not(Lookahead(E"equation")) +
         Not(Lookahead(E"initial equation")) + Not(Lookahead(E"algorithm")) +
         Not(Lookahead(E"initial algorithm")) + (IDENT + Star(e"." + IDENT)) |> list2string # Not(Lookahead(foo)) tells it that names can't be foo
     type_specifier = E"."[0:1] + name |>
@@ -446,7 +447,8 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
         (args -> BaseModelicaClassModificationArg(args[1], length(args) > 1 ? args[2] : nothing))
     element_modification_or_replaceable = element_modification
     decoration = E"@" + UNSIGNED_INTEGER
-    argument = decoration[0:1] + element_modification_or_replaceable
+    argument = decoration[0:1] + (Drop(p"each\b") + spc)[0:1] +
+        element_modification_or_replaceable
     argument_list = argument + Star(E"," + spc + argument)
     class_modification = E"(" + argument_list[0:1] + E")"
     expression = Delayed()
@@ -549,9 +551,11 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
     equation = Delayed()
     initial_equation = Delayed()
     statement = Delayed()
-    statement_block = Star(spc + statement + spc + E";") + spc
+    statement_block = Star(spc + Not(Lookahead(p"annotation\b")) + statement + spc + E";") + spc
     base_partition = Delayed()
-    composition = Star(decoration[0:1] + generic_element + E";" + spc) + spc +
+    visibility = spc + Drop(p"(?:public|protected)\b") + spc
+    declaration_section = Star(decoration[0:1] + generic_element + E";" + spc)
+    composition = Star((decoration[0:1] + generic_element + E";" + spc) | visibility) + spc +
         Star(
         (
             spc + e"equation" + spc +
@@ -564,7 +568,7 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
             (
             spc + e"initial"[0:1] + spc + E"algorithm" + statement_block |>
                 build_algorithm_section
-        )
+        ) | (visibility + declaration_section)
     ) +
         (
         (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";") |>
