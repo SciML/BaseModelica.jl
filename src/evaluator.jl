@@ -87,14 +87,14 @@ end
 include("maps.jl")
 
 function eval_AST(eq::BaseModelicaInitialEquation)
-    inner_eq = eq.equation.equation
+    inner_eq = inner_equation(eq.equation)
     # Skip tuple-return assignments like (a, b, , ) = func(...) — not supported
-    inner_eq.lhs isa Vector && return Dict()
-    lhs = eval_AST(inner_eq.lhs)
-    isnothing(lhs) && return Dict()
-    rhs = eval_AST(inner_eq.rhs)
-    isnothing(rhs) && return Dict()
-    return Dict(eq.lhs => eq.rhs for eq in vcat(equate(lhs, rhs)))
+    inner_eq isa BaseModelicaSimpleEquation && inner_eq.lhs isa Vector && return Pair[]
+    equations = eval_AST(inner_eq)
+    isnothing(equations) && return Pair[]
+    # Constraints can share a left side, e.g. {0, 0} = {x - 1, y - 2}.
+    # Keep every row, including equations produced by initial for/if-equations.
+    return Pair[eq.lhs => eq.rhs for eq in vcat(equations)]
 end
 
 function eval_AST(eq::BaseModelicaAnyEquation)
@@ -183,6 +183,19 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
 
     branches = [branch_equations(branch) for branch in if_eq.thens]
 
+    # A vectorized loop may assign y[1:1:n] where another branch assigns y.
+    # Match their scalar targets when branch representations differ; identical
+    # whole-array branches can retain their compact array equations.
+    if !isempty(branches)
+        targets = Set(eq.lhs for eq in first(branches))
+        if any(branch -> !isequal(Set(eq.lhs for eq in branch), targets), branches)
+            branches = [
+                reduce(vcat, (vcat(Symbolics.scalarize(eq)) for eq in branch); init = Equation[])
+                    for branch in branches
+            ]
+        end
+    end
+
     # Helper to extract RHS for a specific variable from a branch's equation list
     function get_rhs_for_var(var_lhs, branch)
         idx = findfirst(eq -> isequal(eq.lhs, var_lhs), branch)
@@ -220,7 +233,8 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
         if idx == length(if_eq.ifs) && !has_else
             # Last conditional branch with no else clause
             # In well-formed Modelica, this should be elseif true (always true)
-            return modelica_ifelse(condition, rhs, zero(rhs))
+            fallback = is_array(rhs) ? fill(zero(eltype(rhs)), size(rhs)) : zero(rhs)
+            return modelica_ifelse(condition, rhs, fallback)
         else
             else_expr = build_ifelse_for_var(var_lhs, idx + 1)
             return modelica_ifelse(condition, rhs, else_expr)
@@ -661,8 +675,9 @@ function eval_AST(
     initial_values = with_eval_mode(:initial) do
         [eval_AST(eq) for eq in initial_equations]
     end
-    for dictionary in initial_values
-        for (var, value) in dictionary
+    for pairs in initial_values
+        for (var, value) in pairs
+            set_discrete_initial!(discrete_starts, var, value) && continue
             found = false
             for (name, sym) in variable_map
                 if isequal(sym, var)
@@ -729,7 +744,7 @@ function eval_AST(
     backend isa MTKEventsBackend &&
         validate_relation_boolean_body_reads(discrete_model, booleans.definitions)
     lowered = lower_discrete(backend, discrete_model)
-    real_eqs = backend isa MTKEventsBackend ? real_eqs : lowered.equations
+    real_eqs = lowered.equations
     append!(all_pars, lowered.parameters)
 
     # Discrete variables that the backend represents as (clocked) unknowns
@@ -884,6 +899,28 @@ function discrete_initial_target(eq::BaseModelicaInitialEquation)
     isnothing(name) && return nothing
     return name in discrete_variable_names || haskey(relation_boolean_syms, name) ? name :
         nothing
+end
+
+# Initial structured equations and scalarized whole-array equations reach this point
+# as element assignments. They must update the backend's starts, just like a direct
+# `pre(v) = value`, rather than set defaults that backend initialization overwrites.
+function set_discrete_initial!(starts, var, value)
+    name = symbol_name(var)
+    name in discrete_variable_names || return false
+    if haskey(kept_array_dims, name)
+        array = variable_map[name]
+        if !isequal(var, array)
+            index = findfirst(isequal(var), collect(array))
+            isnothing(index) && return false
+            values = Num.(collect(array_attribute(name, starts[name])))
+            values[index] = value
+            numbers = map(concrete_value, values)
+            starts[name] = all(!isnothing, numbers) ? typed_numeric_array(numbers) : values
+            return true
+        end
+    end
+    starts[name] = value
+    return true
 end
 
 function eval_AST(package::BaseModelicaPackage; kwargs...)
