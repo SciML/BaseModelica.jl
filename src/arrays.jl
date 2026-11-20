@@ -638,6 +638,13 @@ function array_fallback_reason(comp, subscripts, scope, equations, parameter_equ
         nothing
     end
     is_array(fixed) && return "per-element fixed attributes"
+    selection = try
+        with_local_scope(() -> get_class_modification_value(decl.modification, "stateSelect"), scope)
+    catch
+        nothing
+    end
+    is_array(selection) && !isempty(selection) && !all(==(first(selection)), selection) &&
+        return "non-uniform per-element stateSelect attributes"
     return nothing
 end
 

@@ -533,6 +533,10 @@ function eval_AST(
 
             # stateSelect attribute: StateSelect.never/avoid/default/prefer/always → Int 1–5
             ss_value = get_class_modification_value(declaration.modification, "stateSelect")
+            if is_array(ss_value) && !isempty(ss_value) && all(v -> v isa Int, ss_value) &&
+                    all(==(first(ss_value)), ss_value)
+                ss_value = first(ss_value)
+            end
             if !isnothing(ss_value) && ss_value isa Int
                 state_select_raw[name] = ss_value
             end

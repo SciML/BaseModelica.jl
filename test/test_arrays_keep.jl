@@ -209,3 +209,19 @@ end
     @test sol.retcode == ReturnCode.Success
     @test sol(1.0; idxs = sys.x) ≈ [0, 0, exp(-1)] rtol = 1.0e-8
 end
+
+@testset "Array stateSelect priorities ($parser)" for parser in (:julia, :antlr)
+    path = keep_file(
+        """
+            Real x[2](start=0, fixed=true, stateSelect=fill(StateSelect.avoid,2));
+            Real y[2](start=0, fixed=true, stateSelect={StateSelect.avoid,StateSelect.prefer});
+        equation
+            der(x)=ones(2);
+            der(y)=ones(2);
+            """
+    )
+    raw = parse_basemodelica(path; parser, arrays = :keep, simplify = false)
+    @test size(raw.x) == (2,)
+    @test hasproperty(raw, Symbol("y[1]"))
+    @test sort(collect(values(getfield(raw, :state_priorities)))) == [2, 2, 4]
+end
