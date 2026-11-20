@@ -766,9 +766,8 @@ function vectorize_for_equation(for_eq)
     end
 end
 
-# Keep the event IR scalar without changing event/relation lowering. MTK's backend
-# returns these equations unchanged, so the caller restores the whole-array equations
-# after it has built callbacks from this scalar view.
+# Event backends consume scalar equations and state variables. Their returned
+# equations are passed to System, including any transformations made by the backend.
 function array_event_view(equations, variables, blocks)
     if ARRAY_MODE[] === :keep && !isempty(blocks)
         scalar_equations = reduce(vcat, (vcat(Symbolics.scalarize(eq)) for eq in equations); init = Equation[])
