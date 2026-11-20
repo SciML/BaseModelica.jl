@@ -101,8 +101,8 @@ function_map = Dict(
     :product => x -> Base.prod(x...),
 
     # ── Matrix and vector algebra (Spec 10.3.5) ──────────────────────────────
-    :transpose => x -> permutedims(only(x)),
-    :outerProduct => x -> x[1] * permutedims(x[2]),
+    :transpose => x -> transpose(only(x)),
+    :outerProduct => x -> x[1] * transpose(x[2]),
     :cross => x -> cross_product(x...),
     :skew => x -> skew_matrix(only(x)),
     :symmetric => x -> symmetric_matrix(only(x)),

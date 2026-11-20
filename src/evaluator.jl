@@ -220,10 +220,10 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
         if idx == length(if_eq.ifs) && !has_else
             # Last conditional branch with no else clause
             # In well-formed Modelica, this should be elseif true (always true)
-            return ifelse(condition, rhs, zero(rhs))
+            return modelica_ifelse(condition, rhs, zero(rhs))
         else
             else_expr = build_ifelse_for_var(var_lhs, idx + 1)
-            return ifelse(condition, rhs, else_expr)
+            return modelica_ifelse(condition, rhs, else_expr)
         end
     end
 
@@ -385,7 +385,7 @@ function eval_AST(
             unsupported("component clauses declaring several components are not supported")
 
         if haskey(kept_array_dims, name)
-            parameter = type_prefix == "parameter"
+            parameter = type_prefix == "parameter" || haskey(enum_map, comp.type_specifier.type)
             evaluated = parameter && is_evaluate_annotated(comp)
             evaluated && push!(evaluated_parameter_names, name)
             discrete = type_prefix == "discrete" || name in discrete_variable_names
@@ -640,6 +640,7 @@ function eval_AST(
         end
     end
     initial_equations = filter(initial_equations) do eq
+        array_discrete_initial!(discrete_starts, eq) && return false
         name = discrete_initial_target(eq)
         isnothing(name) && return true
         value = with_eval_mode(:initial) do
@@ -738,12 +739,12 @@ function eval_AST(
 
     @named sys = System(
         real_eqs, t, vars, all_pars;
-        continuous_events = vcat(lowered.continuous_events, booleans.continuous_events),
-        discrete_events = event_callbacks,
+        continuous_events = array_callbacks(vcat(lowered.continuous_events, booleans.continuous_events)),
+        discrete_events = array_callbacks(event_callbacks),
         initialization_eqs = vcat(
             initialization_eqs, lowered.initialization_eqs, booleans.initialization_eqs
         ),
-        initial_conditions = Dict(lowered.initial_conditions),
+        initial_conditions = array_initial_conditions(lowered.initial_conditions),
         bindings = bindings,
         state_priorities = state_priorities,
         # One vector: ModelingToolkit reads a scalar tstop as a period
@@ -928,7 +929,7 @@ function eval_AST(function_call::BaseModelicaFunctionCall)
 
     if function_name == :pre
         arg = eval_AST(only(function_call.args.args))
-        return is_array(arg) ? map(apply_pre, arg) : apply_pre(arg)
+        return is_array(arg) ? map(apply_pre, collect(arg)) : apply_pre(arg)
     end
 
     haskey(function_map, function_name) ||

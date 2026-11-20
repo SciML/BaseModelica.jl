@@ -81,3 +81,56 @@ end
     @test sol(1.0; idxs = sys.d[1]) == 1
     @test sol(1.0; idxs = sys.d[2]) == 2
 end
+
+@testset "Boolean fallback alongside retained states ($parser)" for parser in (:julia, :antlr)
+    path = keep_file("""
+        Real x[2](start={0,0}, fixed=true);
+        Boolean b[2];
+        Real y[2];
+    equation
+        der(x) = ones(2);
+        b = {x[1] > 0.5, x[2] > 0.25};
+        y = if time < 0.5 then x else 2*x;
+        """)
+    raw = parse_basemodelica(path; parser, arrays = :keep, simplify = false)
+    @test size(raw.x) == (2,)
+    @test hasproperty(raw, Symbol("b[1]"))
+    sys, sol = keep_solve(path; parser)
+    @test sol.retcode == ReturnCode.Success
+    @test sol(1.0; idxs = sys.y) ≈ [2,2] rtol = 1e-8
+end
+
+@testset "Array-valued conditional functions ($parser, $arrays)" for parser in (:julia, :antlr), arrays in (:scalarize, :keep)
+    path = tempname() * ".bmo"
+    write(path, """
+        //! base 0.1.0
+        package P
+        function choose
+          input Real u;
+          input Real x[3];
+          output Real y[3];
+        algorithm
+          if u < 0.5 then
+            y := x;
+          else
+            y := -x;
+          end if;
+        end choose;
+        model M
+          Real x[3](start={1,2,3}, fixed=true);
+          Real y[3];
+          Real z[3];
+        equation
+          der(x) = -x;
+          y = choose(time, x);
+          z = cross(y, {0,0,1});
+        end M;
+        end P;
+        """)
+    sys, sol = keep_solve(path; parser, arrays)
+    @test sol.retcode == ReturnCode.Success
+    sy = arrays === :keep ? sys.y : [getproperty(sys, Symbol("y[$i]")) for i in 1:3]
+    sz = arrays === :keep ? sys.z : [getproperty(sys, Symbol("z[$i]")) for i in 1:3]
+    @test sol(1.0; idxs=sy) ≈ -[1,2,3] .* exp(-1) rtol=1e-8
+    @test sol(1.0; idxs=sz) ≈ [-2,1,0] .* exp(-1) atol=1e-8
+end

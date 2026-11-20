@@ -58,6 +58,8 @@ eval_dimension(ast) = with_structural_eval(() -> eval_AST(ast))
 
 is_array(x) = x isa AbstractArray
 
+wrap_array_result(x) = x isa SymbolicUtils.BasicSymbolic ? Symbolics.wrap(x) : x
+
 # The subscripts of a declaration, or `nothing`: :antlr stores `nothing` or one
 # BaseModelicaArraySubscripts, :julia a (possibly empty) list of them.
 function declaration_subscripts(decl)
@@ -270,9 +272,9 @@ function modelica_mul(a, b)
         check_same_size(a, b, "*")
         return sum(a .* b)
     elseif ndims(a) == 1 && ndims(b) == 2
-        return Symbolics.wrap(vec(permutedims(a) * b))
+        return wrap_array_result(vec(transpose(a) * b))
     end
-    return Symbolics.wrap(a * b)
+    return wrap_array_result(a * b)
 end
 
 function modelica_div(a, b)
@@ -288,15 +290,33 @@ function modelica_pow(a, b)
     n >= 0 || unsupported("negative matrix power")
     result = [i == j ? one(eltype(a)) : zero(eltype(a)) for i in axes(a, 1), j in axes(a, 2)]
     for _ in 1:n
-        result = Symbolics.wrap(result * a)
+        result = wrap_array_result(result * a)
     end
     return result
+end
+
+# Function algorithms allocate Any buffers for element assignments. Tighten numeric
+# buffers before Symbolics infers an array expression's element type from eltype.
+function typed_numeric_array(value)
+    value isa Array && !isconcretetype(eltype(value)) || return value
+    all(x -> x isa Number, value) || return value
+    isempty(value) && return value
+    type = mapreduce(typeof, promote_type, value)
+    return convert(Array{type, ndims(value)}, value)
 end
 
 function modelica_ifelse(c, a, b)
     (a isa NamedTuple || b isa NamedTuple) &&
         unsupported("if branches must return records with matching fields")
-    return is_array(a) || is_array(b) ? broadcast((x, y) -> modelica_ifelse(c, x, y), a, b) : ifelse(c, a, b)
+    is_array(a) || is_array(b) || return ifelse(c, a, b)
+    a, b = typed_numeric_array(a), typed_numeric_array(b)
+    if (a isa Array && any(x -> x isa NamedTuple, a)) ||
+            (b isa Array && any(x -> x isa NamedTuple, b))
+        return broadcast((x, y) -> modelica_ifelse(c, x, y), a, b)
+    end
+    # Use the registered scalar operation: an opaque recursive closure makes the
+    # symbolic broadcast infer Any and loses numeric array semantics.
+    return broadcast(ifelse, c, a, b)
 end
 
 # An equation between two expressions, one equation per element for arrays
@@ -348,7 +368,7 @@ function call_builtin(name::Symbol, args)
     if name in ELEMENTWISE_FUNCTIONS && any(is_array, args)
         return broadcast((xs...) -> f(collect(Any, xs)), args...)
     end
-    return f(args)
+    return wrap_array_result(f(args))
 end
 
 identity_matrix(n) = [i == j ? 1 : 0 for i in 1:to_dim(n), j in 1:to_dim(n)]
@@ -509,7 +529,7 @@ function scalarize_components(components; arrays = :scalarize, equations = [], p
         end
         name = String(declaration.ident[1].name)
         dims = array_size(name, subscripts, declaration, scope)
-        reason = array_fallback_reason(comp, subscripts, scope, equations, parameter_equations, backend)
+        reason = arrays === :keep ? array_fallback_reason(comp, subscripts, scope, equations, parameter_equations, backend) : nothing
         if arrays === :keep && isnothing(reason)
             kept_array_dims[Symbol(name)] = dims
             push!(result, comp)
@@ -591,6 +611,7 @@ end
 function array_fallback_reason(comp, subscripts, scope, equations, parameter_equations, backend)
     decl = only(comp.component_list).declaration
     name = Symbol(first(decl.ident).name)
+    comp.type_specifier.type == "String" && return "String components have no MTK numeric representation"
     event_updated = comp.type_prefix.dpc == "discrete" || name in collect_when_body_var_names(equations)
     comp.type_specifier.type == "Boolean" && comp.type_prefix.dpc != "parameter" && !event_updated &&
         return "relation-defined Boolean uses scalar 0/1 discretes"
@@ -692,7 +713,7 @@ end
 # after it has built callbacks from this scalar view.
 function array_event_view(equations, variables, blocks)
     if ARRAY_MODE[] === :keep && !isempty(blocks)
-        scalar_equations = ModelingToolkitBase.flatten_equations(Equation[equations...])
+        scalar_equations = reduce(vcat, (vcat(Symbolics.scalarize(eq)) for eq in equations); init = Equation[])
         scalar_variables = Any[]
         for var in variables
             append!(scalar_variables, is_array(var) ? vec(collect(var)) : [var])
@@ -733,4 +754,109 @@ function affine_loop_subscript(node, index)
         return affine_loop_subscript(getfield(node, 1), index)
     end
     return false
+end
+
+# MTK's initial condition dictionary treats arrays atomically. Callbacks consume
+# scalar element starts, whereas System must receive one value for the whole array.
+function array_initial_conditions(pairs)
+    conditions = Dict{Any, Any}(pairs)
+    isempty(conditions) && return conditions
+    for name in keys(kept_array_dims)
+        var = variable_map[name]
+        elements = collect(var)
+        all(v -> haskey(conditions, v), elements) || continue
+        conditions[var] = map(v -> pop!(conditions, v), elements)
+    end
+    return conditions
+end
+
+function array_discrete_initial!(starts, eq)
+    inner = eq.equation.equation
+    inner isa BaseModelicaSimpleEquation || return false
+    ref = inner.lhs
+    if ref isa BaseModelicaFunctionCall && function_call_name(ref) == "pre"
+        ref = only(ref.args.args)
+    end
+    ref isa BaseModelicaComponentReference || return false
+    name = reference_name(ref)
+    haskey(kept_array_dims, name) && name in discrete_variable_names || return false
+    _, subs = reference_parts(ref)
+    isnothing(subs) && return false
+    values = copy(array_attribute(name, starts[name]))
+    indices = [sub isa BMColon ? Colon() : to_index(eval_dimension(sub)) for sub in subs]
+    value = with_eval_mode(() -> eval_AST(inner.rhs), :initial)
+    values[indices...] = value
+    starts[name] = values
+    return true
+end
+
+# The scalar event IR uses a vector, but large fallback loops must not rediscover
+# every preceding state for each derivative. Specialize the existing event helper
+# for our equation vector; leave events.jl and its lowering contracts unchanged.
+function differentiated_variables(eqs::Vector{Equation})
+    found = Any[]
+    seen = Set{Any}()
+    function walk(x)
+        x = Symbolics.unwrap(x)
+        SymbolicUtils.iscall(x) || return
+        if SymbolicUtils.operation(x) isa Symbolics.Differential
+            arg = only(SymbolicUtils.arguments(x))
+            if !(arg in seen)
+                push!(seen, arg)
+                push!(found, arg)
+            end
+            return
+        end
+        foreach(walk, SymbolicUtils.arguments(x))
+        return
+    end
+    for eq in eqs
+        walk(eq.lhs)
+        walk(eq.rhs)
+    end
+    return found
+end
+
+# MTK's ImperativeAffect validator compares an indexed array parameter against a
+# list containing its parent array, and incorrectly reports a missing variable.
+# These affects are generated from the validated scalar event IR above. Preserve
+# their contents and bypass only that redundant MTK check when arrays are present.
+function array_callback_part(affect)
+    # Symbolic affects carry equations and the list of discrete parameters to save.
+    # Regroup element writes so MTK saves the parent array after each event.
+    hasproperty(affect, :affect) && hasproperty(affect, :discrete_parameters) || return affect
+    eqs = affect.affect
+    eqs isa Vector{Equation} || return affect
+    rhs = Dict{Any, Any}(eq.lhs => eq.rhs for eq in eqs)
+    replaced = Set{Any}()
+    result = Equation[]
+    parameters = copy(affect.discrete_parameters)
+    for name in keys(kept_array_dims)
+        name in discrete_variable_names || continue
+        var = variable_map[name]
+        elements = map(Symbolics.unwrap, collect(var))
+        any(el -> haskey(rhs, el), elements) || continue
+        values = map(el -> get(rhs, el, ModelingToolkit.Pre(el)), elements)
+        push!(result, Equation(var, values))
+        union!(replaced, elements)
+        filter!(el -> !(el in replaced), parameters)
+        push!(parameters, Symbolics.unwrap(var))
+    end
+    isempty(replaced) && return affect
+    append!(result, filter(eq -> !(eq.lhs in replaced), eqs))
+    return typeof(affect)(result, unique(parameters))
+end
+function array_callback_part(affect::ModelingToolkitBase.ImperativeAffect)
+    return ModelingToolkitBase.ImperativeAffect(
+        affect.f;
+        observed = NamedTuple{Tuple(affect.obs_syms)}(Tuple(affect.obs)),
+        modified = NamedTuple{Tuple(affect.mod_syms)}(Tuple(affect.modified)),
+        ctx = affect.ctx, skip_checks = true
+    )
+end
+function array_callbacks(callbacks)
+    any(name -> name in discrete_variable_names, keys(kept_array_dims)) || return callbacks
+    return map(callbacks) do callback
+        typeof(callback)((array_callback_part(getfield(callback, field)) for field in fieldnames(typeof(callback)))...)
+    end
 end

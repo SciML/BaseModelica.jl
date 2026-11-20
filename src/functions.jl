@@ -185,7 +185,7 @@ function inline_user_function(f::UserFunction, arg_asts)
     if is_array(value)
         any(isnothing, value) &&
             error("function `$(f.name)` does not assign every element of its output `$output`")
-        value = map(identity, value)
+        value = typed_numeric_array(value)
     end
     return value
 end
