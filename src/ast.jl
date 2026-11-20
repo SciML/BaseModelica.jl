@@ -97,6 +97,8 @@ end
     BaseModelicaParens(BaseModelicaExpr)
     BaseModelicaFunctionArgs(args)
     BaseModelicaFunctionCall(func_name, args)
+    BaseModelicaNamedArgument(name, expression)
+    BaseModelicaFieldAccess(expression, field)
     BaseModelicaRange(start, step, stop)
     BaseModelicaArraySubscripts(subscripts)
 

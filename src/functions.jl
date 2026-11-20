@@ -18,6 +18,7 @@ struct UserFunction
     statements::Union{Nothing, Vector{Any}}
     # array variable => subscripts of its declaration
     array_dims::Dict{Symbol, Vector{Any}}
+    record_types::Dict{Symbol, String}
 end
 
 # function name => UserFunction, populated per package
@@ -62,6 +63,7 @@ function UserFunction(name::String, class::BaseModelicaLongClass)
     outputs = Tuple{Symbol, Any}[]
     locals = Tuple{Symbol, Any}[]
     array_dims = Dict{Symbol, Vector{Any}}()
+    record_types = Dict{Symbol, String}()
     composition = class.composition
     for clause in composition.components
         clause isa BaseModelicaComponentClause || continue
@@ -70,7 +72,13 @@ function UserFunction(name::String, class::BaseModelicaLongClass)
             var = Symbol(decl.ident[1].name)
             subscripts = declaration_subscripts(decl)
             isnothing(subscripts) || (array_dims[var] = subscripts)
-            entry = (var, declaration_default(decl))
+            type = clause.type_specifier.type
+            default = declaration_default(decl)
+            if haskey(record_type_map, type)
+                record_types[var] = type
+                default = RecordDefault(type, decl.modification)
+            end
+            entry = (var, default)
             io = clause.type_prefix.io
             push!(io == "input" ? inputs : io == "output" ? outputs : locals, entry)
         end
@@ -78,7 +86,7 @@ function UserFunction(name::String, class::BaseModelicaLongClass)
     sections = filter(eq -> eq isa BaseModelicaAlgorithmSection, composition.equations)
     statements = isempty(sections) ? nothing :
         reduce(vcat, [collect(section.statements) for section in sections])
-    return UserFunction(name, inputs, outputs, locals, statements, array_dims)
+    return UserFunction(name, inputs, outputs, locals, statements, array_dims, record_types)
 end
 
 function register_user_functions!(class_defs)
@@ -101,7 +109,7 @@ Evaluate a call of user function `f` with argument expressions `arg_asts` (evalu
 caller's scope) and return the symbolic value of its first output.
 """
 function inline_user_function(f::UserFunction, arg_asts)
-    isnothing(f.statements) &&
+    isnothing(f.statements) && !all(x -> x[2] isa RecordDefault, f.outputs) &&
         unsupported("function `$(f.name)` has no algorithm section; external functions are not supported")
     isempty(f.outputs) && unsupported("function `$(f.name)` has no output")
     length(arg_asts) > length(f.inputs) &&
@@ -109,14 +117,14 @@ function inline_user_function(f::UserFunction, arg_asts)
     INLINE_DEPTH[] >= MAX_INLINE_DEPTH &&
         unsupported("function `$(f.name)`: call depth exceeds $MAX_INLINE_DEPTH (recursive functions are not supported)")
 
-    args = [eval_AST(a) for a in arg_asts]
+    args = bind_call_arguments(first.(f.inputs), arg_asts, f.name)
     scope = Dict{Symbol, Any}()
     INLINE_DEPTH[] += 1
     try
         with_local_scope(scope) do
             for (i, (var, default)) in enumerate(f.inputs)
-                if i <= length(args)
-                    scope[var] = args[i]
+                if haskey(args, var)
+                    scope[var] = args[var].value
                 elseif !isnothing(default)
                     scope[var] = eval_AST(default)
                 else
@@ -124,13 +132,16 @@ function inline_user_function(f::UserFunction, arg_asts)
                 end
             end
             for (var, default) in Iterators.flatten((f.outputs, f.locals))
-                if !isnothing(default)
+                if default isa RecordDefault && haskey(f.array_dims, var)
+                    dims = literal_record_size(String(var), f.array_dims[var])
+                    scope[var] = [eval_AST(default) for _ in CartesianIndices(dims)]
+                elseif !isnothing(default)
                     scope[var] = eval_AST(default)
                 elseif haskey(f.array_dims, var)
                     allocate_array!(scope, var, f.array_dims[var])
                 end
             end
-            run_statements!(scope, f.statements, f)
+            isnothing(f.statements) || run_statements!(scope, f.statements, f)
         end
     finally
         INLINE_DEPTH[] -= 1
@@ -138,6 +149,16 @@ function inline_user_function(f::UserFunction, arg_asts)
     output = f.outputs[1][1]
     haskey(scope, output) || error("function `$(f.name)` does not assign its output `$output`")
     value = scope[output]
+    if haskey(f.record_types, output)
+        require_assigned_record(value, "function `$(f.name)` output `$output`")
+        with_local_scope(scope) do
+            if is_array(value)
+                foreach(x -> check_record_value(f.record_types[output], x), value)
+            else
+                check_record_value(f.record_types[output], value)
+            end
+        end
+    end
     if is_array(value)
         any(isnothing, value) &&
             error("function `$(f.name)` does not assign every element of its output `$output`")
@@ -164,27 +185,16 @@ function run_statements!(scope, statements, f)
 end
 
 function run_statement!(scope, st::BaseModelicaAssignment, f)
-    names, subscripts = reference_parts(st.target)
-    length(names) == 1 ||
-        unsupported("function `$(f.name)`: assignment to `$(st.target)` is not supported")
-    var = Symbol(names[1])
+    parts = st.target.ref_list
+    var = Symbol(first(parts).name)
     any(entry -> entry[1] == var, Iterators.flatten((f.outputs, f.locals))) ||
         error("function `$(f.name)`: cannot assign to `$var`, which is not an output or local variable")
     value = eval_AST(st.expression)
-    if isnothing(subscripts)
+    if length(parts) == 1
         scope[var] = value
     else
-        # Assign into a copy: the array may be shared with another scope (if-branches)
-        haskey(scope, var) && is_array(scope[var]) ||
-            unsupported("function `$(f.name)`: element assignment to `$var`, which has no array value yet")
-        array = Array{Any}(scope[var])
-        indices = Any[Colon() for _ in 1:ndims(array)]
-        for (k, sub) in enumerate(subscripts)
-            sub isa BMColon && continue
-            indices[k] = to_index(with_end_size(() -> eval_AST(sub), size(array, k)))
-        end
-        array[indices...] = value
-        scope[var] = array
+        haskey(scope, var) || unsupported("function `$(f.name)`: `$var` has no value for field/element assignment")
+        scope[var] = assign_function_path(scope[var], parts[2:end], value, "function `$(f.name)`")
     end
     return scope
 end

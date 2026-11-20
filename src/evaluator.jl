@@ -348,7 +348,7 @@ function eval_AST(
     composition = class_specifier.composition
 
     # Array components become one scalar component per element, see arrays.jl
-    components = scalarize_components(composition.components)
+    components = scalarize_components(expand_record_components(composition.components))
     equations = composition.equations
     initial_equations = composition.initial_equations
     parameter_equations = composition.parameter_equations
@@ -869,13 +869,14 @@ function eval_AST(package::BaseModelicaPackage; kwargs...)
         :prefer => Int(StateSelectPrefer),
         :always => Int(StateSelectAlways),
     )
-    register_user_functions!(package.class_defs)
     for class_def in package.class_defs
         if class_def isa BaseModelicaClassDefinition && class_def.class isa BaseModelicaEnumeration
             enum = class_def.class
             enum_map[enum.name] = Dict(Symbol(v) => i for (i, v) in enumerate(enum.values))
         end
     end
+    register_record_types!(package.class_defs)
+    register_user_functions!(package.class_defs)
     model = package.model
     return eval_AST(model; kwargs...)
 end
@@ -886,7 +887,9 @@ function eval_AST(function_args::BaseModelicaFunctionArgs)
 end
 
 function eval_AST(function_call::BaseModelicaFunctionCall)
-    user_function = get(user_function_map, function_call_name(function_call), nothing)
+    name = function_call_name(function_call)
+    haskey(record_type_map, name) && return record_constructor(name, function_call.args.args)
+    user_function = get(user_function_map, name, nothing)
     if !isnothing(user_function)
         return inline_user_function(user_function, function_call.args.args)
     end
@@ -917,50 +920,55 @@ function eval_AST(function_call::BaseModelicaFunctionCall)
 end
 
 function eval_AST(comp_reference::BaseModelicaComponentReference)
-    names, subscripts = reference_parts(comp_reference)
-    value = reference_value(names)
-    isnothing(subscripts) && return value
-    isnothing(value) && unsupported("unknown variable `$(names[1])` in `$(names[1])[...]`")
-    return apply_subscripts(value, subscripts)
+    parts = comp_reference.ref_list
+    first_sub = findfirst(x -> x isa BaseModelicaArraySubscripts, parts)
+    n = isnothing(first_sub) ? length(parts) : first_sub - 1
+    value = reference_value([String(x.name) for x in parts[1:n]])
+    for part in parts[(n + 1):end]
+        value = part isa BaseModelicaArraySubscripts ? apply_subscripts(value, part.subscripts) :
+            record_field(value, Symbol(part.name))
+    end
+    return value
 end
 
-# The value of the reference to `names` (`a.b` is `["a", "b"]`), before subscripts
+# Resolve the longest declared prefix first. A quoted flattened name (`'r.x'`) and a
+# dotted reference (`r.x`) both find the same field, while function records stay values.
 function reference_value(names)
-    ref_name = Symbol(names[1])
-
-    # Function-local variables and for-loop indices
     scope = LOCAL_SCOPE[]
-    if !isnothing(scope) && length(names) == 1 && haskey(scope, ref_name)
-        return scope[ref_name]
-    end
-
-    # Handle special built-in variables
-    if ref_name == :time
-        return t  # Map Modelica 'time' to ModelingToolkit 't'
-    end
-    if ref_name == :AssertionLevel
-        return nothing
-    end
-    # `end` inside a subscript (the :julia parser reads it as a component reference)
-    if ref_name == :end && length(names) == 1 && !haskey(variable_map, :end)
-        return end_size()
-    end
-
-    # Handle enum value references: EnumType.ValueName → integer
-    if length(names) >= 2
-        type_name = names[1]
-        value_name = Symbol(names[2])
-        if haskey(enum_map, type_name) && haskey(enum_map[type_name], value_name)
-            return enum_map[type_name][value_name]
+    for n in length(names):-1:1
+        key = Symbol(join(names[1:n], "."))
+        found = true
+        value = if !isnothing(scope) && haskey(scope, key)
+            scope[key]
+        elseif haskey(record_components, key) || haskey(record_arrays, key)
+            record_component_value(key)
+        elseif haskey(array_components, key)
+            element_array(key)
+        elseif haskey(variable_map, key)
+            variable_map[key]
+        elseif n == 1 && key == :time
+            t
+        elseif n == 1 && key == :end
+            end_size()
+        else
+            found = false
+            nothing
+        end
+        if found
+            for field in names[(n + 1):end]
+                value = record_field(value, Symbol(field))
+            end
+            return value
         end
     end
-
-    # Array components evaluate to an array of their scalarized elements
-    if length(names) == 1 && haskey(array_components, ref_name)
-        return element_array(ref_name)
+    if length(names) == 2 && haskey(enum_map, names[1])
+        values = enum_map[names[1]]
+        key = Symbol(names[2])
+        haskey(values, key) || unsupported("enumeration `$(names[1])` has no member `$key`")
+        return values[key]
     end
-
-    return get(variable_map, ref_name, nothing)
+    length(names) > 1 && unsupported("unknown record/component `$(join(names, "."))`")
+    return nothing
 end
 
 """

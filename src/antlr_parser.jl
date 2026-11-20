@@ -1280,6 +1280,7 @@ function visit_functionArguments(visitor::ASTBuilderVisitor, ctx::Py)
     #   | namedArguments
 
     args = []
+    collect_named_arguments!(visitor, ctx.namedArguments(), args)
 
     # Get the first expression
     expr_ctx = ctx.expression()
@@ -1307,6 +1308,7 @@ end
 function collect_functionArgumentsNonFirst!(visitor::ASTBuilderVisitor, ctx::Py, args::Vector)
     # functionArgumentsNonFirst: functionArgument (',' functionArgumentsNonFirst)?
     #   | namedArguments
+    collect_named_arguments!(visitor, ctx.namedArguments(), args)
     func_arg_ctx = ctx.functionArgument()
     if !is_null(func_arg_ctx)
         # functionArgument: functionPartialApplication | expression
@@ -1321,6 +1323,16 @@ function collect_functionArgumentsNonFirst!(visitor::ASTBuilderVisitor, ctx::Py,
     return if !is_null(non_first_ctx)
         collect_functionArgumentsNonFirst!(visitor, non_first_ctx, args)
     end
+end
+
+function collect_named_arguments!(visitor, ctx, args)
+    is_null(ctx) && return args
+    for arg in ctx.namedArgument()
+        expr = arg.functionArgument().expression()
+        is_null(expr) && unsupported("partial application in named arguments")
+        push!(args, BaseModelicaNamedArgument(get_text(arg.IDENT()), visit_expression(visitor, expr)))
+    end
+    return args
 end
 
 function visit_outputExpressionList(visitor::ASTBuilderVisitor, ctx::Py)

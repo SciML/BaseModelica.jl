@@ -31,6 +31,7 @@ include("evaluator.jl")
 include("parameters.jl")
 include("functions.jl")
 include("arrays.jl")
+include("records.jl")
 
 """
     parse_basemodelica(filename::AbstractString; parser::Symbol = :antlr,
