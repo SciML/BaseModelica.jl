@@ -435,7 +435,10 @@ end
 function split_modification(mod::BaseModelicaModification, index)
     class_modifications = map(mod.class_modifications) do arg
         arg isa BaseModelicaClassModificationArg && !isnothing(arg.modification) || return arg
-        BaseModelicaClassModificationArg(arg.name, split_modification(arg.modification, index))
+        # `each` applies this entire modifier to every component of the current array.
+        # Consume the marker here; a field array can then split its own modifiers later.
+        modification = arg.each ? arg.modification : split_modification(arg.modification, index)
+        BaseModelicaClassModificationArg(arg.name, modification)
     end
     exprs = isnothing(mod.expr) || isempty(mod.expr) ? mod.expr :
         Any[BaseModelicaArrayElement(mod.expr[end], index)]

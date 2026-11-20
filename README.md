@@ -61,7 +61,8 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   constant ranges). They are inlined symbolically into the equations.
 - Array variables and parameters (`Real 'x'[3]`, `parameter Real 'A'[2, 2]`), scalarized at
   load into scalar unknowns named `x[1]`, `A[1,2]`, ... Sizes must be constants or
-  parameters with constant values (`'k'['n'] = fill(1.0, 'n')`). Supported: `der` and the
+  parameters with constant values (`'k'['n'] = fill(1.0, 'n')`), including dimensions
+  computed with `floor`, `ceil`, `integer`, or `div`. Supported: `der` and the
   scalar built-ins elementwise, `+ - * /` with Modelica's array semantics (matrix·vector,
   scalar product), `.+ .- .* ./ .^`, subscripts, slices (`'x'[2:end]`, `'A'[1, :]`,
   `('A' * 'x')[1]`), `{...}`, `[a, b; c, d]`, `{e for i in r}`, `sum(e for i in r)`,
@@ -82,9 +83,12 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   `NamedTuple`s internally. Record components and parameters expand into field components,
   with starts and bindings applied per field. Literal-sized arrays of records are expanded
   into components such as `r[1].x`; numeric field arrays use the ordinary array lowering.
+  `each` applies a whole field modifier to every record; modifiers without `each` can
+  supply distinct values for each record.
 
 Not supported: recursive records, record definitions with equations/algorithms, model record
-String fields, nonliteral dimensions for arrays of records, Boolean- or enumeration-indexed dimensions, array
+String fields, nonliteral dimensions for arrays of records, field projection from a record
+array slice (use `r[i].x`), Boolean- or enumeration-indexed dimensions, array
 sizes that depend on a time-varying value, `when`-equations inside `for`-equations, algorithm sections
 in models, `while` loops, multiple-output function calls, external functions, compound
 continuous `when` conditions (`a and b`), `floor`/`integer`/`ceil`/`div`/`mod`/`rem`

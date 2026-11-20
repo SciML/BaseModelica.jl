@@ -34,6 +34,8 @@ grammar_names(composition) = [
         x, y, z = [only(c.component_list).declaration for c in composition.components]
         @test [arg.name.name for arg in only(x.modification).class_modifications] ==
             ["start", "fixed", "unit"]
+        @test all(arg -> arg.each, only(x.modification).class_modifications)
+        @test !first(only(y.modification).class_modifications).each
         @test BM.get_class_modification_value(x.modification, "start") == 2.0
         @test BM.get_class_modification_value(x.modification, "fixed") === true
         @test BM.get_class_modification_value(x.modification, "unit") == "1"

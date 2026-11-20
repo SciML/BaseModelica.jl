@@ -612,7 +612,9 @@ function visit_argument(visitor::ASTBuilderVisitor, ctx::Py)
         mod = visit_modification(visitor, elem_mod_ctx.modification())
     end
 
-    return BaseModelicaClassModificationArg(name, mod)
+    replacement = ctx.elementModificationOrReplaceable()
+    each = pyconvert(String, replacement.getChild(0).getText()) == "each"
+    return BaseModelicaClassModificationArg(name, mod, each)
 end
 
 function visit_arraySubscripts(visitor::ASTBuilderVisitor, ctx::Py)

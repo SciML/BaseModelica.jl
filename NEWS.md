@@ -8,6 +8,17 @@
   `ImplicitDiscreteProblem` with a zero-length time span. Use
   `create_odeproblem(file; saveat = Float64[])`
   and pass the interval as `saveat` to `solve` instead. The README and docs show this path.
+- Records support nested components and parameters, starts and bindings, constructors,
+  and record inputs/outputs and field assignments in user functions. Function record values
+  use NamedTuples internally; model records expand into fields before numeric array
+  lowering. Literal-sized arrays of records support per-record and `each` field modifiers.
+- Symbolic `if` branches in user functions read their own earlier assignments, including
+  nested branches and array outputs such as MSL `Frames.Quaternions.from_T`.
+- `floor`, `ceil`, `integer`, and `div` evaluate at load in structural array dimensions,
+  including function outputs and array constructors. Ordinary equation values stay symbolic.
+- Both parsers accept `each`, `public`, and `protected`. The Julia parser also preserves
+  zero-argument calls and named arguments, recognizes annotations after initial algorithms,
+  and rejects external record functions instead of silently returning field defaults.
 
 - Direct when-relations preserve their root direction during event iteration using
   a crossing-rate-scaled tolerance at that instant. A shorter tangent step reduces

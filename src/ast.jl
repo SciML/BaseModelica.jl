@@ -37,7 +37,7 @@ end
     BaseModelicaComposition(components, equations, initial_equations, parameter_equations, annotation)
     BaseModelicaLongClass(name, description, composition)
     BaseModelicaModification(class_modifications, expr)
-    BaseModelicaClassModificationArg(name, modification)
+    BaseModelicaClassModificationArg(name, modification, each)
     #Class types
     BaseModelicaClassDefinition(class_type, class)
     BaseModelicaEnumeration(name, values)  # name: String, values: Vector{String}
@@ -48,6 +48,10 @@ end
     BaseModelicaForStatement(index, statements)
     BaseModelicaUnsupportedStatement(description)  # parsed but not convertible (while, when, ...)
 end
+
+# Keep the existing constructor for modifiers without `each`.
+BaseModelicaClassModificationArg(name, modification) =
+    BaseModelicaClassModificationArg(name, modification, false)
 
 @data BaseModelicaExpr <: BaseModelicaASTNode begin
     # these are basically just tokens...
@@ -121,5 +125,6 @@ end
     # is a scalar. Created when array declarations are scalarized: the element `x[i]` of
     # `Real x[3](start = s)` gets start `BaseModelicaArrayElement(s, (i,))`.
     BaseModelicaArrayElement(expression, index)
+    BaseModelicaArraySlice(expression, index) # leading indices of a record array modifier
     BaseModelicaUnsupportedExpression(description)  # parsed but not convertible
 end

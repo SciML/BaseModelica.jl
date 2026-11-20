@@ -132,6 +132,8 @@ function inline_user_function(f::UserFunction, arg_asts)
             for (i, (var, default)) in enumerate(f.inputs)
                 if haskey(args, var)
                     scope[var] = args[var].value
+                elseif default isa RecordDefault && haskey(f.array_dims, var)
+                    scope[var] = record_array_default(default, literal_record_size(String(var), f.array_dims[var]))
                 elseif !isnothing(default)
                     scope[var] = eval_AST(default)
                 else
@@ -153,9 +155,7 @@ function inline_user_function(f::UserFunction, arg_asts)
             for (var, default) in Iterators.flatten((f.outputs, f.locals))
                 if default isa RecordDefault && haskey(f.array_dims, var)
                     dims = literal_record_size(String(var), f.array_dims[var])
-                    mod = modification_value(default.modification)
-                    scope[var] = isnothing(mod.expr) || isempty(mod.expr) ?
-                        [eval_AST(default) for _ in CartesianIndices(dims)] : eval_AST(mod.expr[end])
+                    scope[var] = record_array_default(default, dims)
                     is_array(scope[var]) && size(scope[var]) == dims ||
                         unsupported("function `$(f.name)`: record output/local `$var` requires array size $dims")
                 elseif !isnothing(default)

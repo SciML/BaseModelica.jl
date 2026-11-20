@@ -67,7 +67,7 @@ function merge_record_modification(base, override)
                 isnothing(old.modification) ? nothing : [old.modification],
                 isnothing(arg.modification) ? nothing : [arg.modification]
             )
-            args[i] = BaseModelicaClassModificationArg(arg.name, only(merged))
+            args[i] = BaseModelicaClassModificationArg(arg.name, only(merged), arg.each)
         end
     end
     expr = isnothing(b.expr) || isempty(b.expr) ? a.expr : b.expr
@@ -118,7 +118,10 @@ function record_default(type, mods; depth = 0)
                     eval_AST(expr[end])
                 else
                     dims = literal_record_size(type * "." * String(field), subs)
-                    [record_default(fieldtype, merged; depth = depth + 1) for _ in CartesianIndices(dims)]
+                    [
+                        record_default(fieldtype, split_record_modification(merged, Tuple(index)); depth = depth + 1)
+                            for index in CartesianIndices(dims)
+                    ]
                 end
             elseif bound
                 eval_AST(expr[end])
@@ -267,7 +270,7 @@ function expand_record_component!(result, clause)
             element = element_name(name, Tuple(index))
             names[index] = Symbol(element)
             # A record array binding/start is projected by element before by field.
-            mods = split_modification(decl.modification, Tuple(index))
+            mods = split_record_modification(decl.modification, Tuple(index))
             newdecl = BaseModelicaDeclaration([BaseModelicaIdentifier(element)], nothing, mods)
             expand_record_component!(
                 result, BaseModelicaComponentClause(
@@ -307,7 +310,7 @@ function expand_record_component!(result, clause)
             if modification_name(arg) == "start" && !isnothing(expr) && !isempty(expr)
                 amod = BaseModelicaModification([], [BaseModelicaFieldAccess(expr[end], String(field))])
             end
-            push!(inherited, BaseModelicaClassModificationArg(arg.name, amod))
+            push!(inherited, BaseModelicaClassModificationArg(arg.name, amod, arg.each))
         end
         binding = isnothing(mod.expr) || isempty(mod.expr) ? [] :
             [BaseModelicaFieldAccess(mod.expr[end], String(field))]
@@ -421,4 +424,37 @@ function has_record_binding(default)
     mod = modification_value(default.modification)
     return (!isnothing(mod.expr) && !isempty(mod.expr)) ||
         (!isnothing(mod.class_modifications) && !isempty(mod.class_modifications))
+end
+
+# A modifier of a record array can have extra trailing dimensions for an array field.
+# Select the record indices while retaining those field dimensions.
+function eval_AST(x::BaseModelicaArraySlice)
+    value = eval_AST(x.expression)
+    is_array(value) || return value
+    ndims(value) >= length(x.index) || unsupported("record array modifier has too few dimensions")
+    indices = (x.index..., (Colon() for _ in (length(x.index) + 1):ndims(value))...)
+    return value[indices...]
+end
+
+function split_record_modification(mods, index)
+    (isnothing(mods) || isempty(mods)) && return mods
+    mod = modification_value(mods)
+    args = map(something(mod.class_modifications, [])) do arg
+        isnothing(arg.modification) && return arg
+        modification = arg.each ? arg.modification :
+            only(split_record_modification([arg.modification], index))
+        BaseModelicaClassModificationArg(arg.name, modification)
+    end
+    expr = isnothing(mod.expr) || isempty(mod.expr) ? mod.expr :
+        [BaseModelicaArraySlice(mod.expr[end], index)]
+    return [BaseModelicaModification(args, expr)]
+end
+
+function record_array_default(default::RecordDefault, dims)
+    mod = modification_value(default.modification)
+    return isnothing(mod.expr) || isempty(mod.expr) ?
+        [
+            record_default(default.type, split_record_modification(default.modification, Tuple(index)))
+            for index in CartesianIndices(dims)
+        ] : eval_AST(mod.expr[end])
 end

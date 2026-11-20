@@ -447,8 +447,14 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
         (args -> BaseModelicaClassModificationArg(args[1], length(args) > 1 ? args[2] : nothing))
     element_modification_or_replaceable = element_modification
     decoration = E"@" + UNSIGNED_INTEGER
-    argument = decoration[0:1] + (Drop(p"each\b") + spc)[0:1] +
-        element_modification_or_replaceable
+    argument = (
+        decoration[0:1] + (p"each\b" + spc)[0:1] +
+            element_modification_or_replaceable
+    ) |> function (args)
+        arg = last(args)
+        each = any(x -> x isa AbstractString && x == "each", args)
+        return BaseModelicaClassModificationArg(arg.name, arg.modification, each)
+    end
     argument_list = argument + Star(E"," + spc + argument)
     class_modification = E"(" + argument_list[0:1] + E")"
     expression = Delayed()

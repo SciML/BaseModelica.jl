@@ -117,6 +117,36 @@ end '-Vec';
         @test sol(0.2; idxs = sys.x) ≈ 3.4
     end
 
+    @testset "Each modifiers preserve array fields of record arrays" begin
+        path = record_file(
+            """
+            record R
+              Real v[2];
+            end R;
+            function default_records
+              output R rs[2](v={{5,6},{7,8}});
+            end default_records;
+            function array_value
+              input R rs[2] = default_records();
+              output Real y;
+            algorithm
+              y := rs[1].v[2] + 10*rs[2].v[1];
+            end array_value;
+            model M
+              parameter R p[2](each v={1,2});
+              parameter R q[2](v={{1,2},{3,4}});
+              Real x(start=0, fixed=true);
+            equation
+              der(x) = p[1].v[2] + 10*p[2].v[1] + 100*q[1].v[2] + 1000*q[2].v[1] + array_value();
+            end M;
+            """
+        )
+        sys = parse_basemodelica(path; parser)
+        sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.2; idxs = sys.x) ≈ 657.6
+    end
+
     @testset "Generated constructor output binding" begin
         path = record_file(
             RECORD_DEFS * """
