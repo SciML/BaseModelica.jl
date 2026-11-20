@@ -1,23 +1,27 @@
-# Array variables, scalarized at load.
-#
-# Base Modelica keeps arrays: `Real 'x'[3]`, `der('x') = -'x'`, `'A' * 'x'`, `'x'[2:3]`.
-# Array sizes outside functions are constant, so every array component is expanded into
-# scalar components named like the scalarized output of Modelica tools (`x[1]`, `A[1,2]`)
-# before the model is translated, and the rest of the conversion only sees scalars:
-#
-# - `scalarize_components` replaces the clause of an array component by one clause per
-#   element. Modifications are split per element with `BaseModelicaArrayElement`: the
-#   element `x[i]` of `Real x[3](start = s)` gets the start value `s[i]` if `s` is an array,
-#   and `s` itself if it is a scalar (an attribute modifier given as a scalar applies to
-#   every element).
-# - A reference to `x` evaluates to a Julia `Array` of the element symbols, so subscripts,
-#   slices and the array operators are ordinary Julia array operations on symbolic scalars.
-# - An equation between arrays becomes one equation per element.
-#
-# ModelingToolkit symbolic arrays (`@variables x(t)[1:3]`) were not used: `mtkcompile`
-# scalarizes them anyway, and several of its passes (index reduction, alias elimination,
-# observed-equation generation, events) handle array-valued unknowns less reliably than
-# scalar ones.
+# Array lowering. The default expands declarations and equations into scalar symbols.
+# In :keep mode supported declarations use MTK array symbols and whole-array equations.
+# Both representations share the Modelica indexing, operator and function semantics below.
+
+const ARRAY_MODE = Ref(:scalarize)
+const kept_array_dims = Dict{Symbol, Tuple}()
+
+function validate_array_mode(arrays)
+    arrays in (:scalarize, :keep) ||
+        throw(ArgumentError("arrays must be :scalarize or :keep, got $(repr(arrays))"))
+    return arrays
+end
+
+# Runtime axes allow arbitrary rank without eval or generated code.
+function declare_array(name, dims, type; parameter = false, tunable = true)
+    ranges = map(Base.OneTo, dims)
+    if parameter
+        return only(@parameters $name[ranges...]::type [tunable = tunable])
+    end
+    return only(@variables $name(t)[ranges...])
+end
+
+array_attribute(name, value) = haskey(kept_array_dims, name) && !is_array(value) ?
+    fill(value, kept_array_dims[name]) : value
 
 # array component name => names of its scalar elements, with the array's shape
 const array_components = Dict{Symbol, Array{Symbol}}()
@@ -292,6 +296,7 @@ function equate(lhs, rhs)
     if any(x -> x isa NamedTuple, left) || any(x -> x isa NamedTuple, right)
         return reduce(vcat, (vcat(equate(l, r)) for (l, r) in zip(left, right)); init = Equation[])
     end
+    ARRAY_MODE[] === :keep && return Equation(left, right)
     return vec(Equation[l ~ r for (l, r) in zip(left, right)])
 end
 
@@ -319,6 +324,7 @@ function call_builtin(name::Symbol, args)
             end
         end
     end
+    name === :der && ARRAY_MODE[] === :keep && return D(only(args))
     if name in ELEMENTWISE_FUNCTIONS && any(is_array, args)
         return broadcast((xs...) -> f(collect(Any, xs)), args...)
     end
@@ -459,7 +465,9 @@ split_modification(::Nothing, index) = nothing
 named like `x[1]` or `A[1,2]`, in column-major order. Fills `array_components` and
 `scalarized_from`.
 """
-function scalarize_components(components)
+function scalarize_components(components; arrays = :scalarize, equations = [], parameter_equations = [])
+    empty!(kept_array_dims)
+    ARRAY_MODE[] = validate_array_mode(arrays)
     empty!(array_components)
     empty!(scalarized_from)
     empty!(structural_values)
@@ -481,6 +489,13 @@ function scalarize_components(components)
         end
         name = String(declaration.ident[1].name)
         dims = array_size(name, subscripts, declaration, scope)
+        reason = array_fallback_reason(comp, subscripts, scope, equations, parameter_equations)
+        if arrays === :keep && isnothing(reason)
+            kept_array_dims[Symbol(name)] = dims
+            push!(result, comp)
+            continue
+        end
+        arrays === :keep && @debug "Scalarizing array component" variable = name reason
         names = Array{Symbol}(undef, dims)
         for index in CartesianIndices(dims)
             element = element_name(name, Tuple(index))
@@ -549,4 +564,104 @@ function element_names(ref::BaseModelicaComponentReference)
         return vec(elements)
     end
     return selected isa Symbol ? [selected] : vec(selected)
+end
+
+# Fallbacks are local to a declaration. Event-updated arrays use the scalar backend
+# interface; continuous array states (including reinit targets) stay arrays.
+function array_fallback_reason(comp, subscripts, scope, equations, parameter_equations)
+    decl = only(comp.component_list).declaration
+    name = Symbol(first(decl.ident).name)
+    comp.type_specifier.type == "Boolean" && comp.type_prefix.dpc != "parameter" &&
+        return "relation-defined Boolean uses scalar 0/1 discretes"
+    refs = referenced_names!(Set{String}(), subscripts)
+    any(n -> Symbol(n) in keys(scope), refs) && return "parameter-dependent size evaluated at load"
+    comp.type_prefix.dpc == "constant" && return "constant array is inlined elementwise"
+    comp.type_prefix.dpc == "discrete" && return "scalar discrete backend interface"
+    name in collect_when_body_var_names(equations) && return "scalar discrete backend interface"
+    for eq in parameter_equations
+        ref = eq.component_reference
+        names, subs = reference_parts(ref)
+        Symbol(first(names)) == name && !isnothing(subs) &&
+            return "element parameter override (MTK array default limitation)"
+    end
+    # MTK accepts array starts and guesses, but fixed is a declaration-wide decision.
+    fixed = try
+        with_local_scope(() -> get_class_modification_value(decl.modification, "fixed"), scope)
+    catch
+        nothing
+    end
+    is_array(fixed) && return "per-element fixed attributes"
+    return nothing
+end
+
+# A conservative vectorization of scalar loop expressions. The index may only occur
+# inside a subscript. Products/divisions/powers in the scalar body become broadcasts;
+# matrix operations and reductions are left to the ordinary, unrolled path.
+function elementwise_loop_ast(node, index)
+    if node isa BaseModelicaComponentReference
+        names, subs = reference_parts(node)
+        Symbol(first(names)) == index && return nothing
+        if !isnothing(subs)
+            count(sub -> string(index) in referenced_names!(Set{String}(), sub), subs) <= 1 ||
+                return nothing
+        end
+        return node
+    elseif node isa Union{BaseModelicaNumber, BaseModelicaBool, BaseModelicaString}
+        return node
+    elseif node isa BaseModelicaFunctionCall
+        Symbol(function_call_name(node)) in ELEMENTWISE_FUNCTIONS || return nothing
+        args = map(arg -> elementwise_loop_ast(arg, index), node.args.args)
+        any(isnothing, args) && return nothing
+        return BaseModelicaFunctionCall(node.func_name, BaseModelicaFunctionArgs(args))
+    elseif node isa Union{
+            BaseModelicaSum, BaseModelicaMinus, BaseModelicaProd, BaseModelicaDivide,
+            BaseModelicaFactor, BaseModelicaUnaryMinus, BaseModelicaParens,
+            BaseModelicaElementWiseSum, BaseModelicaElementWiseMinus,
+            BaseModelicaElementWiseProd, BaseModelicaElementWiseDivide,
+            BaseModelicaElementWiseFactor,
+        }
+        args = map(fieldnames(typeof(node))) do field
+            elementwise_loop_ast(getfield(node, field), index)
+        end
+        any(isnothing, args) && return nothing
+        type = node isa BaseModelicaProd ? BaseModelicaElementWiseProd :
+            node isa BaseModelicaDivide ? BaseModelicaElementWiseDivide :
+            node isa BaseModelicaFactor ? BaseModelicaElementWiseFactor : typeof(node)
+        return type(args...)
+    end
+    return nothing
+end
+
+function vectorize_for_equation(for_eq)
+    ARRAY_MODE[] === :keep || return nothing
+    index = loop_index_name(for_eq.index)
+    range = loop_range(for_eq.index)
+    isempty(range) && return Equation[]
+    templates = Tuple{Any, Any}[]
+    for eq in for_eq.equations
+        inner = inner_equation(eq)
+        inner isa BaseModelicaSimpleEquation || return nothing
+        lhs = elementwise_loop_ast(inner.lhs, index)
+        rhs = elementwise_loop_ast(inner.rhs, index)
+        (isnothing(lhs) || isnothing(rhs)) && return nothing
+        push!(templates, (lhs, rhs))
+    end
+    outer = LOCAL_SCOPE[]
+    scope = isnothing(outer) ? Dict{Symbol, Any}() : copy(outer)
+    return with_local_scope(scope) do
+        # All expressions must have scalar semantics before the index is replaced by
+        # a vector; this excludes implicit matrix products and unindexed array leaves.
+        scope[index] = first(range)
+        for (lhs, rhs) in templates
+            (is_array(eval_AST(lhs)) || is_array(eval_AST(rhs))) && return nothing
+        end
+        scope[index] = collect(range)
+        result = Equation[]
+        for (lhs, rhs) in templates
+            left, right = eval_AST(lhs), eval_AST(rhs)
+            is_array(left) && size(left) == (length(range),) || return nothing
+            append!(result, vcat(equate(left, right)))
+        end
+        return result
+    end
 end

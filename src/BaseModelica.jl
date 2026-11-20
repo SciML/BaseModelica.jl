@@ -35,7 +35,7 @@ include("records.jl")
 
 """
     parse_basemodelica(filename::AbstractString; parser::Symbol = :antlr,
-                       discrete_backend = :auto, simplify = true)
+                       discrete_backend = :auto, simplify = true, arrays = :scalarize)
 
 Parse a BaseModelica source file into a ModelingToolkit system.
 
@@ -45,6 +45,10 @@ Parse a BaseModelica source file into a ModelingToolkit system.
 ## Keyword Arguments
 - `parser::Symbol = :antlr`: Parsing backend. `:antlr` uses the bundled ANTLR grammar;
   `:julia` uses the ParserCombinator implementation.
+- `arrays = :scalarize`: Array representation at load. `:scalarize` creates separate scalar
+  symbols; `:keep` preserves supported arrays as ModelingToolkit array symbols and emits
+  whole-array equations. Structural sizes are evaluated at load. Unsupported components
+  fall back individually to scalar symbols with an `@debug` message.
 - `discrete_backend = :auto`: How discrete variables and `when` equations are lowered: the
   name of a registered backend, or an [`AbstractDiscreteBackend`](@ref) instance. `:mtk`
   (built in) uses ModelingToolkit symbolic events (`@discretes` updated by callback
@@ -67,7 +71,7 @@ Parse a BaseModelica source file into a ModelingToolkit system.
 ## Errors
 - Throws an error when `parser` is neither `:antlr` nor `:julia`, or when the selected parser
   cannot parse `filename`.
-- Throws an `ArgumentError` when no backend is registered under `discrete_backend`.
+- Throws an `ArgumentError` when `arrays` is neither `:scalarize` nor `:keep`, or no backend is registered under `discrete_backend`.
 
 ## Examples
 
@@ -81,11 +85,12 @@ system = parse_basemodelica(filename)
 """
 function parse_basemodelica(
         filename::AbstractString; parser::Symbol = :antlr, discrete_backend = :auto,
-        simplify = true
+        simplify = true, arrays = :scalarize
     )
+    validate_array_mode(arrays)
     return @lock CONVERSION_LOCK begin
         package = parse_package(filename, parser)
-        baseModelica_to_ModelingToolkit(package; discrete_backend, simplify)
+        baseModelica_to_ModelingToolkit(package; discrete_backend, simplify, arrays)
     end
 end
 
@@ -228,7 +233,7 @@ experiment_settings(sys) = SymbolicUtils.getmetadata(sys, ExperimentAnnotation, 
 
 """
     create_odeproblem(filename::AbstractString; parser::Symbol = :antlr, u0 = [],
-                      discrete_backend = :auto, simplify = true, kwargs...)
+                      discrete_backend = :auto, simplify = true, arrays = :scalarize, kwargs...)
 
 Parse a BaseModelica source file and create an ODE problem with experiment settings.
 
@@ -249,6 +254,7 @@ The time instants at which if-conditions such as `time < startTime` switch are s
 
 ## Keyword Arguments
 - `parser::Symbol = :antlr`: Parsing backend, either `:antlr` or `:julia`.
+- `arrays = :scalarize`: Array representation; see [`parse_basemodelica`](@ref).
 - `discrete_backend = :auto`: See [`parse_basemodelica`](@ref).
 - `simplify = true`: How the system is simplified before building the problem: `true` for
   the default `mtkcompile`, or a function such as `DyadInterface.simplify_model`.
@@ -275,11 +281,11 @@ prob.tspan
 """
 function create_odeproblem(
         filename::AbstractString; parser::Symbol = :antlr, u0 = [], discrete_backend = :auto,
-        simplify = true, kwargs...
+        simplify = true, arrays = :scalarize, kwargs...
     )
     simplify === false &&
         throw(ArgumentError("create_odeproblem needs a simplified system; pass `simplify = true` or a function"))
-    sys = parse_basemodelica(filename; parser, discrete_backend, simplify)
+    sys = parse_basemodelica(filename; parser, discrete_backend, simplify, arrays)
 
     # Experiment settings travel with the system as metadata; explicit keyword arguments
     # take precedence over the defaults derived from them

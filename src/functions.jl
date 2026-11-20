@@ -289,6 +289,8 @@ end
 
 # Scalar for-equations are unrolled with the loop index bound to each value.
 function eval_AST(for_eq::BaseModelicaForEquation)
+    vectorized = vectorize_for_equation(for_eq)
+    isnothing(vectorized) || return vectorized
     index = Symbol(for_eq.index.ident isa BaseModelicaIdentifier ? for_eq.index.ident.name : for_eq.index.ident)
     result = Equation[]
     outer = LOCAL_SCOPE[]

@@ -329,7 +329,7 @@ end
 
 function eval_AST(
         model::BaseModelicaModel; backend::AbstractDiscreteBackend = MTKEventsBackend(),
-        simplify = true
+        simplify = true, arrays = :scalarize
     )
     empty!(variable_map)
     empty!(parameter_val_map)
@@ -348,7 +348,10 @@ function eval_AST(
     composition = class_specifier.composition
 
     # Array components become one scalar component per element, see arrays.jl
-    components = scalarize_components(expand_record_components(composition.components))
+    components = scalarize_components(
+        expand_record_components(composition.components); arrays,
+        equations = composition.equations, parameter_equations = composition.parameter_equations
+    )
     equations = composition.equations
     initial_equations = composition.initial_equations
     parameter_equations = composition.parameter_equations
@@ -366,7 +369,7 @@ function eval_AST(
     # depends on what was parsed before in the session.
     declared_names = unique!([Symbol(comp.component_list[1].declaration.ident[1].name) for comp in components])
 
-    vars = Num[]
+    vars = Any[]
     declaration_eqs = []
     # Collects stateSelect values keyed by variable name, populated in Pass 2.
     # Keyed by name (Symbol) rather than the symbol itself so the final state_priorities
@@ -380,6 +383,18 @@ function eval_AST(
         comp.type_specifier.type == "Integer" && push!(integer_variable_names, name)
         length(comp.component_list) == 1 ||
             unsupported("component clauses declaring several components are not supported")
+
+        if haskey(kept_array_dims, name)
+            parameter = type_prefix == "parameter"
+            evaluated = parameter && is_evaluate_annotated(comp)
+            evaluated && push!(evaluated_parameter_names, name)
+            variable_map[name] = declare_array(
+                name, kept_array_dims[name], modelica_type_to_julia(comp.type_specifier.type);
+                parameter, tunable = !evaluated
+            )
+            parameter || push!(vars, variable_map[name])
+            continue
+        end
 
         if type_prefix == "parameter" || haskey(enum_map, comp.type_specifier.type)
             comp.type_specifier.type == "String" && continue
@@ -440,6 +455,7 @@ function eval_AST(
 
         if name in discrete_variable_names
             start_value = get_class_modification_value(declaration.modification, "start")
+            isnothing(start_value) || (start_value = array_attribute(name, start_value))
             discrete_starts[name] = something(
                 start_value, comp.type_specifier.type == "Boolean" ? false : 0.0
             )
@@ -448,6 +464,7 @@ function eval_AST(
             # Every parameter symbol now exists, including forward references. Keep the
             # start symbolic so initialization (and remake) uses the current parameters.
             start_value = get_class_modification_value(declaration.modification, "start")
+            isnothing(start_value) || (start_value = array_attribute(name, start_value))
             relation_boolean_starts[name] = ifelse(something(start_value, false), 1.0, 0.0)
             # A declaration equation `Boolean b = expr` defines b
             expr = binding_expression(declaration)
@@ -469,6 +486,7 @@ function eval_AST(
                 push!(free_parameter_names, name)
                 # start value is an initial guess, not a default
                 start_value = get_class_modification_value(declaration.modification, "start")
+                isnothing(start_value) || (start_value = array_attribute(name, start_value))
                 if !isnothing(start_value)
                     variable_map[name] = ModelingToolkitBase.setguess(variable_map[name], start_value)
                 end
@@ -487,6 +505,7 @@ function eval_AST(
         elseif isnothing(type_prefix)
             # This is a variable - check for start and fixed attributes
             start_value = get_class_modification_value(declaration.modification, "start")
+            isnothing(start_value) || (start_value = array_attribute(name, start_value))
             fixed_value = get_class_modification_value(declaration.modification, "fixed")
 
             var = variable_map[name]
@@ -505,7 +524,7 @@ function eval_AST(
                 # have numeric guesses. Without this, MTK's initialization problem can
                 # end up with symbolic (cyclic) guesses when missing_guess_value is not
                 # forwarded through SCCNonlinearProblem → NonlinearProblem.
-                variable_map[name] = ModelingToolkitBase.setguess(var, 0.0)
+                variable_map[name] = ModelingToolkitBase.setguess(var, array_attribute(name, 0.0))
             end
             idx = findfirst(v -> SymbolicIndexingInterface.getname(v) == name, vars)
             !isnothing(idx) && (vars[idx] = variable_map[name])
@@ -679,7 +698,7 @@ function eval_AST(
     # Both regular @parameters and @discretes symbols have PARAMETER type, so this
     # captures them all — including discrete variables that only appear in callbacks
     # and would be missed by auto-detection from equations.
-    all_pars = Num[
+    all_pars = Any[
         variable_map[name] for name in declared_names
             if haskey(variable_map, name) && !is_inlined(variable_map[name]) &&
             ModelingToolkitBase.isparameter(variable_map[name])
@@ -993,10 +1012,11 @@ Convert a parsed `BaseModelicaPackage` into a ModelingToolkit `System`. See
 [`parse_basemodelica`](@ref) for the keyword arguments.
 """
 function baseModelica_to_ModelingToolkit(
-        package::BaseModelicaPackage; discrete_backend = :auto, simplify = true
+        package::BaseModelicaPackage; discrete_backend = :auto, simplify = true, arrays = :scalarize
     )
+    validate_array_mode(arrays)
     backend = select_backend(discrete_backend)
-    return @lock CONVERSION_LOCK eval_AST(package; backend, simplify)
+    return @lock CONVERSION_LOCK eval_AST(package; backend, simplify, arrays)
 end
 
 # The conversion keeps its state in module-level globals (`variable_map`, ...), so

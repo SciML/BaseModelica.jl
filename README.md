@@ -59,8 +59,18 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   events and the solver" section of the documentation.
 - User-defined functions with an `algorithm` section (`:=`, `if` and `for` statements over
   constant ranges). They are inlined symbolically into the equations.
-- Array variables and parameters (`Real 'x'[3]`, `parameter Real 'A'[2, 2]`), scalarized at
-  load into scalar unknowns named `x[1]`, `A[1,2]`, ... Sizes must be constants or
+- Array variables and parameters (`Real 'x'[3]`, `parameter Real 'A'[2, 2]`), scalarized by
+  default into scalar unknowns named `x[1]`, `A[1,2]`, ... Pass `arrays = :keep` to
+  `parse_basemodelica` or `create_odeproblem` to keep supported arrays as ModelingToolkit
+  array symbols, with whole-array equations, starts and guesses. For example,
+  `sys = parse_basemodelica(file; arrays = :keep)` exposes a literal-sized `x[3]` as
+  `sys.x`, and `sol[sys.x]` returns vectors. Flattened component names remain literal
+  names: use `getproperty(sys, Symbol("body.frame_a.r_0"))` for a record field array.
+  Parameter-dependent dimensions are evaluated at load and scalarized per declaration;
+  relation-defined Boolean arrays, element parameter overrides, and scalar discrete
+  backend declarations also use per-variable fallbacks (logged at `@debug`). Whole-array
+  parameter overrides should be used for retained array parameters: MTK cannot override
+  one element of an array that has an array default. Sizes must be constants or
   parameters with constant values (`'k'['n'] = fill(1.0, 'n')`), including dimensions
   computed with `floor`, `ceil`, `integer`, or `div`. Supported: `der` and the
   scalar built-ins elementwise, `+ - * /` with Modelica's array semantics (matrix·vector,
