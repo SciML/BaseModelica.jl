@@ -911,7 +911,15 @@ function eval_AST(function_call::BaseModelicaFunctionCall)
 
     haskey(function_map, function_name) ||
         unsupported("function `$function_name` is not supported")
-    args = eval_AST(function_call.args)
+    # Constructor sizes are structural even when the array's elements are symbolic.
+    args = if function_name in (:zeros, :ones, :fill, :identity)
+        [
+            function_name == :fill && i == 1 ? eval_AST(arg) : eval_dimension(arg)
+                for (i, arg) in enumerate(function_call.args.args)
+        ]
+    else
+        eval_AST(function_call.args)
+    end
     if EVAL_MODE[] === :condition && function_name in (:floor, :integer, :ceil, :div, :mod, :rem) &&
             any(varies_continuously, args)
         unsupported("event-generating `$function_name(...)` with continuous arguments in a when-condition is not supported")

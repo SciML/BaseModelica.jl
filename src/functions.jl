@@ -195,7 +195,7 @@ end
 # first assignment.
 function allocate_array!(scope, var, subscripts)
     any(sub -> sub isa BMColon, subscripts) && return scope
-    dims = [to_dim(eval_AST(sub)) for sub in subscripts]
+    dims = [to_dim(eval_dimension(sub)) for sub in subscripts]
     scope[var] = fill!(Array{Any}(undef, dims...), nothing)
     return scope
 end
@@ -232,16 +232,24 @@ function run_statement!(scope, st::BaseModelicaIfStatement, f)
             continue
         end
         # Symbolic condition: evaluate both alternatives and merge with ifelse
-        then_scope = run_statements!(copy(scope), st.branches[i], f)
+        then_scope = copy(scope)
+        with_local_scope(then_scope) do
+            run_statements!(then_scope, st.branches[i], f)
+        end
         rest = BaseModelicaIfStatement(st.conditions[(i + 1):end], st.branches[(i + 1):end])
-        else_scope = run_statement!(copy(scope), rest, f)
+        else_scope = copy(scope)
+        with_local_scope(else_scope) do
+            run_statement!(else_scope, rest, f)
+        end
         for var in union(keys(then_scope), keys(else_scope))
             if haskey(then_scope, var) && haskey(else_scope, var)
                 a, b = then_scope[var], else_scope[var]
                 scope[var] = a === b ? a : modelica_ifelse(cond, a, b)
-            else
+            elseif any(entry -> entry[1] == var, f.outputs)
                 unsupported("function `$(f.name)`: `$var` is assigned in only some branches of an if-statement")
             end
+            # A local first assigned in only one branch can be used inside that branch,
+            # but has no value after the if-statement. Do not leak its value to siblings.
         end
         return scope
     end

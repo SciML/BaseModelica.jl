@@ -36,6 +36,21 @@ const END_SIZE = Ref{Union{Nothing, Int}}(nothing)
 # `eval_AST(::BaseModelicaArrayElement)`
 const ELEMENT_CACHE = IdDict{Any, Any}()
 
+# Only structural expressions may replace symbolic parameters by their load-time values.
+const STRUCTURAL_EVAL = Ref(false)
+
+function with_structural_eval(f)
+    old = STRUCTURAL_EVAL[]
+    STRUCTURAL_EVAL[] = true
+    try
+        return f()
+    finally
+        STRUCTURAL_EVAL[] = old
+    end
+end
+
+eval_dimension(ast) = with_structural_eval(() -> eval_AST(ast))
+
 is_array(x) = x isa AbstractArray
 
 # The subscripts of a declaration, or `nothing`: :antlr stores `nothing` or one
@@ -106,7 +121,19 @@ function parameter_value(x)
     value = concrete_value(x)
     isnothing(value) || return value
     x isa Union{Num, SymbolicUtils.BasicSymbolic} || return nothing
-    return concrete_value(resolve_value(x, parameter_val_map))
+    value = resolve_value(x, parameter_val_map)
+    # Substitution alone can leave terms such as floor(3 / 2) unevaluated.
+    value = SymbolicUtils.substitute(value, Dict(); fold = Val(true))
+    concrete = concrete_value(value)
+    isnothing(concrete) || return concrete
+    # A function can be called from a binding before later parameters have been collected.
+    # Their structural values are already available from the array-size pre-pass.
+    bindings = Dict{Any, Any}()
+    for var in Symbolics.get_variables(value)
+        name = symbol_name(Num(var))
+        haskey(structural_values, name) && (bindings[var] = structural_values[name])
+    end
+    return concrete_value(SymbolicUtils.substitute(value, bindings; fold = Val(true)))
 end
 
 function with_end_size(f, n)
@@ -283,6 +310,15 @@ const ELEMENTWISE_FUNCTIONS = Set(
 
 function call_builtin(name::Symbol, args)
     f = function_map[name]
+    if STRUCTURAL_EVAL[] && name in (:floor, :ceil, :integer, :div)
+        args = map(args) do arg
+            if is_array(arg)
+                map(x -> something(parameter_value(x), x), arg)
+            else
+                something(parameter_value(arg), arg)
+            end
+        end
+    end
     if name in ELEMENTWISE_FUNCTIONS && any(is_array, args)
         return broadcast((xs...) -> f(collect(Any, xs)), args...)
     end
@@ -351,7 +387,7 @@ function structural_scope(components)
         for (name, expr) in bindings
             haskey(scope, name) && continue
             value = try
-                structural_value(with_local_scope(() -> eval_AST(expr), scope))
+                structural_value(with_local_scope(() -> eval_dimension(expr), scope))
             catch
                 nothing
             end
@@ -369,7 +405,7 @@ function array_size(name, subscripts, declaration, scope)
     dims = map(enumerate(subscripts)) do (k, sub)
         sub isa BMColon && return nothing
         value = try
-            with_local_scope(() -> eval_AST(sub), scope)
+            with_local_scope(() -> eval_dimension(sub), scope)
         catch e
             e isa UnsupportedFeatureError || rethrow()
             nothing
