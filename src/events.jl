@@ -864,7 +864,7 @@ function validate_when_structure(blocks)
     return nothing
 end
 
-function validate_when_body_reads(model::DiscreteModel)
+function when_body_dependencies(model::DiscreteModel)
     algebraics = filter(v -> !any(isequal(v), model.states), model.variables)
     discrete_quantities = vcat(first.(model.discretes), collect(values(relation_boolean_syms)))
     quantities = unique(vcat(algebraics, discrete_quantities))
@@ -896,11 +896,16 @@ function validate_when_body_reads(model::DiscreteModel)
         length(fixed) == before && break
     end
     filter!(v -> !any(isequal(v), fixed), quantities)
-    affected = unique(vcat(discrete_quantities, integer_unknowns))
     equation_reads = [
         when_body_unknowns!(when_body_unknowns!(Any[], eq.lhs, quantities), eq.rhs, quantities)
             for eq in model.equations
     ]
+    return (; algebraics, discrete_quantities, integer_unknowns, quantities, equation_reads)
+end
+
+function validate_when_body_reads(model::DiscreteModel)
+    (; algebraics, discrete_quantities, integer_unknowns, equation_reads) = when_body_dependencies(model)
+    affected = unique(vcat(discrete_quantities, integer_unknowns))
     # Relations can appear directly in an equation's if-expression rather than
     # through an equation-defined Boolean parameter.
     for (eq, reads) in zip(model.equations, equation_reads)
@@ -924,6 +929,46 @@ function validate_when_body_reads(model::DiscreteModel)
                     "algebraic event-step solve before reinit values are copied (not yet supported by :mtk)"
             )
         end
+    end
+    return nothing
+end
+
+# Relation callbacks run between symbolic body solves. A Boolean that depends on
+# an assigned discrete value cannot be held while that same solve reads its new
+# value. Follow definitions and algebraic aliases; pre(b) reads remain snapshots.
+function validate_relation_boolean_body_reads(model::DiscreteModel, definitions)
+    booleans = collect(values(relation_boolean_syms))
+    body_reads = Any[]
+    for block in model.when_blocks, (_, rhs) in Iterators.flatten((block.assignments, block.reinits))
+        when_body_unknowns!(body_reads, rhs, booleans; skip_pre = true)
+    end
+    isempty(body_reads) && return nothing
+    (; quantities, equation_reads) = when_body_dependencies(model)
+    definition_reads = [
+        relation_boolean_syms[name] => when_body_unknowns!(Any[], rhs, quantities)
+            for (name, rhs) in definitions
+    ]
+    affected = Any[first.(model.discretes)...]
+    while true
+        before = length(affected)
+        for reads in equation_reads
+            any(v -> any(isequal(v), affected), reads) || continue
+            # Boolean definitions are directed dependencies. Sharing a downstream
+            # equation with a discrete setpoint must not taint a fixed Boolean.
+            union!(affected, filter(v -> !any(isequal(v), booleans), reads))
+        end
+        for (sym, reads) in definition_reads
+            any(v -> any(isequal(v), affected), reads) && union!(affected, [sym])
+        end
+        length(affected) == before && break
+    end
+    for sym in body_reads
+        any(isequal(sym), affected) || continue
+        unsupported(
+            "plain read of relation Boolean `$(symbol_name(sym))` in a when-body; " *
+                "its definition may change with discrete values, requiring a simultaneous " *
+                "Boolean event-step solve (not yet supported by :mtk)"
+        )
     end
     return nothing
 end

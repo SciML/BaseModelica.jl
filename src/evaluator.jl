@@ -699,6 +699,8 @@ function eval_AST(
         Pair{Any, Any}[variable_map[name] => discrete_starts[name] for name in sort!(collect(keys(discrete_starts)))],
         blocks
     )
+    backend isa MTKEventsBackend &&
+        validate_relation_boolean_body_reads(discrete_model, booleans.definitions)
     lowered = lower_discrete(backend, discrete_model)
     real_eqs = lowered.equations
     append!(all_pars, lowered.parameters)

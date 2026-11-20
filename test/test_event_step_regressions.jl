@@ -1131,3 +1131,60 @@ end
         end
     end
 end
+
+@testset "When-body Booleans depending on discrete assignments" begin
+    @testset "$parser / $dependency" for parser in (:julia, :antlr), dependency in (:direct, :real_alias, :boolean_alias)
+        extra = dependency === :real_alias ? "Real 'r';" : dependency === :boolean_alias ? "Boolean 'source'(start = false);" : ""
+        definition = dependency === :real_alias ? "'r' = 2.0 * 'c'; 'b' = 'r' > 0.5;" :
+            dependency === :boolean_alias ? "'source' = 'c' > 0.5; 'b' = 'source';" : "'b' = 'c' > 0.5;"
+        body = """
+            Real 'x'(start = 0.0, fixed = true);
+            discrete Real 'c'(start = 0.0); discrete Real 'd'(start = -1.0);
+            Boolean 'b'(start = false); $extra
+          equation
+            der('x') = 1.0; $definition
+            when 'x' > 0.5 then
+              'c' = 1.0;
+              'd' = if 'b' then 10.0 else 20.0;
+            end when;
+            """
+        err = try
+            parse_basemodelica(step_model(body); parser)
+            nothing
+        catch e
+            e
+        end
+        @test err isa BaseModelica.UnsupportedFeatureError
+        message = err isa Exception ? sprint(showerror, err) : ""
+        @test occursin("plain read of relation Boolean `b`", message)
+        @test occursin("definition may change with discrete values", message)
+        # The explicit left-limit read has a well-defined, supported result.
+        sys = parse_basemodelica(step_model(replace(body, "if 'b' then" => "if pre('b') then")); parser)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Rodas5P(); dtmax = 0.01)
+        @test sol.retcode == ReturnCode.Success
+        @test sol(1.0; idxs = sys.c) == 1.0
+        @test sol(1.0; idxs = sys.d) == 20.0
+        @test sol(1.0; idxs = sys.b) == 1.0
+    end
+    @testset "Fixed Boolean stays independent ($parser / $dependency)" for parser in (:julia, :antlr), dependency in (:boolean, :continuous_alias)
+        extra = dependency === :continuous_alias ? "Real 'r';" : ""
+        equations = dependency === :continuous_alias ?
+            "'r' = 2.0 * 'x'; 'b' = 'r' > 1.0; 'q' = 'c' - 'r';" :
+            "'b' = 'x' > 0.5; 'q' = 'c' + (if 'b' then 2.0 else 0.0);"
+        sys = parse_basemodelica(step_model("""
+            Real 'x'(start = 0.0, fixed = true); Real 'q'; $extra
+            Boolean 'b'(start = false);
+            discrete Real 'c'(start = 0.0); discrete Real 'd'(start = -1.0);
+          equation
+            der('x') = 1.0; $equations
+            when 'x' > 0.75 then
+              'c' = 1.0; 'd' = if 'b' then 10.0 else 20.0;
+            end when;
+            """); parser)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Rodas5P(); dtmax = 0.01)
+        @test sol.retcode == ReturnCode.Success
+        @test sol(1.0; idxs = sys.c) == 1.0
+        @test sol(1.0; idxs = sys.d) == 10.0
+        @test sol(1.0; idxs = sys.q) ≈ (dependency === :continuous_alias ? -1.0 : 3.0)
+    end
+end

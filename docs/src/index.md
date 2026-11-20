@@ -132,6 +132,9 @@ or `floor`/`ceil`/`integer`/`div`/`mod`/`rem`. Implicit and alias dependencies a
 explicit continuous definitions from states, parameters and time stop propagation, so an
 unrelated downstream discrete setpoint does not prevent sampling a continuous measurement.
 The rejected reads require a separate algebraic event-step solve before reinit copies.
+Plain when-body reads of relation Booleans whose definitions depend on discrete
+assignments are also rejected, including algebraic and Boolean aliases. Booleans
+independent of those assignments and explicit `pre(b)` reads remain supported.
 `sign` is event-free (MLS 3.6 §3.7.1, `noEvent` expansion); its value at a coincident root
 is numerically ill-defined, so sign-derived non-state reads are guarded conservatively too.
 Explicit `pre(v)` reads in when-conditions and bodies remain supported.

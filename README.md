@@ -131,6 +131,10 @@ at nearly identical times.
 If the repeated reports fall outside the coincidence window, BaseModelica also
 fires the clauses twice. This upstream duplicate-root issue remains unresolved.
 
+When-bodies cannot read a relation Boolean's current value if its definition may
+change with discrete assignments, including through algebraic or Boolean aliases.
+These reads raise `UnsupportedFeatureError`; explicit `pre(b)` reads remain supported.
+
 ## Installation
 
 Assuming that you already have Julia correctly installed, it suffices to import
