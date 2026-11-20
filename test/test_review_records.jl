@@ -18,6 +18,7 @@ end
         for algorithm in ("y := x;", "if u > 0.5 then x := 10; end if; y := x;", "for x in 1:2 loop y := x; end for; y := x;"), model_x in ("", "Real x = -1;")
             file = tempname() * ".bmo"
             write(file, """
+            //! base 0.1.0
             package P
               function f input Real u; output Real y; Real x;
               algorithm $algorithm end f;
@@ -30,6 +31,7 @@ end
     @testset "A prior local value survives an untaken branch" begin
         file = tempname() * ".bmo"
         write(file, """
+        //! base 0.1.0
         package P
           function f input Real u; output Real y; Real x = 3;
           algorithm if u > 0.5 then x := 10; end if; y := x; end f;
