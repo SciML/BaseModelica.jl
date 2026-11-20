@@ -10,9 +10,11 @@ end
 
 function keep_solve(path; parser = :julia, arrays = :keep)
     sys = parse_basemodelica(path; parser, arrays)
-    prob = ODEProblem(sys, [], (0.0, 1.0);
-        missing_guess_value = BM.ModelingToolkitBase.MissingGuessValue.Constant(0.0))
-    return sys, solve(prob, Tsit5(); reltol = 1e-10, abstol = 1e-12)
+    prob = ODEProblem(
+        sys, [], (0.0, 1.0);
+        missing_guess_value = BM.ModelingToolkitBase.MissingGuessValue.Constant(0.0)
+    )
+    return sys, solve(prob, Tsit5(); reltol = 1.0e-10, abstol = 1.0e-12)
 end
 
 @testset "Array mode validation" begin
@@ -21,16 +23,18 @@ end
 end
 
 @testset "Retained arrays ($parser)" for parser in (:julia, :antlr)
-    path = keep_file("""
-        parameter Real k[3] = {1,2,3};
-        Real x[3](start={1,2,3}, fixed=true);
-        Real y[3];
-    equation
-        for i in 1:3 loop
-            der(x[i]) = -k[i]*x[i];
-        end for;
-        y = cat(1, x[1:2], {x[3]});
-        """)
+    path = keep_file(
+        """
+            parameter Real k[3] = {1,2,3};
+            Real x[3](start={1,2,3}, fixed=true);
+            Real y[3];
+        equation
+            for i in 1:3 loop
+                der(x[i]) = -k[i]*x[i];
+            end for;
+            y = cat(1, x[1:2], {x[3]});
+            """
+    )
     raw = parse_basemodelica(path; parser, arrays = :keep, simplify = false)
     @test size(raw.x) == (3,)
     @test size(raw.k) == (3,)
@@ -38,71 +42,78 @@ end
     @test BM.ModelingToolkitBase.getguess(raw.y) == zeros(3)
     sys, sol = keep_solve(path; parser)
     @test sol.retcode == ReturnCode.Success
-    @test sol(1.0; idxs = sys.x) ≈ [exp(-1), 2exp(-2), 3exp(-3)] rtol = 1e-8
-    @test sol(1.0; idxs = sys.y) ≈ sol(1.0; idxs = sys.x) rtol = 1e-8
+    @test sol(1.0; idxs = sys.x) ≈ [exp(-1), 2exp(-2), 3exp(-3)] rtol = 1.0e-8
+    @test sol(1.0; idxs = sys.y) ≈ sol(1.0; idxs = sys.x) rtol = 1.0e-8
     @test size(sol[sys.x][end]) == (3,)
     prob = create_odeproblem(path; parser, arrays = :keep)
     changed = remake(prob; p = [prob.f.sys.k => [2.0, 2.0, 2.0]])
-    @test solve(changed, Tsit5(); reltol = 1e-10, abstol = 1e-12)(1.0; idxs = prob.f.sys.x) ≈
-        [1,2,3] .* exp(-2) rtol = 1e-8
+    @test solve(changed, Tsit5(); reltol = 1.0e-10, abstol = 1.0e-12)(1.0; idxs = prob.f.sys.x) ≈
+        [1, 2, 3] .* exp(-2) rtol = 1.0e-8
 end
 
 @testset "Per-variable fallback ($parser)" for parser in (:julia, :antlr)
-    path = keep_file("""
-        parameter Integer n=2;
-        Real structural[n](start=0, fixed=true);
-        Real kept[2](start=0, fixed=true);
-    equation
-        der(structural) = fill(1, n);
-        der(kept) = ones(2);
-        """)
+    path = keep_file(
+        """
+            parameter Integer n=2;
+            Real structural[n](start=0, fixed=true);
+            Real kept[2](start=0, fixed=true);
+        equation
+            der(structural) = fill(1, n);
+            der(kept) = ones(2);
+            """
+    )
     raw = parse_basemodelica(path; parser, arrays = :keep, simplify = false)
     @test hasproperty(raw, Symbol("structural[1]"))
     @test size(raw.kept) == (2,)
     sys, sol = keep_solve(path; parser)
-    @test sol(1.0; idxs = sys.kept) ≈ ones(2) rtol = 1e-8
+    @test sol(1.0; idxs = sys.kept) ≈ ones(2) rtol = 1.0e-8
 end
 
 @testset "Array elements in events ($parser)" for parser in (:julia, :antlr)
-    path = keep_file("""
-        Real x[2](start={1,2}, fixed=true);
-        discrete Real d[2](start=0);
-    equation
-        der(x) = -x;
-        when time >= 0.5 then
-            d[1] = pre(d[2]) + 1;
-            d[2] = pre(d[1]) + 2;
-            reinit(x[2], pre(x[1]));
-        end when;
-        """)
+    path = keep_file(
+        """
+            Real x[2](start={1,2}, fixed=true);
+            discrete Real d[2](start=0);
+        equation
+            der(x) = -x;
+            when time >= 0.5 then
+                d[1] = pre(d[2]) + 1;
+                d[2] = pre(d[1]) + 2;
+                reinit(x[2], pre(x[1]));
+            end when;
+            """
+    )
     sys, sol = keep_solve(path; parser)
     @test sol.retcode == ReturnCode.Success
-    @test sol(1.0; idxs = sys.x) ≈ fill(exp(-1), 2) rtol = 1e-8
+    @test sol(1.0; idxs = sys.x) ≈ fill(exp(-1), 2) rtol = 1.0e-8
     @test sol(1.0; idxs = sys.d[1]) == 1
     @test sol(1.0; idxs = sys.d[2]) == 2
 end
 
 @testset "Boolean fallback alongside retained states ($parser)" for parser in (:julia, :antlr)
-    path = keep_file("""
-        Real x[2](start={0,0}, fixed=true);
-        Boolean b[2];
-        Real y[2];
-    equation
-        der(x) = ones(2);
-        b = {x[1] > 0.5, x[2] > 0.25};
-        y = if time < 0.5 then x else 2*x;
-        """)
+    path = keep_file(
+        """
+            Real x[2](start={0,0}, fixed=true);
+            Boolean b[2];
+            Real y[2];
+        equation
+            der(x) = ones(2);
+            b = {x[1] > 0.5, x[2] > 0.25};
+            y = if time < 0.5 then x else 2*x;
+            """
+    )
     raw = parse_basemodelica(path; parser, arrays = :keep, simplify = false)
     @test size(raw.x) == (2,)
     @test hasproperty(raw, Symbol("b[1]"))
     sys, sol = keep_solve(path; parser)
     @test sol.retcode == ReturnCode.Success
-    @test sol(1.0; idxs = sys.y) ≈ [2,2] rtol = 1e-8
+    @test sol(1.0; idxs = sys.y) ≈ [2, 2] rtol = 1.0e-8
 end
 
 @testset "Array-valued conditional functions ($parser, $arrays)" for parser in (:julia, :antlr), arrays in (:scalarize, :keep)
     path = tempname() * ".bmo"
-    write(path, """
+    write(
+        path, """
         //! base 0.1.0
         package P
         function choose
@@ -126,68 +137,75 @@ end
           z = cross(y, {0,0,1});
         end M;
         end P;
-        """)
+        """
+    )
     sys, sol = keep_solve(path; parser, arrays)
     @test sol.retcode == ReturnCode.Success
     sy = arrays === :keep ? sys.y : [getproperty(sys, Symbol("y[$i]")) for i in 1:3]
     sz = arrays === :keep ? sys.z : [getproperty(sys, Symbol("z[$i]")) for i in 1:3]
-    @test sol(1.0; idxs=sy) ≈ -[1,2,3] .* exp(-1) rtol=1e-8
-    @test sol(1.0; idxs=sz) ≈ [-2,1,0] .* exp(-1) atol=1e-8
+    @test sol(1.0; idxs = sy) ≈ -[1, 2, 3] .* exp(-1) rtol = 1.0e-8
+    @test sol(1.0; idxs = sz) ≈ [-2, 1, 0] .* exp(-1) atol = 1.0e-8
 end
 
 @testset "Array pre and element initialization ($parser)" for parser in (:julia, :antlr)
-    path = keep_file("""
-        Real x[2](start=0, fixed=true);
-        discrete Real d[2](start=0);
-    initial equation
-        pre(d[1]) = 3;
-        pre(d[2]) = 4;
-    equation
-        der(x) = ones(2);
-        when time >= 0.5 then
-            d = pre(d) + {1,2};
-        end when;
-        """)
+    path = keep_file(
+        """
+            Real x[2](start=0, fixed=true);
+            discrete Real d[2](start=0);
+        initial equation
+            pre(d[1]) = 3;
+            pre(d[2]) = 4;
+        equation
+            der(x) = ones(2);
+            when time >= 0.5 then
+                d = pre(d) + {1,2};
+            end when;
+            """
+    )
     sys, sol = keep_solve(path; parser)
     @test sol.retcode == ReturnCode.Success
-    @test sol(0.25; idxs=sys.d) == [3,4]
-    @test sol(1.0; idxs=sys.d) == [4,6]
+    @test sol(0.25; idxs = sys.d) == [3, 4]
+    @test sol(1.0; idxs = sys.d) == [4, 6]
 end
 
 @testset "Matrix operations and non-vectorized loops ($parser)" for parser in (:julia, :antlr)
-    path = keep_file("""
-        parameter Real k[2] = {1,1};
-        Real x[2](start={1,2}, fixed=true);
-        Real R[2,2](start=identity(2), fixed=true);
-        Real y[2];
-        Real m[2,2];
-    equation
-        for i in 1:2 loop
-            der(x[i]) = -sum({k[i]*x[i]});
-        end for;
-        der(R) = -R;
-        y = transpose(R)*x;
-        m = outerProduct(x,x);
-        """)
-    raw = parse_basemodelica(path; parser, arrays=:keep, simplify=false)
+    path = keep_file(
+        """
+            parameter Real k[2] = {1,1};
+            Real x[2](start={1,2}, fixed=true);
+            Real R[2,2](start=identity(2), fixed=true);
+            Real y[2];
+            Real m[2,2];
+        equation
+            for i in 1:2 loop
+                der(x[i]) = -sum({k[i]*x[i]});
+            end for;
+            der(R) = -R;
+            y = transpose(R)*x;
+            m = outerProduct(x,x);
+            """
+    )
+    raw = parse_basemodelica(path; parser, arrays = :keep, simplify = false)
     @test length(equations(raw)) == 5
     @test size(raw.x) == (2,)
     sys, sol = keep_solve(path; parser)
     @test sol.retcode == ReturnCode.Success
-    @test sol(1.0; idxs=sys.y) ≈ [1,2] .* exp(-2) rtol=1e-8
-    @test sol(1.0; idxs=sys.m) ≈ [1 2; 2 4] .* exp(-2) rtol=1e-8
+    @test sol(1.0; idxs = sys.y) ≈ [1, 2] .* exp(-2) rtol = 1.0e-8
+    @test sol(1.0; idxs = sys.m) ≈ [1 2; 2 4] .* exp(-2) rtol = 1.0e-8
 end
 
 @testset "Parameter slices in array starts ($parser)" for parser in (:julia, :antlr)
-    path = keep_file("""
-        parameter Real A[3,3]=identity(3);
-        parameter Real v[3]=cross(A[1,:], A[2,:]);
-        Real x[3](start=v, fixed=true);
-    equation
-        der(x)=-x;
-        """)
+    path = keep_file(
+        """
+            parameter Real A[3,3]=identity(3);
+            parameter Real v[3]=cross(A[1,:], A[2,:]);
+            Real x[3](start=v, fixed=true);
+        equation
+            der(x)=-x;
+            """
+    )
     sys, sol = keep_solve(path; parser)
-    @test size(sys.A) == (3,3)
+    @test size(sys.A) == (3, 3)
     @test sol.retcode == ReturnCode.Success
-    @test sol(1.0; idxs=sys.x) ≈ [0,0,exp(-1)] rtol=1e-8
+    @test sol(1.0; idxs = sys.x) ≈ [0, 0, exp(-1)] rtol = 1.0e-8
 end

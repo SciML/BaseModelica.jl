@@ -347,7 +347,7 @@ function eval_AST(
 
     composition = class_specifier.composition
 
-    # Array components become one scalar component per element, see arrays.jl
+    # Select array representations after expanding records into field declarations.
     components = scalarize_components(
         expand_record_components(composition.components); arrays,
         equations = composition.equations, parameter_equations = composition.parameter_equations, backend
@@ -1010,7 +1010,7 @@ function reference_value(names)
 end
 
 """
-    baseModelica_to_ModelingToolkit(package; discrete_backend = :auto, simplify = true)
+    baseModelica_to_ModelingToolkit(package; discrete_backend = :auto, simplify = true, arrays = :scalarize)
 
 Convert a parsed `BaseModelicaPackage` into a ModelingToolkit `System`. See
 [`parse_basemodelica`](@ref) for the keyword arguments.

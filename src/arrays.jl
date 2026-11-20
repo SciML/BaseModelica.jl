@@ -180,7 +180,7 @@ function apply_subscripts(value, subscripts)
     # Materialize only this indexing operation when the selection is non-affine.
     if value isa Symbolics.Arr && (
             any(i -> i isa AbstractVector && !(i isa AbstractRange), indices) ||
-            (ModelingToolkitBase.isparameter(value) && any(i -> !(i isa Integer), indices))
+                (ModelingToolkitBase.isparameter(value) && any(i -> !(i isa Integer), indices))
         )
         # AtomicArrayDict cannot substitute a nested parameter slice with colon/range
         # indices. Keep the parent parameter whole and expand only the selected read.
@@ -337,7 +337,7 @@ function equate(lhs, rhs)
     end
     scalar_boolean = !isempty(relation_boolean_syms) && (
         (left isa Array && any(x -> !isnothing(relation_boolean_name(x)), left)) ||
-        (right isa Array && any(x -> !isnothing(relation_boolean_name(x)), right))
+            (right isa Array && any(x -> !isnothing(relation_boolean_name(x)), right))
     )
     ARRAY_MODE[] === :keep && !scalar_boolean && return Equation(left, right)
     return vec(Equation[l ~ r for (l, r) in zip(left, right)])
@@ -612,8 +612,8 @@ function element_names(ref::BaseModelicaComponentReference)
     return selected isa Symbol ? [selected] : vec(selected)
 end
 
-# Fallbacks are local to a declaration. Event-updated arrays use the scalar backend
-# interface; continuous array states (including reinit targets) stay arrays.
+# Fallbacks are local to a declaration. The MTK event adapter accepts array discretes;
+# other backends retain their scalar declaration interface.
 function array_fallback_reason(comp, subscripts, scope, equations, parameter_equations, backend)
     decl = only(comp.component_list).declaration
     name = Symbol(first(decl.ident).name)

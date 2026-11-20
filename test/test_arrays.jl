@@ -110,7 +110,7 @@ end
         for name in names
             for time in range(0.0, stop; length = 21)
                 @test kept_sol(time; idxs = array_member(kept, name)) ≈
-                    scalar_sol(time; idxs = array_member(scalar, name)) rtol = 1e-8 atol = 1e-9
+                    scalar_sol(time; idxs = array_member(scalar, name)) rtol = 1.0e-8 atol = 1.0e-9
             end
         end
     end
