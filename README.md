@@ -88,7 +88,8 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
 
 Not supported: recursive, empty or short record definitions, record definitions with
 equations/algorithms, non-enumeration type aliases in record fields, model record String fields, nonliteral dimensions for arrays of records, field projection from a record
-array slice (use `r[i].x`), Boolean- or enumeration-indexed dimensions, array
+array slice (use `r[i].x`), unresolved forward defaults in function record values (declare
+field defaults in dependency order), Boolean- or enumeration-indexed dimensions, array
 sizes that depend on a time-varying value, `when`-equations inside `for`-equations, algorithm sections
 in models, `while` loops, multiple-output function calls, external functions, compound
 continuous `when` conditions (`a and b`), `floor`/`integer`/`ceil`/`div`/`mod`/`rem`

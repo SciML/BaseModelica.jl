@@ -205,6 +205,39 @@ end '-Vec';
         @test sol(0.2; idxs = sys.x) ≈ 2.2
     end
 
+    @testset "Record modifiers use their enclosing function scope" begin
+        path = record_file(
+            """
+            record R
+              Real x=1;
+              Real y=2;
+            end R;
+            record S
+              R r;
+            end S;
+            function f
+              input Real x;
+              output S result(r(x=2*x, y=x));
+            end f;
+            function value
+              input S s;
+              output Real y;
+            algorithm
+              y := s.r.x + 10*s.r.y;
+            end value;
+            model M
+              Real x(start=0, fixed=true);
+            equation
+              der(x) = value(f(3));
+            end M;
+            """
+        )
+        sys = parse_basemodelica(path; parser)
+        sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.2; idxs = sys.x) ≈ 7.2
+    end
+
     @testset "Field defaults and dimensions use record scope" begin
         path = record_file(
             """
@@ -315,6 +348,7 @@ end '-Vec';
                 "record R String x; end R; model M R r; end M;",
                 "record R Real x=1; end R; function f output R r(x=1); external; end f; model M R r=f(); end M;",
                 "record R Real x; end R; function f output R r; end f; model M R r=f(); end M;",
+                "record R Real x=y+1; Real y=2; end R; model M R r=R(); end M;",
             )
             path = record_file(body)
             @test_throws BM.UnsupportedFeatureError parse_basemodelica(path; parser, simplify = false)

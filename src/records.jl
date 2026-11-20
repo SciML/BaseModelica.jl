@@ -99,36 +99,47 @@ function record_default(type, mods; depth = 0)
     for arg in something(mod.class_modifications, [])
         field = Symbol(modification_name(arg))
         field in fields || unsupported("record `$type` has no field `$field`")
-        overrides[field] = isnothing(arg.modification) ? nothing : [arg.modification]
+        overrides[field] = capture_record_modification(isnothing(arg.modification) ? nothing : [arg.modification])
     end
-    scope = isnothing(LOCAL_SCOPE[]) ? Dict{Symbol, Any}() : copy(LOCAL_SCOPE[])
+    # Modifiers are evaluated in their enclosing scope, while type defaults see record
+    # fields. In particular, `r(x=2*x, y=x)` must use the caller's x in both bindings.
+    scope = Dict{Symbol, Any}(field => nothing for field in fields)
+    for (field, mods) in overrides
+        expr = modification_value(mods).expr
+        isnothing(expr) || isempty(expr) || (scope[field] = eval_AST(expr[end]))
+    end
     values = Any[]
     for (field, clause) in zip(fields, schema.fields)
         decl = clause.component_list[1].declaration
         merged = merge_record_modification(decl.modification, get(overrides, field, nothing))
         fieldtype = clause.type_specifier.type
         subs = declaration_subscripts(decl)
-        value = with_local_scope(scope) do
-            expr = modification_value(merged).expr
-            bound = !isnothing(expr) && !isempty(expr)
-            if haskey(record_type_map, fieldtype)
-                if isnothing(subs)
-                    record_default(fieldtype, merged; depth = depth + 1)
+        value = try
+            with_local_scope(scope) do
+                expr = modification_value(merged).expr
+                bound = !isnothing(expr) && !isempty(expr)
+                if haskey(record_type_map, fieldtype)
+                    if isnothing(subs)
+                        record_default(fieldtype, merged; depth = depth + 1)
+                    elseif bound
+                        eval_AST(expr[end])
+                    else
+                        dims = literal_record_size(type * "." * String(field), subs)
+                        [
+                            record_default(fieldtype, split_record_modification(merged, Tuple(index)); depth = depth + 1)
+                                for index in CartesianIndices(dims)
+                        ]
+                    end
                 elseif bound
                     eval_AST(expr[end])
                 else
-                    dims = literal_record_size(type * "." * String(field), subs)
-                    [
-                        record_default(fieldtype, split_record_modification(merged, Tuple(index)); depth = depth + 1)
-                            for index in CartesianIndices(dims)
-                    ]
+                    isnothing(subs) || any(s -> s isa BMColon, subs) ? nothing :
+                        fill!(Array{Any}(undef, (to_dim(eval_dimension(s)) for s in subs)...), nothing)
                 end
-            elseif bound
-                eval_AST(expr[end])
-            else
-                isnothing(subs) || any(s -> s isa BMColon, subs) ? nothing :
-                    fill!(Array{Any}(undef, (to_dim(eval_dimension(s)) for s in subs)...), nothing)
             end
+        catch err
+            err isa MethodError || rethrow()
+            unsupported("record `$type`: cannot evaluate default for field `$field` (an unassigned or forward field may be referenced)")
         end
         push!(values, value)
         scope[field] = value
@@ -199,6 +210,18 @@ struct RecordArgumentValue
     value::Any
 end
 eval_AST(x::RecordArgumentValue) = x.value
+
+function capture_record_modification(mods)
+    (isnothing(mods) || isempty(mods)) && return mods
+    mod = modification_value(mods)
+    args = map(something(mod.class_modifications, [])) do arg
+        captured = capture_record_modification(isnothing(arg.modification) ? nothing : [arg.modification])
+        BaseModelicaClassModificationArg(arg.name, isnothing(captured) ? nothing : only(captured), arg.each)
+    end
+    expr = isnothing(mod.expr) || isempty(mod.expr) ? mod.expr :
+        [RecordArgumentValue(eval_AST(mod.expr[end]))]
+    return [BaseModelicaModification(args, expr)]
+end
 
 function bind_call_arguments(names, asts, name)
     values = Dict{Symbol, RecordArgumentValue}()
