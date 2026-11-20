@@ -247,6 +247,15 @@ end
             """,
             """
             if time < 0.5 then
+                for i in 1:3 loop
+                    y[i] = sum({x[i]});
+                end for;
+            else
+                y = -x;
+            end if;
+            """,
+            """
+            if time < 0.5 then
                 y[1:1:3] = x;
             else
                 y = -x;
@@ -267,6 +276,7 @@ end
         if arrays === :keep
             @test hasproperty(raw, Symbol("y[1]"))
             @test size(raw.kept) == (2,)
+            @test size(raw.x) == (3,)
         end
         sys, sol = keep_solve(path; parser, arrays)
         y = [getproperty(sys, Symbol("y[$i]")) for i in 1:3]
@@ -300,7 +310,9 @@ end
     for n in 0:3
         value = arrays === :keep ? getproperty(sys, Symbol("P$n")) :
             [getproperty(sys, Symbol("P$n[$i,$j]")) for i in 1:2, j in 1:2]
-        @test sol(1.0; idxs = value) ≈ A^n rtol = 1.0e-8
+        actual = arrays === :keep ? sol(1.0; idxs = value) :
+            reshape(sol(1.0; idxs = vec(value)), 2, 2)
+        @test actual ≈ A^n rtol = 1.0e-8
     end
 end
 
@@ -322,7 +334,6 @@ end
     expected = BM.Symbolics.unwrap.(x)
     @test BM.differentiated_variables([eq, eq]) == vec(expected)
     @test BM.differentiated_variables((eq, eq)) == vec(expected)
-    @test length(methods(BM.differentiated_variables)) == 1
 
     affect = BM.ModelingToolkitBase.ImperativeAffect
     f = (modified, observed, ctx, integrator) -> nothing

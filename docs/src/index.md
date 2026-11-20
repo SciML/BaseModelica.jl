@@ -38,8 +38,7 @@ individually to scalar symbols; enable debug logging to see each reason. Fallbac
 parameter-dependent dimensions, nonuniform `stateSelect`, per-element `fixed`, relation-defined
 Booleans, element parameter/guess overrides, and discrete arrays with a backend other than
 `:mtk`. If-equation targets use scalar declarations so loop slices and whole-array branches
-match consistently. Array reads in if-equations without an `else` also fall back while the
-conditional evaluator requires concrete zero arrays. Other supported arrays stay intact.
+match consistently, including branches without an `else`. Other supported arrays stay intact.
 
 The `:mtk` backend supports array discrete updates, `pre`, element initialization and
 `reinit` of array states. Whole-array parameters can be changed with `remake`, for example

@@ -294,7 +294,7 @@ function modelica_pow(a, b)
         unsupported("`^` of a non-square array; use `.^`")
     n = to_int(b, "matrix power")
     n >= 0 || unsupported("negative matrix power")
-    n == 0 && return [i == j ? 1.0 : 0.0 for i in axes(a, 1), j in axes(a, 2)]
+    n == 0 && return [i == j ? one(eltype(a)) : zero(eltype(a)) for i in axes(a, 1), j in axes(a, 2)]
     # Starting from an identity literal creates a nested symbolic array product
     # that MTK cannot compile. Positive powers can start with the matrix itself.
     result = a
@@ -342,7 +342,11 @@ function equate(lhs, rhs)
         (left isa Array && any(x -> !isnothing(relation_boolean_name(x)), left)) ||
             (right isa Array && any(x -> !isnothing(relation_boolean_name(x)), right))
     )
-    ARRAY_MODE[] === :keep && !scalar_boolean && return Equation(left, right)
+    # A fallback declaration is a concrete container of scalar symbols. Keep
+    # its equations scalar too, so conditional branches match unrolled loops
+    # and their RHSs retain scalar semantics (including zero in no-else branches).
+    ARRAY_MODE[] === :keep && left isa Symbolics.Arr && !scalar_boolean &&
+        return Equation(left, right)
     return vec(Equation[l ~ r for (l, r) in zip(left, right)])
 end
 
@@ -625,39 +629,33 @@ function array_fallback_context(equations, parameter_equations)
     end
     event_updated = Set{Symbol}()
     conditional_targets = Set{Symbol}()
-    conditional_reads = Set{Symbol}()
-    function scan(node; in_if = false, needs_zero = false, in_when = false)
+    function scan(node; in_if = false, in_when = false)
         node = inner_equation(node)
         if node isa BaseModelicaWhenEquation
-            foreach(body -> scan(body; in_if, needs_zero, in_when = true), node.thens)
+            foreach(body -> scan(body; in_if, in_when = true), node.thens)
             return
         elseif node isa BaseModelicaIfEquation
             # Branch matching currently compares whole LHS expressions. A loop
             # slice and a whole array may denote the same elements but compare
             # differently as MTK arrays; scalar declarations avoid that mismatch.
-            no_else = length(node.thens) == length(node.ifs)
-            foreach(body -> scan(body; in_if = true, needs_zero = needs_zero || no_else, in_when), node.thens)
+            foreach(body -> scan(body; in_if = true, in_when), node.thens)
             return
         elseif node isa BaseModelicaSimpleEquation && node.lhs isa BaseModelicaComponentReference
             name = reference_name(node.lhs)
             in_if && push!(conditional_targets, name)
             in_when && push!(event_updated, name)
-        elseif node isa BaseModelicaComponentReference
-            # Until the if-equation evaluator uses elementwise zeros, zero(rhs)
-            # also requires concrete containers for reads in a no-else branch.
-            needs_zero && push!(conditional_reads, reference_name(node))
         end
         if node isa Union{AbstractVector, Tuple}
-            foreach(child -> scan(child; in_if, needs_zero, in_when), node)
+            foreach(child -> scan(child; in_if, in_when), node)
         elseif node isa BaseModelicaASTNode
             for field in fieldnames(typeof(node))
-                scan(getfield(node, field); in_if, needs_zero, in_when)
+                scan(getfield(node, field); in_if, in_when)
             end
         end
         return
     end
     scan(equations)
-    return (; event_updated, element_overrides, conditional_targets, conditional_reads)
+    return (; event_updated, element_overrides, conditional_targets)
 end
 
 # Fallbacks are local to a declaration. The MTK event adapter accepts array discretes;
@@ -676,7 +674,6 @@ function array_fallback_reason(comp, subscripts, scope, fallback, backend)
     name in fallback.element_overrides &&
         return "element guess/parameter override (MTK array metadata limitation)"
     name in fallback.conditional_targets && return "if-equation target requires scalar branch matching"
-    name in fallback.conditional_reads && return "array read in an if-equation without else requires elementwise zeros"
     # MTK accepts array starts and guesses, but fixed is a declaration-wide decision.
     fixed = try
         with_local_scope(() -> get_class_modification_value(decl.modification, "fixed"), scope)
