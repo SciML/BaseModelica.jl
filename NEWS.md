@@ -1,5 +1,12 @@
 # Unreleased
 
+- Known upstream limitation: an experiment `Interval` can make models combining a
+  relation Boolean on an algebraic signal with a `when` fail with
+  `ArgumentError: range step cannot be zero`. ModelingToolkitBase's
+  `compile_implicit_affect` forwards problem-level `saveat` to an `ImplicitDiscreteProblem`
+  with a zero-length time span. Use `create_odeproblem(file; saveat = Float64[])`
+  and pass the interval as `saveat` to `solve` instead. The README and docs show this path.
+
 - Direct when-relations preserve their root direction during event iteration using
   a crossing-rate-scaled tolerance at that instant. A shorter tangent step reduces
   rate-estimate cancellation for late-time sine/angle crossings. Non-finite estimates

@@ -133,7 +133,9 @@ explicit continuous definitions from states, parameters and time stop propagatio
 unrelated downstream discrete setpoint does not prevent sampling a continuous measurement.
 The rejected reads require a separate algebraic event-step solve before reinit copies.
 Plain when-body reads of relation Booleans whose definitions depend on discrete
-assignments are also rejected, including algebraic and Boolean aliases. Booleans
+assignments are also rejected, including algebraic and Boolean aliases. This check
+conservatively treats every discrete as potentially changing, even when its assigning
+`when` cannot fire together with the reading `when`. Booleans
 independent of those assignments and explicit `pre(b)` reads remain supported.
 `sign` is event-free (MLS 3.6 §3.7.1, `noEvent` expansion); its value at a coincident root
 is numerically ill-defined, so sign-derived non-state reads are guarded conservatively too.
@@ -244,4 +246,18 @@ file and the
 [project]($link_project)
 file.
 """)
+```
+
+## Known limitations
+
+For models combining a relation Boolean on an algebraic signal with a `when`, an
+experiment `Interval` can make `solve(create_odeproblem(file))` throw
+`ArgumentError: range step cannot be zero`. Upstream ModelingToolkitBase's
+`compile_implicit_affect` forwards the problem's `saveat` to an `ImplicitDiscreteProblem`
+with a zero-length time span. Pass `saveat` to `solve` instead, overriding the
+annotation-derived interval on the problem with an empty vector:
+
+```julia
+prob = create_odeproblem("path/to/model.bmo"; saveat = Float64[])
+sol = solve(prob; saveat = 0.004) # use the model's experiment Interval
 ```

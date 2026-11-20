@@ -385,10 +385,15 @@ BM = BaseModelica
         for parser in (:julia, :antlr)
             @test parse_basemodelica(triac_path; parser, simplify = false) isa System
             sys = parse_basemodelica(triac_path; parser)
-            sol = solve(ODEProblem(sys, [], (0.0, 0.001)), Rodas5P();
+            # MTK forwards problem-level saveat to an implicit affect with tspan = (t, t).
+            # Keep this broken expectation so an upstream fix becomes an unexpected pass.
+            @test_broken solve(create_odeproblem(triac_path; parser), Rodas5P();
+                reltol = 1.0e-8, abstol = 1.0e-10, dtmax = 5.0e-7).retcode == ReturnCode.Success
+            # Disable the annotation's problem-level Interval; save only in the ODE solve.
+            prob = create_odeproblem(triac_path; parser, saveat = Float64[])
+            sol = solve(prob, Rodas5P(); saveat = 5.0e-7,
                 reltol = 1.0e-8, abstol = 1.0e-10, dtmax = 5.0e-7)
             @test sol.retcode == ReturnCode.Success
-            @test create_odeproblem(triac_path; parser) isa ODEProblem
             count_sym = getproperty(sys, Symbol("trapezoidCurrent.signalSource.count"))
             start_sym = getproperty(sys, Symbol("trapezoidCurrent.signalSource.T_start"))
             # Independent reference for the fixture's 50 μs periodic source.

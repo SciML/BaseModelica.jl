@@ -133,7 +133,17 @@ fires the clauses twice. This upstream duplicate-root issue remains unresolved.
 
 When-bodies cannot read a relation Boolean's current value if its definition may
 change with discrete assignments, including through algebraic or Boolean aliases.
-These reads raise `UnsupportedFeatureError`; explicit `pre(b)` reads remain supported.
+This check is conservative: every discrete is treated as potentially changing, even
+if its assigning `when` cannot fire together with the reading `when`. These reads raise
+`UnsupportedFeatureError`; explicit `pre(b)` reads remain supported.
+
+For models combining a relation Boolean on an algebraic signal with a `when`, an
+experiment `Interval` can make `solve(create_odeproblem(file))` throw
+`ArgumentError: range step cannot be zero`. Upstream ModelingToolkitBase's
+`compile_implicit_affect` forwards the problem's `saveat` to an `ImplicitDiscreteProblem`
+with a zero-length time span. Disable the problem's annotation-derived output interval
+with `create_odeproblem(file; saveat = Float64[])`, then pass the interval as `saveat`
+to `solve` instead.
 
 ## Installation
 
@@ -170,7 +180,8 @@ using BaseModelica
 sys = parse_basemodelica("path/to/ExampleFirstOrder.bmo")
 ```
 
-To automatically create an ODEProblem ready for simulation, use `create_odeproblem`:
+To create an ODEProblem using the experiment settings, use `create_odeproblem`
+(subject to the `Interval` limitation above):
 
 ```julia
 using BaseModelica, DifferentialEquations
@@ -179,7 +190,7 @@ using BaseModelica, DifferentialEquations
 # from the annotation if present
 prob = create_odeproblem("path/to/ExampleFirstOrder.bmo")
 
-# Solve and plot
+# Solve
 sol = solve(prob)
 ```
 
@@ -189,6 +200,14 @@ annotation(experiment(StartTime = 0, StopTime = 2.0, Tolerance = 1e-06, Interval
 ```
 
 The time span, relative tolerance, and save interval will be automatically configured from the annotation.
+For the algebraic relation-Boolean/`when` models described under Known limitations,
+move the save interval to `solve`:
+
+```julia
+prob = create_odeproblem("path/to/model.bmo"; saveat = Float64[])
+sol = solve(prob; saveat = 0.004) # experiment Interval
+```
+
 The settings are also stored on the system returned by `parse_basemodelica` and can be
 read with `experiment_settings(sys)`.
 
