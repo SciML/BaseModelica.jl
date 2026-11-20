@@ -470,7 +470,7 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
             (E"," + function_arguments_non_first)[0:1]
     ) |
         named_arguments
-    named_argument = IDENT + E"=" + function_argument > BaseModelicaNamedArgument
+    named_argument = spc + IDENT + spc + E"=" + function_argument > BaseModelicaNamedArgument
     named_arguments.matcher = named_argument + Star(E"," + named_argument)
     function_partial_applications = E"function" + type_specifier + E"(" +
         named_arguments[0:1] + E")"

@@ -79,10 +79,12 @@ end
 eval_AST(x::BaseModelicaFieldAccess) = record_field(eval_AST(x.expression), Symbol(x.field))
 eval_AST(x::BaseModelicaNamedArgument) = unsupported("named argument outside a function call")
 
-function record_field(value, field)
+function record_field(value, field; allow_unassigned = false)
     value isa NamedTuple && haskey(value, field) ||
         unsupported("record field `$field` does not exist in `$value`")
-    return getproperty(value, field)
+    item = getproperty(value, field)
+    !allow_unassigned && isnothing(item) && unsupported("record field `$field` is unassigned")
+    return item
 end
 
 function record_default(type, mods; depth = 0)
@@ -135,6 +137,8 @@ function check_record_value(type, value)
     value isa NamedTuple || unsupported("value of record `$type` must be a record")
     fields = Tuple(Symbol(c.component_list[1].declaration.ident[1].name) for c in record_type_map[type].fields)
     keys(value) == fields || unsupported("record `$type` requires fields $(fields), got $(keys(value))")
+    scope = isnothing(LOCAL_SCOPE[]) ? Dict{Symbol, Any}() : copy(LOCAL_SCOPE[])
+    merge!(scope, pairs(value))
     for (field, clause) in zip(fields, record_type_map[type].fields)
         fieldtype = clause.type_specifier.type
         item = value[field]
@@ -142,7 +146,7 @@ function check_record_value(type, value)
         if !isnothing(subs)
             is_array(item) || unsupported("record `$type` field `$field` must be an array")
             dims = map(subs) do sub
-                sub isa BMColon ? nothing : to_dim(eval_AST(sub))
+                sub isa BMColon ? nothing : with_local_scope(() -> to_dim(eval_AST(sub)), scope)
             end
             ndims(item) == length(dims) && all(isnothing(d) || size(item, i) == d for (i, d) in enumerate(dims)) ||
                 unsupported("record `$type` field `$field` has incompatible array size $(size(item))")
@@ -155,8 +159,13 @@ function check_record_value(type, value)
             else
                 check_record_value(fieldtype, item)
             end
-        elseif item isa NamedTuple
-            unsupported("record `$type` field `$field` must have numeric or string values")
+        else
+            leaves = is_array(item) ? item : (item,)
+            for leaf in leaves
+                valid = isnothing(leaf) || (fieldtype == "String" ? leaf isa AbstractString :
+                    leaf isa Union{Number, SymbolicUtils.BasicSymbolic})
+                valid || unsupported("record `$type` field `$field` has an invalid `$fieldtype` value")
+            end
         end
     end
     return value
@@ -349,6 +358,6 @@ function assign_function_path(value, parts, replacement, context)
         return array
     end
     field = Symbol(part.name)
-    item = record_field(value, field)
+    item = record_field(value, field; allow_unassigned = true)
     return merge(value, NamedTuple{(field,)}((assign_function_path(item, rest, replacement, context),)))
 end
