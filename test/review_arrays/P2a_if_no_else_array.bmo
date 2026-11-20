@@ -1,0 +1,15 @@
+//! base 0.1.0
+package P
+
+model M
+  Real x[2](start={1,2}, each fixed=true);
+  Real y[2];
+equation
+  der(x) = -x;
+  if time < 0.5 then
+    y = x;
+  elseif true then
+    y = -x;
+  end if;
+end M;
+end P;

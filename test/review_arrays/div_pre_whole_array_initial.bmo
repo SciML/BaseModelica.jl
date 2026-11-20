@@ -1,0 +1,19 @@
+//! base 0.1.0
+package P
+
+model M
+  parameter Integer n = 2;
+  Real x(start=0, fixed=true);
+  discrete Real d[n](each start=0);
+  discrete Real e[2](each start=0);
+initial equation
+  pre(d[1]) = 5;
+  pre(e) = {7, 8};
+equation
+  der(x) = 1;
+  when time >= 0.5 then
+    d = pre(d) + {1,2};
+    e = pre(e) + d;
+  end when;
+end M;
+end P;

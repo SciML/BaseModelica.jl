@@ -1,0 +1,12 @@
+//! base 0.1.0
+package P
+
+model M
+  Real x[0];
+  Real y(start=1, fixed=true);
+  parameter Real p[0];
+equation
+  der(x) = -x;
+  der(y) = -y + sum(x) + sum(p);
+end M;
+end P;
