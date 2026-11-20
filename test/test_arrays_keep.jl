@@ -223,5 +223,6 @@ end
     raw = parse_basemodelica(path; parser, arrays = :keep, simplify = false)
     @test size(raw.x) == (2,)
     @test hasproperty(raw, Symbol("y[1]"))
-    @test sort(collect(values(getfield(raw, :state_priorities)))) == [2, 2, 4]
+    @test sort(collect(values(getfield(raw, :state_priorities)))) ==
+        sort(Int.([BM.StateSelectAvoid, BM.StateSelectAvoid, BM.StateSelectPrefer]))
 end
