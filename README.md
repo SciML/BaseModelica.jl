@@ -107,9 +107,10 @@ The root-history tolerance normally uses the interpolated solution tangent befor
 event reinitialization. If that tangent is non-finite, identity- and diagonal-mass
 ODEs use the RHS at the current, possibly post-reinit, state instead. For a diagonal
 mass matrix, only differential rows have an RHS-derived tangent; algebraic rows stay
-unknown. The default compilation rejects continuous event crossings that read retained
-algebraic unknowns, including through observed equations, because their interpolants
-can report repeated or wrong-direction events even at default tolerances.
+unknown. Compilation with `simplify = true` or a function rejects when-crossings and
+hysteresis crossings that read retained algebraic unknowns, including through observed
+equations, because their interpolants can report repeated or wrong-direction events
+even at default tolerances. Level-semantic relation Booleans remain supported.
 If a reinit stops a fast state and lands it within the root-history tolerance of
 another threshold, the newly enabled clause is not detected until the end of the
 next accepted step, which may be much later (with no dynamics to limit the step,
