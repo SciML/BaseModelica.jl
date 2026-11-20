@@ -86,8 +86,8 @@ Base Modelica is as of yet only a proposal with no concrete specification, so th
   `each` applies a whole field modifier to every record; modifiers without `each` can
   supply distinct values for each record.
 
-Not supported: recursive records, record definitions with equations/algorithms, model record
-String fields, nonliteral dimensions for arrays of records, field projection from a record
+Not supported: recursive, empty or short record definitions, record definitions with
+equations/algorithms, non-enumeration type aliases in record fields, model record String fields, nonliteral dimensions for arrays of records, field projection from a record
 array slice (use `r[i].x`), Boolean- or enumeration-indexed dimensions, array
 sizes that depend on a time-varying value, `when`-equations inside `for`-equations, algorithm sections
 in models, `while` loops, multiple-output function calls, external functions, compound
