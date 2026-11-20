@@ -178,8 +178,14 @@ function apply_subscripts(value, subscripts)
     end
     # MTK symbolic arrays accept range slices but not arbitrary vector subscripts.
     # Materialize only this indexing operation when the selection is non-affine.
-    if value isa Symbolics.Arr && any(i -> i isa AbstractVector && !(i isa AbstractRange), indices)
-        return collect(value)[indices...]
+    if value isa Symbolics.Arr && (
+            any(i -> i isa AbstractVector && !(i isa AbstractRange), indices) ||
+            (ModelingToolkitBase.isparameter(value) && any(i -> !(i isa Integer), indices))
+        )
+        # AtomicArrayDict cannot substitute a nested parameter slice with colon/range
+        # indices. Keep the parent parameter whole and expand only the selected read.
+        selected = CartesianIndices(size(value))[indices...]
+        return map(index -> value[Tuple(index)...], selected)
     end
     return value[indices...]
 end

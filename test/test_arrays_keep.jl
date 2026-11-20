@@ -134,3 +134,60 @@ end
     @test sol(1.0; idxs=sy) ≈ -[1,2,3] .* exp(-1) rtol=1e-8
     @test sol(1.0; idxs=sz) ≈ [-2,1,0] .* exp(-1) atol=1e-8
 end
+
+@testset "Array pre and element initialization ($parser)" for parser in (:julia, :antlr)
+    path = keep_file("""
+        Real x[2](start=0, fixed=true);
+        discrete Real d[2](start=0);
+    initial equation
+        pre(d[1]) = 3;
+        pre(d[2]) = 4;
+    equation
+        der(x) = ones(2);
+        when time >= 0.5 then
+            d = pre(d) + {1,2};
+        end when;
+        """)
+    sys, sol = keep_solve(path; parser)
+    @test sol.retcode == ReturnCode.Success
+    @test sol(0.25; idxs=sys.d) == [3,4]
+    @test sol(1.0; idxs=sys.d) == [4,6]
+end
+
+@testset "Matrix operations and non-vectorized loops ($parser)" for parser in (:julia, :antlr)
+    path = keep_file("""
+        parameter Real k[2] = {1,1};
+        Real x[2](start={1,2}, fixed=true);
+        Real R[2,2](start=identity(2), fixed=true);
+        Real y[2];
+        Real m[2,2];
+    equation
+        for i in 1:2 loop
+            der(x[i]) = -sum({k[i]*x[i]});
+        end for;
+        der(R) = -R;
+        y = transpose(R)*x;
+        m = outerProduct(x,x);
+        """)
+    raw = parse_basemodelica(path; parser, arrays=:keep, simplify=false)
+    @test length(equations(raw)) == 5
+    @test size(raw.x) == (2,)
+    sys, sol = keep_solve(path; parser)
+    @test sol.retcode == ReturnCode.Success
+    @test sol(1.0; idxs=sys.y) ≈ [1,2] .* exp(-2) rtol=1e-8
+    @test sol(1.0; idxs=sys.m) ≈ [1 2; 2 4] .* exp(-2) rtol=1e-8
+end
+
+@testset "Parameter slices in array starts ($parser)" for parser in (:julia, :antlr)
+    path = keep_file("""
+        parameter Real A[3,3]=identity(3);
+        parameter Real v[3]=cross(A[1,:], A[2,:]);
+        Real x[3](start=v, fixed=true);
+    equation
+        der(x)=-x;
+        """)
+    sys, sol = keep_solve(path; parser)
+    @test size(sys.A) == (3,3)
+    @test sol.retcode == ReturnCode.Success
+    @test sol(1.0; idxs=sys.x) ≈ [0,0,exp(-1)] rtol=1e-8
+end
