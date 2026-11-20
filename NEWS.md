@@ -8,6 +8,12 @@
   `ImplicitDiscreteProblem` with a zero-length time span. Use
   `create_odeproblem(file; saveat = Float64[])`
   and pass the interval as `saveat` to `solve` instead. The README and docs show this path.
+- `arrays = :keep` preserves supported numeric arrays as ModelingToolkit array symbols
+  and emits whole-array equations. Unsupported declarations fall back individually to
+  scalar symbols, with debug diagnostics. Matrix powers and mixed loop/whole-array
+  if-equation branches preserve Modelica array semantics. The default remains
+  `arrays = :scalarize`.
+
 - Records support nested components and parameters, starts and bindings, constructors,
   and record inputs/outputs and field assignments in user functions. Function record values
   use NamedTuples internally; model records expand into fields before numeric array

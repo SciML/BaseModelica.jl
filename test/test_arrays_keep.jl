@@ -226,3 +226,116 @@ end
     @test sort(collect(values(getfield(raw, :state_priorities)))) ==
         sort(Int.([BM.StateSelectAvoid, BM.StateSelectAvoid, BM.StateSelectPrefer]))
 end
+
+@testset "If-equation array regressions ($parser, $arrays)" for parser in (:julia, :antlr), arrays in (:scalarize, :keep)
+    for branch in (
+            """
+            if time < 0.5 then
+                y = x;
+            elseif true then
+                y = -x;
+            end if;
+            """,
+            """
+            if time < 0.5 then
+                for i in 1:3 loop
+                    y[i] = x[i];
+                end for;
+            else
+                y = -x;
+            end if;
+            """,
+            """
+            if time < 0.5 then
+                y[1:1:3] = x;
+            else
+                y = -x;
+            end if;
+            """,
+        )
+        path = keep_file(
+            """
+            Real x[3](start={1,2,3}, each fixed=true);
+            Real y[3];
+            Real kept[2](start=0, fixed=true);
+            equation
+            der(x) = -x;
+            der(kept) = ones(2);
+            """ * branch
+        )
+        raw = parse_basemodelica(path; parser, arrays, simplify = false)
+        if arrays === :keep
+            @test hasproperty(raw, Symbol("y[1]"))
+            @test size(raw.kept) == (2,)
+        end
+        sys, sol = keep_solve(path; parser, arrays)
+        y = [getproperty(sys, Symbol("y[$i]")) for i in 1:3]
+        @test sol.retcode == ReturnCode.Success
+        @test sol(0.25; idxs = y) ≈ [1, 2, 3] .* exp(-0.25) rtol = 1.0e-8
+        @test sol(0.75; idxs = y) ≈ -[1, 2, 3] .* exp(-0.75) rtol = 1.0e-8
+    end
+end
+
+@testset "Retained matrix powers ($parser, $arrays)" for parser in (:julia, :antlr), arrays in (:scalarize, :keep)
+    path = keep_file(
+        """
+        Real A[2,2](start={{1,2},{3,4}}, each fixed=true);
+        Real P0[2,2];
+        Real P1[2,2];
+        Real P2[2,2];
+        Real P3[2,2];
+        equation
+        der(A) = -0.1*A;
+        P0 = A^0;
+        P1 = A^1;
+        P2 = A^2;
+        P3 = A^3;
+        """
+    )
+    raw = parse_basemodelica(path; parser, arrays, simplify = false)
+    arrays === :keep && @test size(raw.A) == (2, 2)
+    sys, sol = keep_solve(path; parser, arrays)
+    @test sol.retcode == ReturnCode.Success
+    A = [1 2; 3 4] .* exp(-0.1)
+    for n in 0:3
+        value = arrays === :keep ? getproperty(sys, Symbol("P$n")) :
+            [getproperty(sys, Symbol("P$n[$i,$j]")) for i in 1:2, j in 1:2]
+        @test sol(1.0; idxs = value) ≈ A^n rtol = 1.0e-8
+    end
+end
+
+@testset "Array event helper extensions" begin
+    path = keep_file(
+        """
+        Real x[2](start=0, fixed=true);
+        discrete Real d[2](start=0);
+        equation
+        der(x) = ones(2);
+        when time >= 0.5 then
+            d = pre(d) + {1,2};
+        end when;
+        """
+    )
+    raw = parse_basemodelica(path; parser = :julia, arrays = :keep, simplify = false)
+    x = collect(raw.x)
+    eq = BM.Equation(BM.D.(x), zeros(2))
+    expected = BM.Symbolics.unwrap.(x)
+    @test BM.differentiated_variables([eq, eq]) == vec(expected)
+    @test BM.differentiated_variables((eq, eq)) == vec(expected)
+    @test length(methods(BM.differentiated_variables)) == 1
+
+    affect = BM.ModelingToolkitBase.ImperativeAffect
+    f = (modified, observed, ctx, integrator) -> nothing
+    driver = affect(f)
+    scalar_read = affect(f; observed = (; x = raw.x[1]))
+    @test BM.array_callback_part(driver) === driver
+    @test BM.array_callback_part(scalar_read) === scalar_read
+    for observed in (raw.d, raw.d[1], BM.ModelingToolkit.Pre(raw.d[2]))
+        adapted = BM.array_callback_part(affect(f; observed = (; d = observed)))
+        @test adapted.skip_checks
+        @test adapted.f === f
+        @test isequal(only(adapted.obs), observed)
+    end
+    modified = BM.array_callback_part(affect(f; modified = (; d = raw.d[1])))
+    @test modified.skip_checks
+end

@@ -23,6 +23,28 @@ experiment_settings
 BaseModelica.UnsupportedFeatureError
 ```
 
+## Arrays
+
+`parse_basemodelica(file; arrays = :keep)` and
+`create_odeproblem(file; arrays = :keep)` preserve supported numeric arrays as
+ModelingToolkit array symbols and emit whole-array equations. For example, a declaration
+`Real x[3]` is available as `sys.x`, and `sol(t; idxs = sys.x)` returns its array value.
+The default, `arrays = :scalarize`, exposes separate symbols such as
+`getproperty(sys, Symbol("x[1]"))`.
+
+Both modes use Modelica indexing, slices, matrix products and nonnegative integer matrix
+powers. Array sizes are resolved at load time. Unsupported declarations fall back
+individually to scalar symbols; enable debug logging to see each reason. Fallbacks include
+parameter-dependent dimensions, nonuniform `stateSelect`, per-element `fixed`, relation-defined
+Booleans, element parameter/guess overrides, and discrete arrays with a backend other than
+`:mtk`. If-equation targets use scalar declarations so loop slices and whole-array branches
+match consistently. Array reads in if-equations without an `else` also fall back while the
+conditional evaluator requires concrete zero arrays. Other supported arrays stay intact.
+
+The `:mtk` backend supports array discrete updates, `pre`, element initialization and
+`reinit` of array states. Whole-array parameters can be changed with `remake`, for example
+`remake(prob; p = [prob.f.sys.k => [2.0, 2.0, 2.0]])` for a retained parameter `k[3]`.
+
 ## Constants and parameters
 
 How declarations map to ModelingToolkit, and what `remake` can change afterwards:
