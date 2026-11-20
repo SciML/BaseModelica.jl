@@ -49,11 +49,13 @@ end '-Vec';
         equation
           der(x) = -consume(make(x));
           y = consume(Outer(v=Vec(y={3,4}, x=x), z=5));
+          annotation(experiment(StopTime=0.2));
         end M;
         """)
         sys = parse_basemodelica(path; parser)
         sol = solve(ODEProblem(sys, [], (0.0, 0.2)), Tsit5(); reltol=1e-10, abstol=1e-12)
         @test sol.retcode == ReturnCode.Success
+        @test experiment_settings(sys).StopTime == 0.2
         @test sol(0.2; idxs=sys.x) ≈ (1 + 5/3)*exp(-0.6) - 5/3 atol=1e-8
         @test sol(0.2; idxs=sys.y) ≈ sol(0.2; idxs=sys.x) + 12 atol=1e-10
     end

@@ -553,11 +553,11 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
         Star(
         (
             spc + e"equation" + spc +
-                Star(spc + (equation | annotation_comment) + E";" + spc)
+                Star(spc + (annotation_comment | equation) + E";" + spc)
         ) |
             (
             e"initial equation" + spc +
-                Star(spc + (initial_equation | annotation_comment) + E";" + spc)
+                Star(spc + (annotation_comment | initial_equation) + E";" + spc)
         ) |
             (
             spc + e"initial"[0:1] + spc + E"algorithm" + statement_block |>
