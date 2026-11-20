@@ -250,9 +250,11 @@ file.
 
 ## Known limitations
 
-For models combining a relation Boolean on an algebraic signal with a `when`, an
-experiment `Interval` can make `solve(create_odeproblem(file))` throw
-`ArgumentError: range step cannot be zero`. Upstream ModelingToolkitBase's
+For models that keep algebraic equations after simplification and have a `when` or
+other event, problem-level `saveat` (including an experiment `Interval`) can make
+`solve(create_odeproblem(file))` throw
+`ArgumentError: range step cannot be zero`. ModelingToolkit appends the parent system's
+algebraic equations to every affect, making it implicit. Upstream ModelingToolkitBase's
 `compile_implicit_affect` forwards the problem's `saveat` to an `ImplicitDiscreteProblem`
 with a zero-length time span. Pass `saveat` to `solve` instead, overriding the
 annotation-derived interval on the problem with an empty vector:

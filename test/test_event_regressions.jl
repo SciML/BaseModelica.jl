@@ -18,6 +18,41 @@ function regression_model(body)
 end
 
 @testset "Event regression tests ($parser)" for parser in (:julia, :antlr)
+    @testset "Retained algebraic equation with a when and no Boolean: solve-level saveat" begin
+        path = regression_model(
+            """
+                Real 'x'(start = 0.0, fixed = true);
+                Real 'y'(start = 1.0);
+                discrete Real 'q'(start = 0.0, fixed = true);
+              equation
+                der('x') = 'q' + 1.0;
+                'y' * 'y' = 'x' + 1.0;
+                when time > 0.5 then
+                  'q' = 'y';
+                end when;
+              annotation(experiment(StartTime = 0.0, StopTime = 1.0, Interval = 0.1));
+            """
+        )
+        # MTK appends the retained algebraic equation to the affect. Its implicit
+        # solve inherits problem-level saveat despite having tspan = (t, t).
+        @test_broken solve(create_odeproblem(path; parser), Rodas5P();
+            reltol = 1.0e-9, abstol = 1.0e-11).retcode == ReturnCode.Success
+        prob = create_odeproblem(path; parser, saveat = Float64[])
+        sol = solve(prob, Rodas5P(); saveat = 0.1, reltol = 1.0e-9, abstol = 1.0e-11)
+        @test sol.retcode == ReturnCode.Success
+        sys = prob.f.sys
+        # Before the event x = t, y = sqrt(t + 1), q = 0. At t = 0.5,
+        # q samples sqrt(1.5), and x then has constant slope 1 + sqrt(1.5).
+        @test sol(0.4; idxs = sys.q) ≈ 0.0 atol = 1.0e-8
+        @test sol(0.4; idxs = sys.x) ≈ 0.4 atol = 1.0e-8
+        @test sol(0.4; idxs = sys.y) ≈ sqrt(1.4) atol = 1.0e-8
+        expected_q = sqrt(1.5)
+        expected_x = 0.5 + 0.5 * (1.0 + expected_q)
+        @test sol(1.0; idxs = sys.q) ≈ expected_q atol = 1.0e-8
+        @test sol(1.0; idxs = sys.x) ≈ expected_x atol = 1.0e-8
+        @test sol(1.0; idxs = sys.y) ≈ sqrt(expected_x + 1.0) atol = 1.0e-8
+    end
+
     @testset "Continuous sampling relation containing pre keeps its root" begin
         path = regression_model(
             """

@@ -137,9 +137,11 @@ This check is conservative: every discrete is treated as potentially changing, e
 if its assigning `when` cannot fire together with the reading `when`. These reads raise
 `UnsupportedFeatureError`; explicit `pre(b)` reads remain supported.
 
-For models combining a relation Boolean on an algebraic signal with a `when`, an
-experiment `Interval` can make `solve(create_odeproblem(file))` throw
-`ArgumentError: range step cannot be zero`. Upstream ModelingToolkitBase's
+For models that keep algebraic equations after simplification and have a `when` or
+other event, problem-level `saveat` (including an experiment `Interval`) can make
+`solve(create_odeproblem(file))` throw
+`ArgumentError: range step cannot be zero`. ModelingToolkit appends the parent system's
+algebraic equations to every affect, making it implicit. Upstream ModelingToolkitBase's
 `compile_implicit_affect` forwards the problem's `saveat` to an `ImplicitDiscreteProblem`
 with a zero-length time span. Disable the problem's annotation-derived output interval
 with `create_odeproblem(file; saveat = Float64[])`, then pass the interval as `saveat`
