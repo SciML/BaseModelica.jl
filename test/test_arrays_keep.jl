@@ -329,24 +329,26 @@ end
         """
     )
     raw = parse_basemodelica(path; parser = :julia, arrays = :keep, simplify = false)
-    x = collect(raw.x)
+    # These helpers run before System adds the model namespace.
+    x = collect(BM.variable_map[:x])
+    d = BM.variable_map[:d]
     eq = BM.Equation(BM.D.(x), zeros(2))
     expected = BM.Symbolics.unwrap.(x)
-    @test BM.differentiated_variables([eq, eq]) == vec(expected)
-    @test BM.differentiated_variables((eq, eq)) == vec(expected)
+    @test isequal(BM.differentiated_variables([eq, eq]), vec(expected))
+    @test isequal(BM.differentiated_variables((eq, eq)), vec(expected))
 
     affect = BM.ModelingToolkitBase.ImperativeAffect
     f = (modified, observed, ctx, integrator) -> nothing
     driver = affect(f)
-    scalar_read = affect(f; observed = (; x = raw.x[1]))
+    scalar_read = affect(f; observed = (; x = x[1]))
     @test BM.array_callback_part(driver) === driver
     @test BM.array_callback_part(scalar_read) === scalar_read
-    for observed in (raw.d, raw.d[1], BM.ModelingToolkit.Pre(raw.d[2]))
+    for observed in (d, d[1], BM.ModelingToolkit.Pre(d[2]))
         adapted = BM.array_callback_part(affect(f; observed = (; d = observed)))
         @test adapted.skip_checks
         @test adapted.f === f
         @test isequal(only(adapted.obs), observed)
     end
-    modified = BM.array_callback_part(affect(f; modified = (; d = raw.d[1])))
+    modified = BM.array_callback_part(affect(f; modified = (; d = d[1])))
     @test modified.skip_checks
 end

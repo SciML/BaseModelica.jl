@@ -295,8 +295,10 @@ function modelica_pow(a, b)
     n = to_int(b, "matrix power")
     n >= 0 || unsupported("negative matrix power")
     n == 0 && return [i == j ? one(eltype(a)) : zero(eltype(a)) for i in axes(a, 1), j in axes(a, 2)]
-    # Starting from an identity literal creates a nested symbolic array product
-    # that MTK cannot compile. Positive powers can start with the matrix itself.
+    n == 1 && return a
+    # Symbolics rewrites A*A back to A^2, which MTK cannot flatten. Expand
+    # only this operation into scalar expressions; declarations stay as arrays.
+    a isa Symbolics.Arr && (a = collect(a))
     result = a
     for _ in 2:n
         result = wrap_array_result(result * a)
