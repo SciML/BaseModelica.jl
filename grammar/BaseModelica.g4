@@ -63,7 +63,8 @@ enumerationLiteral
 
 composition
     : (decoration? genericElement ';')*
-      ('equation' (equation ';')*
+      (('public' | 'protected') (decoration? genericElement ';')*
+      | 'equation' (equation ';')*
       | 'initial' 'equation' (initialEquation ';')*
       | 'initial'? 'algorithm' (statement ';')*)*
       (decoration? 'external' languageSpecification? externalFunctionCall? annotationComment? ';')?
@@ -156,7 +157,7 @@ argument
     ;
 
 elementModificationOrReplaceable
-    : elementModification
+    : 'each'? elementModification
     ;
 
 elementModification

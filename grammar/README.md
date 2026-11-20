@@ -5,7 +5,7 @@ This directory contains the ANTLR4 grammar definition and build tools for creati
 
 ## Prerequisites
 
-1. **Java Development Kit (JDK)**: Version 8 or higher (only needed for building, not runtime)
+1. **Java Development Kit (JDK)**: Version 11 or higher (required by ANTLR 4.13.1; only needed for building, not runtime)
    ```bash
    # Check if Java is installed
    java -version
