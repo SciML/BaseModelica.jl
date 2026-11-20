@@ -15,7 +15,7 @@ end
             @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path(case); parser, arrays)
         end
         # Reading a declared local before any assignment must also be diagnosed.
-        for algorithm in ("y := x;", "if u > 0.5 then x := 10; end if; y := x;"), model_x in ("", "Real x = -1;")
+        for algorithm in ("y := x;", "if u > 0.5 then x := 10; end if; y := x;", "for x in 1:2 loop y := x; end for; y := x;"), model_x in ("", "Real x = -1;")
             file = tempname() * ".bmo"
             write(file, """
             package P

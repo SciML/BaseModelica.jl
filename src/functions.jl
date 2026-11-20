@@ -275,11 +275,16 @@ end
 
 function run_statement!(scope, st::BaseModelicaForStatement, f)
     index = loop_index_name(st.index)
-    for value in loop_range(st.index)
-        scope[index] = value
-        run_statements!(scope, st.statements, f)
+    had_value = haskey(scope, index)
+    prior = get(scope, index, nothing)
+    try
+        for value in loop_range(st.index)
+            scope[index] = value
+            run_statements!(scope, st.statements, f)
+        end
+    finally
+        had_value ? (scope[index] = prior) : delete!(scope, index)
     end
-    delete!(scope, index)
     return scope
 end
 
