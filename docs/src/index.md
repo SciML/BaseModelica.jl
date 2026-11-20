@@ -35,7 +35,7 @@ The default, `arrays = :scalarize`, exposes separate symbols such as
 Both modes use Modelica indexing, slices, matrix products and nonnegative integer matrix
 powers. Array sizes are resolved at load time. Unsupported declarations fall back
 individually to scalar symbols; enable debug logging to see each reason. Fallbacks include
-parameter-dependent dimensions, nonuniform `stateSelect`, per-element `fixed`, relation-defined
+empty arrays, parameter-dependent dimensions, nonuniform `stateSelect`, per-element `fixed`, relation-defined
 Booleans, element parameter/guess overrides, and discrete arrays with a backend other than
 `:mtk`. If-equation targets use scalar declarations so loop slices and whole-array branches
 match consistently, including branches without an `else`. Other supported arrays stay intact.

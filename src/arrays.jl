@@ -545,7 +545,12 @@ function scalarize_components(components; arrays = :scalarize, equations = [], p
         end
         name = String(declaration.ident[1].name)
         dims = array_size(name, subscripts, declaration, scope)
-        reason = arrays === :keep ? array_fallback_reason(comp, subscripts, scope, fallback, backend) : nothing
+        reason = if arrays === :keep
+            any(iszero, dims) ? "empty array has no symbolic elements" :
+                array_fallback_reason(comp, subscripts, scope, fallback, backend)
+        else
+            nothing
+        end
         if arrays === :keep && isnothing(reason)
             kept_array_dims[Symbol(name)] = dims
             push!(result, comp)
