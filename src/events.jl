@@ -256,18 +256,25 @@ function continuous_conditions(crossings, has_states::Bool)
     return eqs
 end
 
+# Extension point for containers of expressions (such as array literals).
+differentiated_children(x) =
+    SymbolicUtils.iscall(x) ? SymbolicUtils.arguments(x) : ()
+
 # Variables appearing under a time derivative in `eqs`: the continuous states.
 function differentiated_variables(eqs)
-    found = []
+    found = Any[]
+    seen = Set{Any}()
     function walk(x)
         x = Symbolics.unwrap(x)
-        SymbolicUtils.iscall(x) || return
-        if SymbolicUtils.operation(x) isa Symbolics.Differential
+        if SymbolicUtils.iscall(x) && SymbolicUtils.operation(x) isa Symbolics.Differential
             arg = only(SymbolicUtils.arguments(x))
-            any(isequal(arg), found) || push!(found, arg)
+            if !(arg in seen)
+                push!(seen, arg)
+                push!(found, arg)
+            end
             return
         end
-        return foreach(walk, SymbolicUtils.arguments(x))
+        return foreach(walk, differentiated_children(x))
     end
     for eq in eqs
         walk(eq.lhs)

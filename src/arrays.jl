@@ -294,8 +294,11 @@ function modelica_pow(a, b)
         unsupported("`^` of a non-square array; use `.^`")
     n = to_int(b, "matrix power")
     n >= 0 || unsupported("negative matrix power")
-    result = [i == j ? one(eltype(a)) : zero(eltype(a)) for i in axes(a, 1), j in axes(a, 2)]
-    for _ in 1:n
+    n == 0 && return [i == j ? 1.0 : 0.0 for i in axes(a, 1), j in axes(a, 2)]
+    # Starting from an identity literal creates a nested symbolic array product
+    # that MTK cannot compile. Positive powers can start with the matrix itself.
+    result = a
+    for _ in 2:n
         result = wrap_array_result(result * a)
     end
     return result
@@ -522,6 +525,7 @@ function scalarize_components(components; arrays = :scalarize, equations = [], p
         return components
     scope = structural_scope(components)
     merge!(structural_values, scope)
+    fallback = arrays === :keep ? array_fallback_context(equations, parameter_equations) : nothing
     result = []
     for comp in components
         length(comp.component_list) == 1 ||
@@ -535,7 +539,7 @@ function scalarize_components(components; arrays = :scalarize, equations = [], p
         end
         name = String(declaration.ident[1].name)
         dims = array_size(name, subscripts, declaration, scope)
-        reason = arrays === :keep ? array_fallback_reason(comp, subscripts, scope, equations, parameter_equations, backend) : nothing
+        reason = arrays === :keep ? array_fallback_reason(comp, subscripts, scope, fallback, backend) : nothing
         if arrays === :keep && isnothing(reason)
             kept_array_dims[Symbol(name)] = dims
             push!(result, comp)
@@ -612,25 +616,67 @@ function element_names(ref::BaseModelicaComponentReference)
     return selected isa Symbol ? [selected] : vec(selected)
 end
 
+# Scan model equations once, rather than once for every array declaration.
+function array_fallback_context(equations, parameter_equations)
+    element_overrides = Set{Symbol}()
+    for eq in parameter_equations
+        names, subs = reference_parts(eq.component_reference)
+        isnothing(subs) || push!(element_overrides, Symbol(join(names, ".")))
+    end
+    event_updated = Set{Symbol}()
+    conditional_targets = Set{Symbol}()
+    conditional_reads = Set{Symbol}()
+    function scan(node; in_if = false, needs_zero = false, in_when = false)
+        node = inner_equation(node)
+        if node isa BaseModelicaWhenEquation
+            foreach(body -> scan(body; in_if, needs_zero, in_when = true), node.thens)
+            return
+        elseif node isa BaseModelicaIfEquation
+            # Branch matching currently compares whole LHS expressions. A loop
+            # slice and a whole array may denote the same elements but compare
+            # differently as MTK arrays; scalar declarations avoid that mismatch.
+            no_else = length(node.thens) == length(node.ifs)
+            foreach(body -> scan(body; in_if = true, needs_zero = needs_zero || no_else, in_when), node.thens)
+            return
+        elseif node isa BaseModelicaSimpleEquation && node.lhs isa BaseModelicaComponentReference
+            name = reference_name(node.lhs)
+            in_if && push!(conditional_targets, name)
+            in_when && push!(event_updated, name)
+        elseif node isa BaseModelicaComponentReference
+            # Until the if-equation evaluator uses elementwise zeros, zero(rhs)
+            # also requires concrete containers for reads in a no-else branch.
+            needs_zero && push!(conditional_reads, reference_name(node))
+        end
+        if node isa Union{AbstractVector, Tuple}
+            foreach(child -> scan(child; in_if, needs_zero, in_when), node)
+        elseif node isa BaseModelicaASTNode
+            for field in fieldnames(typeof(node))
+                scan(getfield(node, field); in_if, needs_zero, in_when)
+            end
+        end
+        return
+    end
+    scan(equations)
+    return (; event_updated, element_overrides, conditional_targets, conditional_reads)
+end
+
 # Fallbacks are local to a declaration. The MTK event adapter accepts array discretes;
 # other backends retain their scalar declaration interface.
-function array_fallback_reason(comp, subscripts, scope, equations, parameter_equations, backend)
+function array_fallback_reason(comp, subscripts, scope, fallback, backend)
     decl = only(comp.component_list).declaration
     name = Symbol(first(decl.ident).name)
     comp.type_specifier.type == "String" && return "String components have no MTK numeric representation"
-    event_updated = comp.type_prefix.dpc == "discrete" || name in collect_when_body_var_names(equations)
+    event_updated = comp.type_prefix.dpc == "discrete" || name in fallback.event_updated
     comp.type_specifier.type == "Boolean" && comp.type_prefix.dpc != "parameter" && !event_updated &&
         return "relation-defined Boolean uses scalar 0/1 discretes"
     refs = referenced_names!(Set{String}(), subscripts)
     any(n -> Symbol(n) in keys(scope), refs) && return "parameter-dependent size evaluated at load"
     comp.type_prefix.dpc == "constant" && return "constant array is inlined elementwise"
     event_updated && !(backend isa MTKEventsBackend) && return "scalar discrete backend interface"
-    for eq in parameter_equations
-        ref = eq.component_reference
-        names, subs = reference_parts(ref)
-        Symbol(join(names, ".")) == name && !isnothing(subs) &&
-            return "element guess/parameter override (MTK array metadata limitation)"
-    end
+    name in fallback.element_overrides &&
+        return "element guess/parameter override (MTK array metadata limitation)"
+    name in fallback.conditional_targets && return "if-equation target requires scalar branch matching"
+    name in fallback.conditional_reads && return "array read in an if-equation without else requires elementwise zeros"
     # MTK accepts array starts and guesses, but fixed is a declaration-wide decision.
     fixed = try
         with_local_scope(() -> get_class_modification_value(decl.modification, "fixed"), scope)
@@ -806,32 +852,9 @@ function array_discrete_initial!(starts, eq)
     return true
 end
 
-# The scalar event IR uses a vector, but large fallback loops must not rediscover
-# every preceding state for each derivative. Specialize the existing event helper
-# for our equation vector; leave events.jl and its lowering contracts unchanged.
-function differentiated_variables(eqs::Vector{Equation})
-    found = Any[]
-    seen = Set{Any}()
-    function walk(x)
-        x = Symbolics.unwrap(x)
-        SymbolicUtils.iscall(x) || return
-        if SymbolicUtils.operation(x) isa Symbolics.Differential
-            arg = only(SymbolicUtils.arguments(x))
-            if !(arg in seen)
-                push!(seen, arg)
-                push!(found, arg)
-            end
-            return
-        end
-        foreach(walk, SymbolicUtils.arguments(x))
-        return
-    end
-    for eq in eqs
-        walk(eq.lhs)
-        walk(eq.rhs)
-    end
-    return found
-end
+# Event state discovery must also descend into literal arrays of expressions.
+# Symbolic arrays continue through the ordinary symbolic-expression walker.
+differentiated_children(x::AbstractArray) = x
 
 # MTK's ImperativeAffect validator compares an indexed array parameter against a
 # list containing its parent array, and incorrectly reports a missing variable.
@@ -862,7 +885,22 @@ function array_callback_part(affect)
     append!(result, filter(eq -> !(eq.lhs in replaced), eqs))
     return typeof(affect)(result, unique(parameters))
 end
+function touches_kept_discrete_array(x)
+    x = Symbolics.unwrap(x)
+    for name in keys(kept_array_dims)
+        name in discrete_variable_names || continue
+        isequal(x, Symbolics.unwrap(variable_map[name])) && return true
+    end
+    x isa AbstractArray && return any(touches_kept_discrete_array, x)
+    SymbolicUtils.iscall(x) || return false
+    return any(touches_kept_discrete_array, SymbolicUtils.arguments(x))
+end
+
 function array_callback_part(affect::ModelingToolkitBase.ImperativeAffect)
+    # Other imperative callbacks, including the event-iteration driver, still
+    # receive MTK's normal validation even when the model has array discretes.
+    any(touches_kept_discrete_array, affect.obs) ||
+        any(touches_kept_discrete_array, affect.modified) || return affect
     return ModelingToolkitBase.ImperativeAffect(
         affect.f;
         observed = NamedTuple{Tuple(affect.obs_syms)}(Tuple(affect.obs)),
