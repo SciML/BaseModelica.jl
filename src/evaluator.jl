@@ -199,7 +199,7 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     # Helper to extract RHS for a specific variable from a branch's equation list
     function get_rhs_for_var(var_lhs, branch)
         idx = findfirst(eq -> isequal(eq.lhs, var_lhs), branch)
-        return isnothing(idx) ? nothing : branch[idx].rhs
+        return isnothing(idx) ? nothing : Symbolics.wrap(branch[idx].rhs)
     end
 
     # Collect all unique LHS variables across all branches, in order of appearance
@@ -905,8 +905,11 @@ end
 # as element assignments. They must update the backend's starts, just like a direct
 # `pre(v) = value`, rather than set defaults that backend initialization overwrites.
 function set_discrete_initial!(starts, var, value)
+    # Equation fields are unwrapped symbolic values; symbol_name expects Num.
+    var = Symbolics.wrap(var)
     name = symbol_name(var)
     name in discrete_variable_names || return false
+    value = something(concrete_value(value), Symbolics.wrap(value))
     if haskey(kept_array_dims, name)
         array = variable_map[name]
         if !isequal(var, array)

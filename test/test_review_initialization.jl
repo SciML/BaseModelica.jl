@@ -23,18 +23,19 @@ end
 
 # The optional filters let the review repros run one model per foreground process.
 review_cases = (
-    :repeated_lhs, :initial_loop, :discrete_array, :discrete_loop,
+    :repeated_lhs, :broadcast_lhs, :initial_vector_loop, :initial_loop, :discrete_array, :discrete_loop,
     :if_no_else, :if_mixed_shapes, :backend_equations,
 )
 review_case_filter = get(ENV, "BASEMODELICA_REVIEW_CASE", "")
 review_parser_filter = get(ENV, "BASEMODELICA_REVIEW_PARSER", "")
 review_arrays_filter = get(ENV, "BASEMODELICA_REVIEW_ARRAYS", "")
+review_selected(values, selection) = isempty(selection) ? values :
+    Tuple(x for x in values if string(x) == selection)
 
 @testset "Review initialization ($parser, $arrays, $case)" for
-        parser in (:julia, :antlr), arrays in (:scalarize, :keep), case in review_cases
-    isempty(review_case_filter) || string(case) == review_case_filter || continue
-    isempty(review_parser_filter) || string(parser) == review_parser_filter || continue
-    isempty(review_arrays_filter) || string(arrays) == review_arrays_filter || continue
+        parser in review_selected((:julia, :antlr), review_parser_filter),
+        arrays in review_selected((:scalarize, :keep), review_arrays_filter),
+        case in review_selected(review_cases, review_case_filter)
 
     if case === :repeated_lhs
         # records/outputs/repros/p1_initial_array_eq.bmo: both residuals have LHS 0.
@@ -53,6 +54,28 @@ review_arrays_filter = get(ENV, "BASEMODELICA_REVIEW_ARRAYS", "")
         @test sol(0.0; idxs = sys.y) ≈ 2.0
         @test sol(1.0; idxs = sys.x) ≈ exp(-1) rtol = 1.0e-3
         @test sol(1.0; idxs = sys.y) ≈ 2exp(-1) rtol = 1.0e-3
+    elseif case in (:broadcast_lhs, :initial_vector_loop)
+        # Array review div_initial_zero_lhs.bmo and cases/initloop2.bmo.
+        initial = case === :broadcast_lhs ? "0 = 'x' - {1, 2};" : """
+            for 'i' in 1:2 loop
+              'x'['i'] = 'i';
+            end for;
+        """
+        path = review_initialization_model("""
+            Real 'x'[2];
+          initial equation
+            $initial
+          equation
+            der('x') = -'x';
+        """)
+        sys = parse_basemodelica(path; parser, arrays)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        for i in 1:2
+            var = review_initialization_member(sys, "x", i)
+            @test sol(0.0; idxs = var) ≈ i
+            @test sol(1.0; idxs = var) ≈ i * exp(-1) rtol = 1.0e-3
+        end
     elseif case === :initial_loop
         # arrays/outputs/review/cases/initloop2.bmo, including nested loops.
         path = review_initialization_model("""
