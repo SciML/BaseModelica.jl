@@ -190,7 +190,7 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
         targets = Set(eq.lhs for eq in first(branches))
         if any(branch -> !isequal(Set(eq.lhs for eq in branch), targets), branches)
             branches = [
-                reduce(vcat, (vcat(Symbolics.scalarize(eq)) for eq in branch); init = Equation[])
+                reduce(vcat, (vec(vcat(Symbolics.scalarize(eq))) for eq in branch); init = Equation[])
                     for branch in branches
             ]
         end
@@ -658,11 +658,15 @@ function eval_AST(
         end
     end
     initial_equations = filter(initial_equations) do eq
+        # ANTLR stores initial for/if-equations directly; the direct-assignment
+        # helpers below expect a simple equation wrapped in AnyEquation.
+        inner = inner_equation(eq.equation)
+        inner isa BaseModelicaSimpleEquation || return true
         array_discrete_initial!(discrete_starts, eq) && return false
         name = discrete_initial_target(eq)
         isnothing(name) && return true
         value = with_eval_mode(:initial) do
-            eval_AST(eq.equation.equation.rhs)
+            eval_AST(inner.rhs)
         end
         if haskey(relation_boolean_syms, name)
             value isa Bool || return true
@@ -888,7 +892,7 @@ end
 # an initial equation `pre(v) = ...` or `v = ...`, or nothing if the equation does not
 # initialize one.
 function discrete_initial_target(eq::BaseModelicaInitialEquation)
-    inner = eq.equation.equation
+    inner = inner_equation(eq.equation)
     inner isa BaseModelicaSimpleEquation || return nothing
     lhs = inner.lhs
     if lhs isa BaseModelicaFunctionCall && function_call_name(lhs) == "pre"

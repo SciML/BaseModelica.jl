@@ -164,15 +164,21 @@ review_selected(values, selection) = isempty(selection) ? values :
         # P2b_if_branches_loop_vs_whole.bmo: y[1:1:3] and y are the same targets.
         path = review_initialization_model("""
             Real 'x'[3](start = {1, 2, 3}, each fixed = true);
-            Real 'y'[3];
+            Real 'y'[3]; Real 'm'[2,2];
           equation
             der('x') = -'x';
             if time < 0.5 then
               for 'i' in 1:3 loop
                 'y'['i'] = 'x'['i'];
               end for;
+              for 'i' in 1:2 loop
+                for 'j' in 1:2 loop
+                  'm'['i','j'] = 'x'['i'] + 'j';
+                end for;
+              end for;
             else
               'y' = -'x';
+              'm' = {{-'x'[1] - 1, -'x'[1] - 2}, {-'x'[2] - 1, -'x'[2] - 2}};
             end if;
         """)
         sys = parse_basemodelica(path; parser, arrays)
@@ -182,6 +188,11 @@ review_selected(values, selection) = isempty(selection) ? values :
             y = review_initialization_member(sys, "y", i)
             @test sol(0.25; idxs = y) ≈ i * exp(-0.25) rtol = 1.0e-3
             @test sol(0.75; idxs = y) ≈ -i * exp(-0.75) rtol = 1.0e-3
+        end
+        for i in 1:2, j in 1:2
+            m = arrays === :keep ? sys.m[i,j] : getproperty(sys, Symbol("m[$i,$j]"))
+            @test sol(0.25; idxs = m) ≈ i * exp(-0.25) + j rtol = 1.0e-3
+            @test sol(0.75; idxs = m) ≈ -i * exp(-0.75) - j rtol = 1.0e-3
         end
     elseif case === :backend_equations
         path = review_initialization_model("""
