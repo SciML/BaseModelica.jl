@@ -96,7 +96,7 @@ function reference_parts(ref::BaseModelicaComponentReference)
     return names, subscripts
 end
 
-reference_name(ref::BaseModelicaComponentReference) = Symbol(first(reference_parts(ref)[1]))
+reference_name(ref::BaseModelicaComponentReference) = Symbol(join(reference_parts(ref)[1], "."))
 
 element_name(name, index) = string(name, "[", join(Tuple(index), ","), "]")
 
@@ -584,7 +584,7 @@ subscripts the scalarized element name `x[2]`. `nothing` for a reference to seve
 """
 function scalar_element_name(ref::BaseModelicaComponentReference)
     names, subscripts = reference_parts(ref)
-    name = Symbol(first(names))
+    name = Symbol(join(names, "."))
     haskey(array_components, name) || return name
     isnothing(subscripts) && return nothing
     selected = apply_subscripts(array_components[name], subscripts)
@@ -595,7 +595,7 @@ end
 # subscripts that are not constant may refer to any element.
 function element_names(ref::BaseModelicaComponentReference)
     names, subscripts = reference_parts(ref)
-    name = Symbol(first(names))
+    name = Symbol(join(names, "."))
     haskey(array_components, name) || return [name]
     elements = array_components[name]
     isnothing(subscripts) && return vec(elements)
@@ -628,8 +628,8 @@ function array_fallback_reason(comp, subscripts, scope, equations, parameter_equ
     for eq in parameter_equations
         ref = eq.component_reference
         names, subs = reference_parts(ref)
-        Symbol(first(names)) == name && !isnothing(subs) &&
-            return "element parameter override (MTK array default limitation)"
+        Symbol(join(names, ".")) == name && !isnothing(subs) &&
+            return "element guess/parameter override (MTK array metadata limitation)"
     end
     # MTK accepts array starts and guesses, but fixed is a declaration-wide decision.
     fixed = try

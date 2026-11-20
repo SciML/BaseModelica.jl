@@ -23,6 +23,7 @@ run_tests(;
         @safetestset "Record Tests" include("test_records.jl")
         @safetestset "Array Tests" include("test_arrays.jl")
         @safetestset "Retained Array Tests" include("test_arrays_keep.jl")
+        @safetestset "Record Array Event Tests" include("test_array_record_events.jl")
         @safetestset "Constants and Structural Parameter Tests" include("test_parameters.jl")
         @safetestset "Precompile Workload Tests" include("test_precompile_workload.jl")
         return nothing
