@@ -500,10 +500,12 @@ compile_system(::MTKEventsBackend, sys) = check_algebraic_crossings(mtkcompile(s
 Check a compiled BaseModelica system for when-crossings and hysteresis Boolean crossings
 that depend on retained algebraic unknowns in the `:mtk` backend, throwing
 [`UnsupportedFeatureError`](@ref) if one is found. Return the
-system unchanged otherwise. This check runs automatically for `simplify = true` and
+system otherwise, resolving retained-array reinit targets for analytically integrated
+constant states. This check runs automatically for `simplify = true` and
 `simplify = f`. After `simplify = false`, call it on the result of your own compilation.
 """
 function check_algebraic_crossings(compiled)
+    compiled = array_reinit_callback_targets(compiled)
     callbacks = ModelingToolkitBase.continuous_events(compiled)
     isempty(callbacks) && return compiled
     mass = ModelingToolkitBase.calculate_massmatrix(compiled)
@@ -1149,10 +1151,11 @@ function lower_discrete(::MTKEventsBackend, model::DiscreteModel)
     append!(affects, [flag ~ 0.0 for flag in execute])
     append!(discretes, [ready; execute])
     pending = ready > 0.5
+    affect = array_mtk_affect(affects, discretes)
     push!(
         lowered.event_iteration, ModelingToolkitBase.SymbolicDiscreteCallback(
-            Symbolics.unwrap(pending), affects; discrete_parameters = discretes,
-            initialize = affects, reinitializealg = EVENT_REINITIALIZATION
+            Symbolics.unwrap(pending), affect; discrete_parameters = discretes,
+            initialize = affect, reinitializealg = EVENT_REINITIALIZATION
         )
     )
     if !isempty(condition_reads)

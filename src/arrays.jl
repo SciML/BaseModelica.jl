@@ -908,6 +908,138 @@ function array_callback_part(affect)
     append!(result, filter(eq -> !(eq.lhs in replaced), eqs))
     return typeof(affect)(result, unique(parameters))
 end
+
+# Only the built-in backend's validated, explicit when-body assignments use this
+# path. Other backends can still supply symbolic affect systems with algebraics.
+function array_mtk_affect(equations, discretes)
+    arrays = Any[
+        Symbolics.unwrap(variable_map[name]) for name in keys(kept_array_dims) if
+            name in discrete_variable_names || !ModelingToolkitBase.isparameter(variable_map[name])
+    ]
+    any(eq -> array_affect_reads_written(eq.lhs, arrays), equations) || return equations
+    # Opaque whole-array reads can conceal element dependencies (e.g. a reduction).
+    # Leave those systems with MTK rather than assuming entry values are sufficient.
+    any(eq -> array_affect_whole_read(eq.rhs, arrays), equations) && return equations
+    # Resolve acyclic plain discrete dependencies in the simultaneous assignment
+    # system. Keep MTK's equation solver for cycles and implicit dependencies.
+    pending = copy(equations)
+    resolved = Dict{Any, Any}()
+    while !isempty(pending)
+        before = length(pending)
+        targets = [eq.lhs for eq in pending]
+        filter!(pending) do eq
+            array_affect_reads_written(eq.rhs, targets) && return true
+            resolved[eq.lhs] = array_affect_substitute(eq.rhs, resolved)
+            return false
+        end
+        length(pending) == before && return equations
+    end
+    equations = Equation[eq.lhs ~ resolved[eq.lhs] for eq in equations]
+    affect = array_callback_part(
+        ModelingToolkitBase.SymbolicAffect(equations; discrete_parameters = discretes)
+    )
+    result = copy(affect.affect)
+    # These are explicit simultaneous assignments from the validated event IR.
+    # Compiling a second symbolic system lets MTK alias an updated array element
+    # back to an algebraic read, or reconstruct a partially integrated state array
+    # from its own missing parent. Evaluate all old-value reads together instead.
+    filter!(eq -> !isequal(eq.rhs, Symbolics.unwrap(ModelingToolkit.Pre(eq.lhs))), result)
+    names = Tuple(Symbol(:value, i) for i in eachindex(result))
+    values = map(eq -> array_affect_value(eq.rhs), result)
+    return ModelingToolkitBase.ImperativeAffect(
+        ArrayEventAssignment();
+        observed = NamedTuple{names}(Tuple(values)),
+        modified = NamedTuple{names}(Tuple(eq.lhs for eq in result)),
+        skip_checks = true
+    )
+end
+
+function array_affect_whole_read(x, arrays)
+    x = Symbolics.unwrap(x)
+    x isa Union{AbstractArray, Tuple} && return any(el -> array_affect_whole_read(el, arrays), x)
+    any(isequal(x), arrays) && return true
+    SymbolicUtils.iscall(x) || return false
+    op = SymbolicUtils.operation(x)
+    op isa ModelingToolkitBase.Pre && return false
+    args = SymbolicUtils.arguments(x)
+    # A static element read has a precise dependency, handled below.
+    if op === getindex && any(isequal(first(args)), arrays)
+        return any(arg -> array_affect_whole_read(arg, arrays), args[2:end])
+    end
+    return any(arg -> array_affect_whole_read(arg, arrays), args)
+end
+
+function array_affect_reads_written(x, written)
+    x = Symbolics.unwrap(x)
+    x isa Union{AbstractArray, Tuple} && return any(el -> array_affect_reads_written(el, written), x)
+    any(isequal(x), written) && return true
+    SymbolicUtils.iscall(x) || return false
+    SymbolicUtils.operation(x) isa ModelingToolkitBase.Pre && return false
+    return any(arg -> array_affect_reads_written(arg, written), SymbolicUtils.arguments(x))
+end
+
+function array_affect_substitute(x, resolved)
+    x = Symbolics.unwrap(x)
+    x isa Union{AbstractArray, Tuple} && return map(el -> array_affect_substitute(el, resolved), x)
+    haskey(resolved, x) && return resolved[x]
+    SymbolicUtils.iscall(x) || return x
+    SymbolicUtils.operation(x) isa ModelingToolkitBase.Pre && return x
+    return SymbolicUtils.substitute(
+        x, Dict(arg => array_affect_substitute(arg, resolved) for arg in SymbolicUtils.arguments(x));
+        fold = Val(false)
+    )
+end
+
+# ImperativeAffect observes every RHS before invoking the setters. `Pre` here
+# denotes the value at entry to this affect; Modelica event snapshots have already
+# been replaced by the event backend's separate snapshot parameters.
+function array_affect_value(x)
+    x = Symbolics.unwrap(x)
+    x isa Union{AbstractArray, Tuple} && return map(array_affect_value, x)
+    SymbolicUtils.iscall(x) || return x
+    op = SymbolicUtils.operation(x)
+    args = SymbolicUtils.arguments(x)
+    op isa ModelingToolkitBase.Pre && return array_affect_value(only(args))
+    return SymbolicUtils.substitute(
+        x, Dict(arg => array_affect_value(arg) for arg in args); fold = Val(false)
+    )
+end
+
+struct ArrayEventAssignment end
+function (::ArrayEventAssignment)(modified, observed, ctx, integ)
+    return observed
+end
+
+# MTK analytically integrates zero-derivative states into parameters. Symbolic
+# affects handle this mapping internally; our explicit array adapter must resolve
+# its reinit targets after compilation, before setters and save clocks are built.
+function array_reinit_callback_targets(sys)
+    integrated = ModelingToolkitBase.analytically_integrated(sys)
+    isempty(integrated) && return sys
+    changed = false
+    function resolve(affect)
+        affect isa ModelingToolkitBase.ImperativeAffect || return affect
+        affect.f isa ArrayEventAssignment || return affect
+        modified = [get(integrated, Symbolics.unwrap(var), var) for var in affect.modified]
+        isequal(modified, affect.modified) && return affect
+        changed = true
+        return ModelingToolkitBase.ImperativeAffect(
+            affect.f, affect.obs, affect.obs_syms, modified, affect.mod_syms,
+            affect.ctx, affect.skip_checks
+        )
+    end
+    callbacks = map(ModelingToolkitBase.discrete_events(sys)) do callback
+        typeof(callback)((resolve(getfield(callback, field)) for field in fieldnames(typeof(callback)))...)
+    end
+    changed || return sys
+    sys = ConstructionBase.setproperties(sys; discrete_events = callbacks)
+    # Rebuild MTK's parameter partitions so a reinitialized constant state also
+    # has a saved discrete history, rather than only its final live value.
+    bindings_graph = ModelingToolkitBase.get_parameter_bindings_graph(sys)
+    sys = ModelingToolkitBase.complete(sys; flatten = false)
+    return ConstructionBase.setproperties(sys; parameter_bindings_graph = bindings_graph)
+end
+
 function touches_kept_discrete_array(x)
     x = Symbolics.unwrap(x)
     for name in keys(kept_array_dims)
