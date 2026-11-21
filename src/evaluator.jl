@@ -1454,7 +1454,7 @@ function complete_unfixed_initialization(sys)
         end
     end
     if !isempty(conditional_starts)
-        sys = ModelingToolkitBase.ConstructionBase.setproperties(sys;
+        sys = ConstructionBase.setproperties(sys;
             initialization_eqs = vcat(ModelingToolkitBase.initialization_equations(sys), conditional_starts))
     end
     isempty(defaults) || (sys = ModelingToolkitBase.set_defaults(sys, defaults))

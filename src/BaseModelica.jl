@@ -1,6 +1,7 @@
 module BaseModelica
 
 import CondaPkg
+import ConstructionBase
 using DiffEqBase: BrownFullBasicInit
 using LinearAlgebra: Diagonal
 using MLStyle: @data, @match
