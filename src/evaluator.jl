@@ -1140,13 +1140,103 @@ function eval_AST(
         sys = SymbolicUtils.setmetadata(sys, ExperimentAnnotation, experiment)
     end
     if simplify === true
-        return compile_system(backend, sys)
+        return complete_unfixed_initialization(compile_system(backend, sys))
     elseif simplify === false
         return sys
     else
-        compiled = simplify(sys)
+        compiled = complete_unfixed_initialization(simplify(sys))
         return backend isa MTKEventsBackend ? check_algebraic_crossings(compiled) : compiled
     end
+end
+
+# Supply only the missing initial conditions, after state selection and index reduction.
+# In particular, an unfixed start is not an extra constraint on a quaternion, or on a
+# state already determined by an initial equation. MTK currently loses guesses for
+# unconstrained states in parameter-dependent initialization systems (see the pure MTK
+# reproduction in the initialization regression tests).
+function complete_unfixed_initialization(sys)
+    states = differentiated_variables(equations(sys))
+    isempty(states) && return sys
+    guesses = Dict{Any, Any}()
+    for (var, value) in ModelingToolkitBase.guesses(sys)
+        scalar_vars = Symbolics.scalarize(var)
+        if scalar_vars isa AbstractArray
+            for i in eachindex(scalar_vars)
+                guesses[Symbolics.unwrap(scalar_vars[i])] = value[i]
+            end
+        else
+            guesses[Symbolics.unwrap(var)] = value
+        end
+    end
+    isempty(guesses) && return sys
+
+    # This includes fixed starts, real initial equations, algebraic constraints and
+    # constraints introduced by index reduction. Matching the original ODE rows alone
+    # would miss those constraints and could overdetermine initialization.
+    init = ModelingToolkitBase.generate_initializesystem(sys)
+    unknowns = Any[
+        Symbolics.unwrap(v) for var in ModelingToolkitBase.unknowns(init)
+            for v in vcat(Symbolics.scalarize(var))
+    ]
+    indices = Dict(v => i for (i, v) in enumerate(unknowns))
+    rows = Vector{Int}[]
+    for eq in equations(init), scalar_eq in vcat(Symbolics.scalarize(eq))
+        push!(rows, unique!(Int[
+            indices[v] for var in Symbolics.get_variables(scalar_eq.lhs - scalar_eq.rhs)
+                for v in (Symbolics.unwrap(var),) if haskey(indices, v)
+        ]))
+    end
+
+    # Augmenting paths let an existing equation move to another variable when a start
+    # is added. Thus x+y=1 can determine y while x uses its start; simply excluding
+    # every state mentioned in an initial equation would leave both unconstrained.
+    assigned = zeros(Int, length(unknowns))
+    function match_row(row, seen)
+        for v in rows[row]
+            seen[v] && continue
+            seen[v] = true
+            if assigned[v] == 0 || match_row(assigned[v], seen)
+                assigned[v] = row
+                return true
+            end
+        end
+        return false
+    end
+    for row in eachindex(rows)
+        match_row(row, falses(length(unknowns)))
+    end
+    starts = Pair[]
+    for state in states, var in vcat(Symbolics.scalarize(state))
+        var = Symbolics.unwrap(var)
+        haskey(guesses, var) && haskey(indices, var) || continue
+        push!(rows, [indices[var]])
+        if match_row(length(rows), falses(length(unknowns)))
+            push!(starts, var => guesses[var])
+        else
+            pop!(rows)
+        end
+    end
+    isempty(starts) && return sys
+    # MTK stores array initial conditions atomically. Preserve unspecified elements
+    # as `nothing`, including elements determined by real initial equations.
+    defaults = Dict{Any, Any}()
+    initial = ModelingToolkitBase.initial_conditions(sys)
+    for (var, value) in starts
+        if SymbolicUtils.iscall(var) && SymbolicUtils.operation(var) === getindex
+            args = SymbolicUtils.arguments(var)
+            array = first(args)
+            values = get!(defaults, array) do
+                buffer = Array{Any}(undef, size(Symbolics.scalarize(array)))
+                old = get(initial, array, nothing)
+                isnothing(old) ? fill!(buffer, nothing) : (buffer .= old)
+                buffer
+            end
+            values[map(concrete_value, args[2:end])...] = value
+        else
+            defaults[var] = value
+        end
+    end
+    return ModelingToolkitBase.complete(ModelingToolkitBase.set_defaults(sys, defaults))
 end
 
 """
