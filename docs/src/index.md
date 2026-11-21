@@ -20,6 +20,7 @@ parse_basemodelica
 parse_experiment_annotation
 create_odeproblem
 experiment_settings
+complete_unfixed_initialization
 BaseModelica.UnsupportedFeatureError
 ```
 

@@ -11,6 +11,9 @@ unfixed_cases = (
     :nested_conditional_state,
     :parameter_start, :coupled_parameter_start, :array_coupled,
     :nonlinear_ode, :nonlinear_dae_rejected, :dynamic_state_rejected,
+    :initial_derivative, :inconsistent_initial, :inconsistent_fixed_start, :inconsistent_direct_initial,
+    :index2_start,
+    :repeated_consistent_initial,
 )
 unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
     Tuple(x for x in values if string(x) == ENV[key])
@@ -42,6 +45,31 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         $parameters
         Real 'x'(start = 1);
         equation der('x') = -(($rate)/16)*'x';
+        """
+    elseif case === :index2_start
+        """
+        Real 'x'(start = 1); Real 'y'(start = 7); Real 'z';
+        equation der('x') = 'z'; der('y') = time - 2*'z'; 'x' + 'y' = 3;
+        """
+    elseif case === :initial_derivative
+        """
+        parameter Real 'k' = 1;
+        Real 'x'(start = 1); Real 'v'(start = 2);
+        initial equation der('x') = 0;
+        equation der('x') = 'v'; der('v') = -'k'*'x';
+        """
+    elseif case in (:inconsistent_initial, :inconsistent_fixed_start, :inconsistent_direct_initial, :repeated_consistent_initial)
+        x_declaration = case !== :inconsistent_fixed_start ? "Real 'x'(start = 5);" :
+            "Real 'x'(start = 1, fixed = true);"
+        initial = case === :inconsistent_initial ? "{0, 0} = {'x' - 1, 'x' - 2};" :
+            case === :inconsistent_direct_initial ? "'x' = 1; 'x' = 2;" :
+            case === :repeated_consistent_initial ? "'x' = 1; 'x' = 1;" : "'x' = 2;"
+        dynamics = case in (:inconsistent_initial, :repeated_consistent_initial) ? "der('x') = 0; der('y') = 0;" :
+            "der('x') = -'x'; der('y') = -'y';"
+        """
+        $x_declaration Real 'y'(start = 5);
+        initial equation $initial
+        equation $dynamics
         """
     elseif case === :nonlinear_ode
         """
@@ -193,9 +221,39 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         sys = compile_model()
         @test complete_unfixed_initialization(sys) === sys
         prob = ODEProblem(sys, [], (0.0, 1.0))
-        sol = solve(prob, case in (:conditional_state, :nested_conditional_state) ? Rodas5P() : Tsit5(); reltol = 1e-9, abstol = 1e-11)
+        sol = solve(prob, case in (:conditional_state, :nested_conditional_state, :index2_start) ? Rodas5P() : Tsit5(); reltol = 1e-9, abstol = 1e-11)
+        if case in (:inconsistent_initial, :inconsistent_fixed_start, :inconsistent_direct_initial)
+            # An independent free y must not hide contradictory constraints on x.
+            @test sol.retcode == ReturnCode.InitialFailure
+            return
+        end
         @test sol.retcode == ReturnCode.Success
-        if case === :nonlinear_ode
+        if case === :repeated_consistent_initial
+            @test sol(0.0; idxs = sys.x) ≈ 1
+            @test sol(0.0; idxs = sys.y) ≈ 5
+            @test sol(1.0; idxs = sys.x) ≈ 1
+            @test sol(1.0; idxs = sys.y) ≈ 5
+        elseif case === :index2_start
+            @test sol(0.0; idxs = sys.x) ≈ 1
+            @test sol(0.0; idxs = sys.y) ≈ 2
+            @test sol(1.0; idxs = sys.x) ≈ 1.5 rtol = 1e-7
+            @test sol(1.0; idxs = sys.y) ≈ 1.5 rtol = 1e-7
+            for values in ([sys.x => 2.5], [sys.y => 0.5])
+                changed = solve(remake(prob; u0 = values), Rodas5P(); reltol = 1e-9, abstol = 1e-11)
+                @test changed.retcode == ReturnCode.Success
+                @test changed(0.0; idxs = sys.x) ≈ 2.5
+                @test changed(0.0; idxs = sys.y) ≈ 0.5
+            end
+        elseif case === :initial_derivative
+            @test sol(0.0; idxs = sys.x) ≈ 1
+            @test sol(0.0; idxs = sys.v) ≈ 0 atol = 1e-10
+            @test sol(1.0; idxs = sys.x) ≈ cos(1) rtol = 1e-7
+            @test sol(1.0; idxs = sys.v) ≈ -sin(1) rtol = 1e-7
+            changed = solve(remake(prob; u0 = [sys.x => 2.5]), Tsit5(); reltol = 1e-9, abstol = 1e-11)
+            @test changed.retcode == ReturnCode.Success
+            @test changed(0.0; idxs = sys.x) ≈ 2.5
+            @test changed(0.0; idxs = sys.v) ≈ 0 atol = 1e-10
+        elseif case === :nonlinear_ode
             @test sol(0.0; idxs = sys.x) ≈ 1
             @test sol(1.0; idxs = sys.x) ≈ 0.5 rtol = 1e-7
             changed = solve(remake(prob; u0 = [sys.x => 2.0]), Tsit5(); reltol = 1e-9, abstol = 1e-11)

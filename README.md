@@ -249,7 +249,8 @@ This hook also resolves retained-array reinit targets for constant states. For a
 discrete backend, `complete_unfixed_initialization(compiled)` completes starts without
 the `:mtk` event checks. Both hooks return a system and can be called again safely.
 
-Unconditional completed starts remain guesses that yield to user initial values, including
+Independent completed starts are overridable defaults; coupled linear groups receive
+consistent guesses without adding equations or unknowns. User initial values can choose
 another state in the same coupled group. Underdetermined nonlinear DAE initialization
 components require fixed starts or explicit initial equations and are rejected cleanly.
 Time-driven switches between differential and algebraic state constraints are also rejected;
