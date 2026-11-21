@@ -1204,12 +1204,22 @@ function complete_unfixed_initialization(sys)
         return foreach(child -> incidence!(row, child), differentiated_children(value))
     end
     rows = Vector{Int}[]
-    for eq in equations(init), scalar_eq in vcat(Symbolics.scalarize(eq))
-        # An initial time condition has only its active branch's incidence.
-        # Counting both could fix the state constrained by that active branch.
-        row = Int[]
-        incidence!(row, scalar_eq.lhs - scalar_eq.rhs)
-        push!(rows, unique!(row))
+    for eq in equations(init)
+        # Scalar equations already expose their variables to the incidence walk.
+        # Recursively scalarizing their builtin calls can require unknown shapes.
+        scalar_eqs = if SymbolicUtils.is_array_shape(SymbolicUtils.shape(eq.lhs)) ||
+                SymbolicUtils.is_array_shape(SymbolicUtils.shape(eq.rhs))
+            vcat(Symbolics.scalarize(eq))
+        else
+            (eq,)
+        end
+        for scalar_eq in scalar_eqs
+            # An initial time condition has only its active branch's incidence.
+            # Counting both could fix the state constrained by that active branch.
+            row = Int[]
+            incidence!(row, scalar_eq.lhs - scalar_eq.rhs)
+            push!(rows, unique!(row))
+        end
     end
 
     # Augmenting paths let an existing equation move to another variable when a start
