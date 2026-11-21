@@ -1152,6 +1152,15 @@ function eval_AST(
     end
 end
 
+# A compact, shared incidence graph. Symbolic expressions and time conditions are
+# visited once; branch matching subsequently operates only on integer indices.
+struct InitializationIncidenceNode
+    variables::BitSet
+    conditions::BitSet
+    condition::Int
+    children::Vector{Int}
+end
+
 # Supply only the missing initial conditions, after state selection and index reduction.
 # In particular, an unfixed start is not an extra constraint on a quaternion, or on a
 # state already determined by an initial equation. MTK currently loses guesses for
@@ -1172,6 +1181,23 @@ function complete_unfixed_initialization(sys)
         end
     end
     isempty(guesses) && return sys
+    initial = ModelingToolkitBase.initial_conditions(sys)
+    fixed = Set{Any}()
+    for (var, value) in initial
+        scalar_vars = Symbolics.scalarize(var)
+        if scalar_vars isa AbstractArray
+            for i in eachindex(scalar_vars)
+                isnothing(value[i]) || push!(fixed, Symbolics.unwrap(scalar_vars[i]))
+            end
+        elseif !isnothing(value)
+            push!(fixed, Symbolics.unwrap(var))
+        end
+    end
+    candidates = Any[
+        Symbolics.unwrap(var) for state in states for var in vcat(Symbolics.scalarize(state))
+            if haskey(guesses, Symbolics.unwrap(var)) && !(Symbolics.unwrap(var) in fixed)
+    ]
+    isempty(candidates) && return sys
 
     # This includes fixed starts, real initial equations, algebraic constraints and
     # constraints introduced by index reduction. Matching the original ODE rows alone
@@ -1185,32 +1211,75 @@ function complete_unfixed_initialization(sys)
             for v in vcat(Symbolics.scalarize(var))
     ]
     indices = Dict(v => i for (i, v) in enumerate(unknowns))
-    function incidence!(row, value, choices, conditions)
-        value = Symbolics.unwrap(value)
-        if haskey(indices, value)
-            push!(row, indices[value])
-            return
+    filter!(var -> haskey(indices, var), candidates)
+    isempty(candidates) && return sys
+    nodes = InitializationIncidenceNode[
+        InitializationIncidenceNode(BitSet(), BitSet(), 0, Int[])
+    ]
+    expression_nodes = Dict{Any, Int}()
+    union_nodes = Dict{Tuple, Int}()
+    branch_nodes = Dict{Tuple{Int, Int, Int}, Int}()
+    condition_values = Dict{Any, Any}()
+    condition_indices = Dict{Any, Int}()
+    function union_node(children)
+        filter!(!=(1), children)
+        sort!(unique!(children))
+        isempty(children) && return 1
+        length(children) == 1 && return only(children)
+        return get!(union_nodes, Tuple(children)) do
+            variables = union((nodes[i].variables for i in children)...)
+            conditions = union((nodes[i].conditions for i in children)...)
+            push!(nodes, InitializationIncidenceNode(variables, conditions, 0, children))
+            length(nodes)
         end
-        if SymbolicUtils.iscall(value) && SymbolicUtils.operation(value) === ifelse
-            args = SymbolicUtils.arguments(value)
-            expression = Symbolics.unwrap(SymbolicUtils.substitute(
-                first(args), time_rule; fold = Val(true)
-            ))
-            condition = concrete_value(expression)
-            if !(condition isa Bool)
-                push!(conditions, expression)
-                condition = get(choices, expression, nothing)
-            end
-            if condition isa Bool
-                incidence!(row, args[condition ? 2 : 3], choices, conditions)
-                return
-            end
-        end
-        return foreach(child -> incidence!(row, child, choices, conditions), differentiated_children(value))
     end
-    residuals = Any[]
+    function incidence_node(value)
+        value = Symbolics.unwrap(value)
+        return get!(expression_nodes, value) do
+            if haskey(indices, value)
+                push!(nodes, InitializationIncidenceNode(BitSet([indices[value]]), BitSet(), 0, Int[]))
+                return length(nodes)
+            end
+            if SymbolicUtils.iscall(value) && SymbolicUtils.operation(value) === ifelse
+                args = SymbolicUtils.arguments(value)
+                yes, no = incidence_node(args[2]), incidence_node(args[3])
+                # Coefficients and value-only switches often have the same incidence
+                # in both branches. They require no Boolean configurations at all.
+                yes == no && return yes
+                expression = get!(condition_values, first(args)) do
+                    Symbolics.unwrap(SymbolicUtils.substitute(first(args), time_rule; fold = Val(true)))
+                end
+                condition = concrete_value(expression)
+                condition isa Bool && return condition ? yes : no
+                index = get!(condition_indices, expression, length(condition_indices) + 1)
+                return get!(branch_nodes, (index, yes, no)) do
+                    guard = incidence_node(first(args))
+                    variables = union(nodes[yes].variables, nodes[no].variables, nodes[guard].variables)
+                    conditions = union(nodes[yes].conditions, nodes[no].conditions, nodes[guard].conditions, BitSet([index]))
+                    push!(nodes, InitializationIncidenceNode(variables, conditions, index, [yes, no]))
+                    length(nodes)
+                end
+            end
+            return union_node(Int[incidence_node(child) for child in differentiated_children(value)])
+        end
+    end
+    # Each configuration evaluates the compact graph once, without revisiting or
+    # substituting the symbolic expressions from the initialization system.
+    function branch_incidence(node, choices, cache)
+        return get!(cache, node) do
+            entry = nodes[node]
+            if entry.condition != 0
+                branch_incidence(entry.children[choices[entry.condition] ? 1 : 2], choices, cache)
+            elseif isempty(entry.children)
+                entry.variables
+            else
+                union((branch_incidence(child, choices, cache) for child in entry.children)...)
+            end
+        end
+    end
+    residual_nodes = Int[]
     rows = Vector{Int}[]
-    row_conditions = Set{Any}[]
+    row_conditions = BitSet[]
     for eq in equations(init)
         # Scalar equations already expose their variables to the incidence walk.
         # Recursively scalarizing their builtin calls can require unknown shapes.
@@ -1223,13 +1292,10 @@ function complete_unfixed_initialization(sys)
         for scalar_eq in scalar_eqs
             # An initial time condition has only its active branch's incidence.
             # Counting both could fix the state constrained by that active branch.
-            row = Int[]
-            conditions = Set{Any}()
-            residual = scalar_eq.lhs - scalar_eq.rhs
-            incidence!(row, residual, Dict(), conditions)
-            push!(residuals, residual)
-            push!(rows, unique!(row))
-            push!(row_conditions, conditions)
+            node = incidence_node(scalar_eq.lhs - scalar_eq.rhs)
+            push!(residual_nodes, node)
+            push!(rows, collect(nodes[node].variables))
+            push!(row_conditions, nodes[node].conditions)
         end
     end
 
@@ -1264,43 +1330,50 @@ function complete_unfixed_initialization(sys)
             parent[root(v)] = root(first(row))
         end
     end
-    candidates = Any[
-        Symbolics.unwrap(var) for state in states for var in vcat(Symbolics.scalarize(state))
-            if haskey(guesses, Symbolics.unwrap(var)) && haskey(indices, Symbolics.unwrap(var))
-    ]
+    component_rows = Dict{Int, Vector{Int}}()
+    component_variables = Dict{Int, Vector{Int}}()
+    component_candidates = Dict{Int, Vector{Any}}()
+    for (i, row) in enumerate(rows)
+        isempty(row) || push!(get!(Vector{Int}, component_rows, root(first(row))), i)
+    end
+    for v in eachindex(unknowns)
+        push!(get!(Vector{Int}, component_variables, root(v)), v)
+    end
+    for var in candidates
+        push!(get!(Vector{Any}, component_candidates, root(indices[var])), var)
+    end
     starts = Pair[]
-    for component in unique(root(indices[var]) for var in candidates)
-        selected_rows = findall(row -> !isempty(row) && root(first(row)) == component, rows)
-        conditions = collect(reduce(union, row_conditions[selected_rows]; init = Set{Any}()))
+    for (component, component_states) in component_candidates
+        selected_rows = get(component_rows, component, Int[])
+        variables = component_variables[component]
+        local_indices = Dict(v => i for (i, v) in enumerate(variables))
+        conditions = collect(reduce(union, row_conditions[selected_rows]; init = BitSet()))
         graphs = NamedTuple{(:rows, :assigned), Tuple{Vector{Vector{Int}}, Vector{Int}}}[]
         seen_graphs = Set{Any}()
         for values in Iterators.product(((false, true) for _ in conditions)...)
             choices = Dict(zip(conditions, values))
-            variant = Vector{Int}[]
-            for i in selected_rows
-                row = Int[]
-                incidence!(row, residuals[i], choices, Set{Any}())
-                push!(variant, sort!(unique!(row)))
-            end
+            cache = Dict{Int, BitSet}()
+            variant = Vector{Int}[
+                [local_indices[v] for v in branch_incidence(residual_nodes[i], choices, cache)] for i in selected_rows
+            ]
             signature = Tuple(Tuple(row) for row in variant)
             signature in seen_graphs && continue
             push!(seen_graphs, signature)
-            assigned = zeros(Int, length(unknowns))
+            assigned = zeros(Int, length(variables))
             for row in eachindex(variant)
-                match_row(variant, assigned, row, falses(length(unknowns)))
+                match_row(variant, assigned, row, falses(length(variables)))
             end
             push!(graphs, (rows = variant, assigned = assigned))
         end
         # A tunable branch can make an apparent state algebraically determined.
         # Promote its start only when the extra condition is independent in
         # every branch, preserving real constraints and remake in either direction.
-        for var in candidates
-            root(indices[var]) == component || continue
+        for var in component_states
             proposed = [copy(graph.assigned) for graph in graphs]
             independent = true
             for (i, graph) in enumerate(graphs)
-                push!(graph.rows, [indices[var]])
-                matched = match_row(graph.rows, proposed[i], length(graph.rows), falses(length(unknowns)))
+                push!(graph.rows, [local_indices[indices[var]]])
+                matched = match_row(graph.rows, proposed[i], length(graph.rows), falses(length(variables)))
                 independent &= matched
             end
             if independent
@@ -1317,7 +1390,6 @@ function complete_unfixed_initialization(sys)
     # MTK stores array initial conditions atomically. Preserve unspecified elements
     # as `nothing`, including elements determined by real initial equations.
     defaults = Dict{Any, Any}()
-    initial = ModelingToolkitBase.initial_conditions(sys)
     for (var, value) in starts
         if SymbolicUtils.iscall(var) && SymbolicUtils.operation(var) === getindex
             args = SymbolicUtils.arguments(var)

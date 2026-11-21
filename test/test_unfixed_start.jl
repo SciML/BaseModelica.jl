@@ -4,7 +4,7 @@ using ModelingToolkit
 using OrdinaryDiffEq
 
 # Filters support a separate bounded Julia process for every model/parser/array mode.
-unfixed_cases = (:minimal, :tunable_if, :initial_override, :coupled_initial, :array, :array_partial, :quaternion)
+unfixed_cases = (:minimal, :tunable_if, :initial_override, :coupled_initial, :array, :array_partial, :many_switches, :quaternion)
 unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
     Tuple(x for x in values if string(x) == ENV[key])
 
@@ -24,6 +24,16 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         Real 'x'(start = 1);
         equation
           if 'b' then der('x') = -'x'; else der('x') = -2*'x'; end if;
+        """
+    elseif case === :many_switches
+        # These switches change coefficients, not equation incidence. Enumerating
+        # their Boolean product would need 2^16 equivalent initialization graphs.
+        parameters = join(("parameter Boolean 'b$i' = true;" for i in 1:16), "\n")
+        rate = join(("(if 'b$i' then 1 else 2)" for i in 1:16), " + ")
+        """
+        $parameters
+        Real 'x'(start = 1);
+        equation der('x') = -(($rate)/16)*'x';
         """
     elseif case === :initial_override
         """
@@ -95,9 +105,11 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
             start = case === :initial_override ? 2 : 1
             @test sol(0.0; idxs = sys.x) ≈ start
             @test sol(1.0; idxs = sys.x) ≈ start*exp(-1) rtol = 1e-7
-            if case === :tunable_if
+            if case in (:tunable_if, :many_switches)
                 # Rule 3 keeps b tunable: the same imported system supports remake.
-                other = solve(remake(prob; p = [sys.b => false]), Tsit5(); reltol = 1e-9, abstol = 1e-11)
+                parameters = case === :tunable_if ? [sys.b => false] :
+                    [getproperty(sys, Symbol("b$i")) => false for i in 1:16]
+                other = solve(remake(prob; p = parameters), Tsit5(); reltol = 1e-9, abstol = 1e-11)
                 @test other.retcode == ReturnCode.Success
                 @test other(0.0; idxs = sys.x) ≈ 1
                 @test other(1.0; idxs = sys.x) ≈ exp(-2) rtol = 1e-7
