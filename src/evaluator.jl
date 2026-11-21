@@ -1623,8 +1623,22 @@ function complete_unfixed_initialization(sys)
             defaults[var] = value
         end
     end
-    new_guesses = Dict(ModelingToolkitBase.guesses(sys))
-    merge!(new_guesses, projected_guesses)
+    new_guesses = Dict{Any, Any}(ModelingToolkitBase.guesses(sys))
+    for (var, value) in projected_guesses
+        # MTK stores retained arrays atomically in guesses, just as in defaults.
+        # Preserve the guesses of elements outside this coupled component.
+        if SymbolicUtils.iscall(var) && SymbolicUtils.operation(var) === getindex
+            args = SymbolicUtils.arguments(var)
+            array = first(args)
+            old = get(new_guesses, array, nothing)
+            values = Array{Any}(undef, size(Symbolics.scalarize(array)))
+            isnothing(old) ? fill!(values, nothing) : (values .= old)
+            values[map(concrete_value, args[2:end])...] = value
+            new_guesses[array] = values
+        else
+            new_guesses[var] = value
+        end
+    end
     sys = ConstructionBase.setproperties(sys;
         initial_conditions = defaults, guesses = new_guesses,
         initialization_eqs = vcat(ModelingToolkitBase.initialization_equations(sys), conditional_starts))

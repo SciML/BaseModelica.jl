@@ -9,7 +9,7 @@ unfixed_cases = (
     :many_switches, :quaternion, :constant, :constant_initial_override,
     :constant_array, :constant_array_partial, :constant_coupled, :conditional_state,
     :nested_conditional_state,
-    :parameter_start, :coupled_parameter_start, :array_coupled,
+    :parameter_start, :coupled_parameter_start, :array_coupled, :array_scalar_coupled,
     :nonlinear_ode, :nonlinear_dae_rejected, :dynamic_state_rejected,
     :initial_derivative, :inconsistent_initial, :inconsistent_fixed_start, :inconsistent_direct_initial,
     :index2_start,
@@ -108,6 +108,13 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         Real 'x'(start = 1); Real 'y'(start = 1); Real 'z'(start = 'x0');
         initial equation 'x' + 'y' = 3;
         equation der('x') = -'k'*'x'; der('y') = -'k'*'y'; der('z') = -'k'*'z';
+        """
+    elseif case === :array_scalar_coupled
+        """
+        parameter Real 'k' = 1;
+        Real 'x'[2](start = {1, 2}); Real 'y'(start = 4);
+        initial equation 'x'[1] + 'y' = 10;
+        equation der('x') = -'k'*'x'; der('y') = -'y';
         """
     elseif case === :array_coupled
         """
@@ -259,6 +266,18 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
             changed = solve(remake(prob; u0 = [sys.x => 2.0]), Tsit5(); reltol = 1e-9, abstol = 1e-11)
             @test changed.retcode == ReturnCode.Success
             @test changed(1.0; idxs = sys.x) ≈ 2/3 rtol = 1e-7
+        elseif case === :array_scalar_coupled
+            elems = [arrays === :keep ? sys.x[i] : getproperty(sys, Symbol("x[$i]")) for i in 1:2]
+            @test sol(0.0; idxs = [elems; sys.y]) ≈ [1, 2, 9]
+            @test sol(1.0; idxs = [elems; sys.y]) ≈ [1, 2, 9] .* exp(-1) rtol = 1e-7
+            for values in ([elems[1] => 3.0], [sys.y => 7.0])
+                for override in (ODEProblem(sys, values, (0.0, 1.0)), remake(prob; u0 = values))
+                    changed = solve(override, Tsit5(); reltol = 1e-9, abstol = 1e-11)
+                    @test changed.retcode == ReturnCode.Success
+                    @test changed(0.0; idxs = [elems; sys.y]) ≈ [3, 2, 7]
+                    @test changed(1.0; idxs = [elems; sys.y]) ≈ [3, 2, 7] .* exp(-1) rtol = 1e-7
+                end
+            end
         elseif case === :array_coupled
             elems = [hasproperty(sys, :x) ? sys.x[i] : getproperty(sys, Symbol("x[$i]")) for i in 1:3]
             @test sol(0.0; idxs = elems) ≈ [1, 2, 8]
