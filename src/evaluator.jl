@@ -543,7 +543,10 @@ function explicit_if_equation_rows(if_eq, rows)
     state_rows = if_equation_state_rows(rows)
     for branch in rows, eq in branch
         coupled = differentiated_variables([eq])
-        if length(coupled) > 1 && any(v -> !ModelingToolkitBase.hasdefault(v), coupled)
+        reads_derivatives = isempty(differentiated_variables([eq.lhs ~ 0])) &&
+            any(v -> isequal(Symbolics.unwrap(v), eq.lhs), Symbolics.get_variables(eq.lhs))
+        if !reads_derivatives && length(coupled) > 1 &&
+                any(v -> !ModelingToolkitBase.hasdefault(v), coupled)
             unsupported("if-equation cannot isolate coupled state derivatives without fixed initial values")
         end
     end
@@ -1174,17 +1177,39 @@ function complete_unfixed_initialization(sys)
     # constraints introduced by index reduction. Matching the original ODE rows alone
     # would miss those constraints and could overdetermine initialization.
     init = ModelingToolkitBase.generate_initializesystem(sys)
+    experiment = experiment_settings(sys)
+    start_time = isnothing(experiment) ? 0.0 : experiment.StartTime
+    time_rule = Dict(ModelingToolkitBase.get_iv(sys) => start_time)
     unknowns = Any[
         Symbolics.unwrap(v) for var in ModelingToolkitBase.unknowns(init)
             for v in vcat(Symbolics.scalarize(var))
     ]
     indices = Dict(v => i for (i, v) in enumerate(unknowns))
+    function incidence!(row, value)
+        value = Symbolics.unwrap(value)
+        if haskey(indices, value)
+            push!(row, indices[value])
+            return
+        end
+        if SymbolicUtils.iscall(value) && SymbolicUtils.operation(value) === ifelse
+            args = SymbolicUtils.arguments(value)
+            condition = concrete_value(SymbolicUtils.substitute(
+                first(args), time_rule; fold = Val(true)
+            ))
+            if condition isa Bool
+                incidence!(row, args[condition ? 2 : 3])
+                return
+            end
+        end
+        return foreach(child -> incidence!(row, child), differentiated_children(value))
+    end
     rows = Vector{Int}[]
     for eq in equations(init), scalar_eq in vcat(Symbolics.scalarize(eq))
-        push!(rows, unique!(Int[
-            indices[v] for var in Symbolics.get_variables(scalar_eq.lhs - scalar_eq.rhs)
-                for v in (Symbolics.unwrap(var),) if haskey(indices, v)
-        ]))
+        # An initial time condition has only its active branch's incidence.
+        # Counting both could fix the state constrained by that active branch.
+        row = Int[]
+        incidence!(row, scalar_eq.lhs - scalar_eq.rhs)
+        push!(rows, unique!(row))
     end
 
     # Augmenting paths let an existing equation move to another variable when a start

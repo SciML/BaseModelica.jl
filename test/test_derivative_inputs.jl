@@ -19,7 +19,10 @@ end
                 sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Rodas5P();
                     reltol = 1e-10, abstol = 1e-12)
                 @test sol.retcode == ReturnCode.Success
-                expected = if startswith(file, "A3d")
+                expected = if startswith(file, "A3f")
+                    Dict("v" => t -> exp(-t), "w" => t -> 2exp(-t),
+                        "a" => t -> t < 0.5 ? -3exp(-t) : 0.0, "z" => t -> 0.0)
+                elseif startswith(file, "A3d")
                     Dict("x" => sin, "y" => t -> (t < 0.5 ? 1 : 2) * cos(t))
                 elseif startswith(file, "A3")
                     multiplier = startswith(file, "A3b") || startswith(file, "A3e") ? 2 : 0

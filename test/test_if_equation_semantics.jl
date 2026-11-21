@@ -84,7 +84,7 @@ end
         @test [changed(0; idxs = sys.y), changed(0; idxs = sys.z)] ≈ [1, 2]
     end
 
-    @testset "Residuals on distinct variables remain balanced by count" begin
+    @testset "Residuals on distinct variables remain balanced by count ($start_time)" for start_time in (0.0, 1.0)
         path = if_equation_file(
             """
               Real x(start = 1);
@@ -94,11 +94,15 @@ end
             equation
               der(x) = -x;
               der(y) = -y;
+              annotation(experiment(StartTime = $start_time));
               """
         )
         sys = parse_basemodelica(path; parser, arrays)
-        sol = if_equation_solve(sys)
-        @test sol(0; idxs = sys.y) ≈ 4
+        sol = solve(ODEProblem(sys, [], (start_time, start_time + 1)), Tsit5();
+            reltol = 1e-9, abstol = 1e-11)
+        @test sol.retcode == ReturnCode.Success
+        @test sol(start_time; idxs = sys.x) ≈ (start_time > 0 ? 3 : 1)
+        @test sol(start_time; idxs = sys.y) ≈ (start_time > 0 ? 2 : 4)
     end
 
     @testset "Inactive branch equation counting is conservative" begin
