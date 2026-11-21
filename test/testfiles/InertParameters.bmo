@@ -1,0 +1,13 @@
+//! base 0.1.0
+package 'InertParameters'
+  model 'InertParameters'
+    parameter Real 'a' = 1.0;
+    parameter Real 'x0' = 2.0;
+    parameter Real 'c' = 4.0;
+    parameter Real 'unused' = 'c' + 1.0;
+    parameter Integer 'nElements' = 4;
+    Real 'x'(fixed = true, start = 'x0');
+  equation
+    der('x') = -'a' * 'x';
+  end 'InertParameters';
+end 'InertParameters';

@@ -1,0 +1,19 @@
+//! base 0.1.0
+package 'TimeEvents'
+  model 'TimeEvents' "Discontinuities at known times, without events"
+    parameter Real 'startTime' = 0.3;
+    parameter Real 'width' = 0.4;
+    Real 'x'(fixed = true, start = 0.0);
+    Real 'u';
+    Real 'w';
+  equation
+    'u' = if time < 'startTime' then 0.0 else if time >= 'startTime' + 'width' then 2.0 else 1.0;
+    if time < 0.9 then
+      'w' = 0.0;
+    else
+      'w' = 1.0;
+    end if;
+    der('x') = 'u' + 'w' + (if time > 5.0 then 1.0 else 0.0);
+    annotation(experiment(StartTime = 0, StopTime = 1.0, Tolerance = 1e-06));
+  end 'TimeEvents';
+end 'TimeEvents';

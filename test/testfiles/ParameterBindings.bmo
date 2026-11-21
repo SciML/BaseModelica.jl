@@ -1,0 +1,35 @@
+//! base 0.1.0
+package 'ParameterBindings'
+  model 'ParameterBindings' "Bindings in the style of OpAmps.LowPass, some referring to parameters declared later"
+    parameter Real 'Vin' = 5.0;
+    parameter Real 'f' = 10.0;
+    parameter Real 'k' = 1.0;
+    parameter Real 'R1' = 1000.0;
+    parameter Real 'R2' = 'k' * 'R1';
+    parameter Real 'fG' = 'f' / 10.0;
+    parameter Real 'C' = 1.0 / (2.0 * 3.141592653589793 * 'fG' * 'R2');
+    parameter Real 'r1.R' = 'R1';
+    parameter Real 'r2.R' = 'R2';
+    parameter Real 'c.C' = 'C';
+    parameter Real 'vIn.V' = 2.0 * 'Vin';
+    parameter Real 'vIn.offset' = -'Vin';
+    parameter Real 'vIn.startTime' = -('vIn.rising' + 'vIn.width' / 2.0);
+    parameter Real 'vIn.rising' = 0.2 / 'f';
+    parameter Real 'vIn.width' = 0.3 / 'f';
+    parameter Real 'vIn.signalSource.startTime' = 'vIn.startTime';
+    parameter Real 'opAmp.V0' = 1000000.0;
+    parameter Real 'opAmp.Vps' = 100.0;
+    parameter Real 'opAmp.Vns' = -100.0;
+    parameter Real 'opAmp.VMax' = 'opAmp.Vps' annotation(Evaluate = true);
+    parameter Real 'free.p'(fixed = false, start = 1.0);
+    Real 'c.v'(start = 0.0, fixed = true);
+    Real 'c.i';
+    Real 'u'(start = 'vIn.offset');
+  initial equation
+    'free.p' = 2.0 * 'r2.R';
+  equation
+    'u' = 'vIn.offset' + 'vIn.V' * sin(2.0 * 3.141592653589793 * 'f' * (time - 'vIn.signalSource.startTime'));
+    'c.i' = ('u' - 'c.v') / 'r1.R' - 'c.v' / 'r2.R' + 0.0 * 'opAmp.VMax' * 'opAmp.Vns' / 'opAmp.V0' + 0.0 * 'free.p';
+    'c.C' * der('c.v') = 'c.i';
+  end 'ParameterBindings';
+end 'ParameterBindings';

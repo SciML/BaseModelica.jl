@@ -1,0 +1,14 @@
+//! base 0.1.0
+package 'SampledCounter'
+  model 'SampledCounter'
+    Real 'x'(fixed = true, start = 0.0);
+    discrete Integer 'n'(start = 0, fixed = true) "Number of samples taken";
+    discrete Real 'xs'(start = 0.0, fixed = true) "Last sampled value of x";
+  equation
+    der('x') = 1.0;
+    when sample(0, 0.25) then
+      'n' = pre('n') + 1;
+      'xs' = 'x';
+    end when;
+  end 'SampledCounter';
+end 'SampledCounter';

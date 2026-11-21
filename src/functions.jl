@@ -1,0 +1,283 @@
+# User-defined functions (package-level `function` classes with an algorithm section) are
+# inlined symbolically: a call binds the evaluated arguments to the inputs and runs the
+# algorithm on symbolic values, so the call becomes an ordinary expression in the
+# equations (differentiable, no registered function needed). `if` statements become
+# `ifelse` (or are folded when the condition is a constant) and `for` loops over constant
+# ranges are unrolled. Other statements throw `UnsupportedFeatureError`.
+
+"""
+A user function from a `function` class definition.
+`inputs`/`outputs`/`locals` hold `(name, default_ast_or_nothing)` in declaration order.
+`statements` is `nothing` when the function has no algorithm section (e.g. `external`).
+"""
+struct UserFunction
+    name::String
+    inputs::Vector{Tuple{Symbol, Any}}
+    outputs::Vector{Tuple{Symbol, Any}}
+    locals::Vector{Tuple{Symbol, Any}}
+    statements::Union{Nothing, Vector{Any}}
+    # array variable => subscripts of its declaration
+    array_dims::Dict{Symbol, Vector{Any}}
+end
+
+# function name => UserFunction, populated per package
+const user_function_map = Dict{String, UserFunction}()
+
+# Local variables of the function body (or for-loop indices) being evaluated
+const LOCAL_SCOPE = Ref{Union{Nothing, Dict{Symbol, Any}}}(nothing)
+const INLINE_DEPTH = Ref(0)
+const MAX_INLINE_DEPTH = 32
+const MAX_UNROLL = 10_000
+
+function with_local_scope(f, scope)
+    old = LOCAL_SCOPE[]
+    LOCAL_SCOPE[] = scope
+    try
+        return f()
+    finally
+        LOCAL_SCOPE[] = old
+    end
+end
+
+# Class names are a String (:antlr) or a BaseModelicaIdentifier (:julia)
+identifier_name(x::BaseModelicaIdentifier) = String(x.name)
+identifier_name(x) = String(x)
+
+# :antlr stores `nothing` or one BaseModelicaArraySubscripts; :julia a (possibly empty) list
+function has_array_subscripts(decl)
+    subs = decl.array_subs
+    isnothing(subs) && return false
+    return subs isa AbstractVector ? !isempty(subs) : true
+end
+
+function declaration_default(decl)
+    (isnothing(decl.modification) || isempty(decl.modification)) && return nothing
+    mod = decl.modification[1]
+    (isnothing(mod.expr) || isempty(mod.expr)) && return nothing
+    return mod.expr[end]
+end
+
+function UserFunction(name::String, class::BaseModelicaLongClass)
+    inputs = Tuple{Symbol, Any}[]
+    outputs = Tuple{Symbol, Any}[]
+    locals = Tuple{Symbol, Any}[]
+    array_dims = Dict{Symbol, Vector{Any}}()
+    composition = class.composition
+    for clause in composition.components
+        clause isa BaseModelicaComponentClause || continue
+        for comp_decl in clause.component_list
+            decl = comp_decl.declaration
+            var = Symbol(decl.ident[1].name)
+            subscripts = declaration_subscripts(decl)
+            isnothing(subscripts) || (array_dims[var] = subscripts)
+            entry = (var, declaration_default(decl))
+            io = clause.type_prefix.io
+            push!(io == "input" ? inputs : io == "output" ? outputs : locals, entry)
+        end
+    end
+    sections = filter(eq -> eq isa BaseModelicaAlgorithmSection, composition.equations)
+    statements = isempty(sections) ? nothing :
+        reduce(vcat, [collect(section.statements) for section in sections])
+    return UserFunction(name, inputs, outputs, locals, statements, array_dims)
+end
+
+function register_user_functions!(class_defs)
+    empty!(user_function_map)
+    for class_def in class_defs
+        class_def isa BaseModelicaClassDefinition || continue
+        occursin("function", string(class_def.class_type)) || continue
+        class = class_def.class
+        class isa BaseModelicaLongClass || continue
+        name = identifier_name(class.name)
+        user_function_map[name] = UserFunction(name, class)
+    end
+    return user_function_map
+end
+
+"""
+    inline_user_function(f, arg_asts)
+
+Evaluate a call of user function `f` with argument expressions `arg_asts` (evaluated in the
+caller's scope) and return the symbolic value of its first output.
+"""
+function inline_user_function(f::UserFunction, arg_asts)
+    isnothing(f.statements) &&
+        unsupported("function `$(f.name)` has no algorithm section; external functions are not supported")
+    isempty(f.outputs) && unsupported("function `$(f.name)` has no output")
+    length(arg_asts) > length(f.inputs) &&
+        error("function `$(f.name)` takes $(length(f.inputs)) inputs, got $(length(arg_asts))")
+    INLINE_DEPTH[] >= MAX_INLINE_DEPTH &&
+        unsupported("function `$(f.name)`: call depth exceeds $MAX_INLINE_DEPTH (recursive functions are not supported)")
+
+    args = [eval_AST(a) for a in arg_asts]
+    scope = Dict{Symbol, Any}()
+    INLINE_DEPTH[] += 1
+    try
+        with_local_scope(scope) do
+            for (i, (var, default)) in enumerate(f.inputs)
+                if i <= length(args)
+                    scope[var] = args[i]
+                elseif !isnothing(default)
+                    scope[var] = eval_AST(default)
+                else
+                    error("function `$(f.name)`: missing value for input `$var`")
+                end
+            end
+            for (var, default) in Iterators.flatten((f.outputs, f.locals))
+                if !isnothing(default)
+                    scope[var] = eval_AST(default)
+                elseif haskey(f.array_dims, var)
+                    allocate_array!(scope, var, f.array_dims[var])
+                end
+            end
+            run_statements!(scope, f.statements, f)
+        end
+    finally
+        INLINE_DEPTH[] -= 1
+    end
+    output = f.outputs[1][1]
+    haskey(scope, output) || error("function `$(f.name)` does not assign its output `$output`")
+    value = scope[output]
+    if is_array(value)
+        any(isnothing, value) &&
+            error("function `$(f.name)` does not assign every element of its output `$output`")
+        value = map(identity, value)
+    end
+    return value
+end
+
+# An output or local array with constant sizes starts with unassigned (`nothing`) elements,
+# so that elements can be assigned one by one. One declared with `:` is created by its
+# first assignment.
+function allocate_array!(scope, var, subscripts)
+    any(sub -> sub isa BMColon, subscripts) && return scope
+    dims = [to_dim(eval_AST(sub)) for sub in subscripts]
+    scope[var] = fill!(Array{Any}(undef, dims...), nothing)
+    return scope
+end
+
+function run_statements!(scope, statements, f)
+    for statement in statements
+        run_statement!(scope, statement, f)
+    end
+    return scope
+end
+
+function run_statement!(scope, st::BaseModelicaAssignment, f)
+    names, subscripts = reference_parts(st.target)
+    length(names) == 1 ||
+        unsupported("function `$(f.name)`: assignment to `$(st.target)` is not supported")
+    var = Symbol(names[1])
+    any(entry -> entry[1] == var, Iterators.flatten((f.outputs, f.locals))) ||
+        error("function `$(f.name)`: cannot assign to `$var`, which is not an output or local variable")
+    value = eval_AST(st.expression)
+    if isnothing(subscripts)
+        scope[var] = value
+    else
+        # Assign into a copy: the array may be shared with another scope (if-branches)
+        haskey(scope, var) && is_array(scope[var]) ||
+            unsupported("function `$(f.name)`: element assignment to `$var`, which has no array value yet")
+        array = Array{Any}(scope[var])
+        indices = Any[Colon() for _ in 1:ndims(array)]
+        for (k, sub) in enumerate(subscripts)
+            sub isa BMColon && continue
+            indices[k] = to_index(with_end_size(() -> eval_AST(sub), size(array, k)))
+        end
+        array[indices...] = value
+        scope[var] = array
+    end
+    return scope
+end
+
+function run_statement!(scope, st::BaseModelicaIfStatement, f)
+    has_else = length(st.branches) > length(st.conditions)
+    for (i, cond_ast) in enumerate(st.conditions)
+        cond = Symbolics.value(eval_AST(cond_ast))
+        if cond === true
+            return run_statements!(scope, st.branches[i], f)
+        elseif cond === false
+            continue
+        end
+        # Symbolic condition: evaluate both alternatives and merge with ifelse
+        then_scope = run_statements!(copy(scope), st.branches[i], f)
+        rest = BaseModelicaIfStatement(st.conditions[(i + 1):end], st.branches[(i + 1):end])
+        else_scope = run_statement!(copy(scope), rest, f)
+        for var in union(keys(then_scope), keys(else_scope))
+            if haskey(then_scope, var) && haskey(else_scope, var)
+                a, b = then_scope[var], else_scope[var]
+                scope[var] = a === b ? a : modelica_ifelse(cond, a, b)
+            else
+                unsupported("function `$(f.name)`: `$var` is assigned in only some branches of an if-statement")
+            end
+        end
+        return scope
+    end
+    return has_else ? run_statements!(scope, st.branches[end], f) : scope
+end
+
+function run_statement!(scope, st::BaseModelicaForStatement, f)
+    index = loop_index_name(st.index)
+    for value in loop_range(st.index)
+        scope[index] = value
+        run_statements!(scope, st.statements, f)
+    end
+    delete!(scope, index)
+    return scope
+end
+
+function run_statement!(scope, st::BaseModelicaFunctionCall, f)
+    function_call_name(st) == "assert" && return scope
+    return unsupported("function `$(f.name)`: call statement `$(function_call_name(st))(...)` is not supported")
+end
+
+run_statement!(scope, st::BaseModelicaUnsupportedStatement, f) =
+    unsupported("function `$(f.name)`: $(st.description) is not supported")
+
+run_statement!(scope, st, f) =
+    unsupported("function `$(f.name)`: statement $(nameof(typeof(st))) is not supported")
+
+# The values of a for-loop index, which must be a constant range or array.
+function loop_range(index::BaseModelicaForIndex)
+    range = eval_AST(index.expression)
+    range isa Union{AbstractRange, AbstractVector} && all(x -> x isa Number, range) ||
+        unsupported("for-loop range `$range` is not a constant range")
+    length(range) <= MAX_UNROLL ||
+        unsupported("for-loop with $(length(range)) iterations exceeds the unrolling limit $MAX_UNROLL")
+    return range
+end
+
+# Scalar for-equations are unrolled with the loop index bound to each value.
+function eval_AST(for_eq::BaseModelicaForEquation)
+    index = Symbol(for_eq.index.ident isa BaseModelicaIdentifier ? for_eq.index.ident.name : for_eq.index.ident)
+    result = Equation[]
+    outer = LOCAL_SCOPE[]
+    for value in loop_range(for_eq.index)
+        scope = isnothing(outer) ? Dict{Symbol, Any}() : copy(outer)
+        scope[index] = value
+        with_local_scope(scope) do
+            for eq in for_eq.equations
+                eq_obj = eval_AST(eq)
+                if eq_obj isa Equation
+                    push!(result, eq_obj)
+                elseif eq_obj isa AbstractVector
+                    append!(result, eq_obj)
+                end
+            end
+        end
+    end
+    return result
+end
+
+function eval_AST(range::BaseModelicaRange)
+    # Bounds may be parameters, e.g. `for i in 1:n`: their values at load are used
+    start, step, stop = map(x -> parameter_value(eval_AST(x)), (range.start, range.step, range.stop))
+    all(x -> x isa Number, (start, step, stop)) ||
+        unsupported("range with non-constant bounds")
+    return start:step:stop
+end
+
+
+eval_AST(x::BaseModelicaUnsupportedExpression) = unsupported("$(x.description) is not supported")
+
+eval_AST(::BaseModelicaAlgorithmSection) =
+    unsupported("algorithm sections in models are not supported (only in functions)")

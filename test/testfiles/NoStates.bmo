@@ -1,0 +1,16 @@
+//! base 0.1.0
+package 'NoStates'
+  model 'NoStates' "No differential states: the error estimate does not limit the step size"
+    parameter Real 'f' = 50.0;
+    Real 'y';
+    Boolean 'high';
+    discrete Integer 'n'(start = 0) "Number of rising edges of y > 0.5";
+  equation
+    'y' = sin(2.0 * 3.141592653589793 * 'f' * time);
+    'high' = 'y' > 0.5;
+    when 'y' > 0.5 then
+      'n' = pre('n') + 1;
+    end when;
+    annotation(experiment(StartTime = 0, StopTime = 1.0, Tolerance = 1e-06, Interval = 0.05));
+  end 'NoStates';
+end 'NoStates';

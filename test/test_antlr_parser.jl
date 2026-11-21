@@ -375,13 +375,34 @@ BM = BaseModelica
         composition = triac_package.model.long_class_specifier.composition
         @test any(eq -> eq isa BM.BaseModelicaWhenEquation, composition.equations)
 
-        triac_system = BM.baseModelica_to_ModelingToolkit(triac_package)
+        triac_system = BM.baseModelica_to_ModelingToolkit(triac_package; simplify = false)
         @test triac_system isa System
 
         # Verify the when-equation produces a continuous callback
         @test !isempty(ModelingToolkit.continuous_events(triac_system))
 
-        @test parse_basemodelica(triac_path, parser = :antlr) isa System
+        @test BM.baseModelica_to_ModelingToolkit(triac_package) isa System
+        for parser in (:julia, :antlr)
+            @test parse_basemodelica(triac_path; parser, simplify = false) isa System
+            sys = parse_basemodelica(triac_path; parser)
+            # MTK forwards problem-level saveat to an implicit affect with tspan = (t, t).
+            # Keep this broken expectation so an upstream fix becomes an unexpected pass.
+            @test_broken solve(create_odeproblem(triac_path; parser), Rodas5P();
+                reltol = 1.0e-8, abstol = 1.0e-10, dtmax = 5.0e-7).retcode == ReturnCode.Success
+            # Disable the annotation's problem-level Interval; save only in the ODE solve.
+            prob = create_odeproblem(triac_path; parser, saveat = Float64[])
+            sol = solve(prob, Rodas5P(); saveat = 5.0e-7,
+                reltol = 1.0e-8, abstol = 1.0e-10, dtmax = 5.0e-7)
+            @test sol.retcode == ReturnCode.Success
+            count_sym = getproperty(sys, Symbol("trapezoidCurrent.signalSource.count"))
+            start_sym = getproperty(sys, Symbol("trapezoidCurrent.signalSource.T_start"))
+            # Independent reference for the fixture's 50 μs periodic source.
+            for time in (0.00004, 0.00024, 0.00099)
+                expected = floor((time - 2.0e-5) / 5.0e-5)
+                @test sol(time; idxs = count_sym) ≈ expected
+                @test sol(time; idxs = start_sym) ≈ 2.0e-5 + expected * 5.0e-5
+            end
+        end
     end
 
     @testset "Characteristic Ideal Diodes" begin
@@ -391,15 +412,35 @@ BM = BaseModelica
         diode_package = BM.parse_file_antlr(diode_path)
         @test diode_package isa BM.BaseModelicaPackage
 
-        diode_system = BM.baseModelica_to_ModelingToolkit(diode_package)
+        diode_system = BM.baseModelica_to_ModelingToolkit(diode_package; simplify = false)
         @test diode_system isa System
 
-        prob = ODEProblem(
-            diode_system, [], (0.0, 1.0);
-            missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0)
-        )
-        sol = solve(prob)
-        @test sol.retcode == ReturnCode.Success
+        @test !isempty(ModelingToolkit.continuous_events(diode_system))
+        @test BM.baseModelica_to_ModelingToolkit(diode_package) isa System
+        for parser in (:julia, :antlr)
+            @test parse_basemodelica(diode_path; parser, simplify = false) isa System
+            sys = parse_basemodelica(diode_path; parser)
+            prob = ODEProblem(
+                sys, [], (0.0, 2.0);
+                missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0)
+            )
+            # Stateless models need a step bound to resolve their relation roots.
+            for alg in (nothing, Rodas5P(), FBDF())
+                sol = isnothing(alg) ? solve(prob; dtmax = 1.0e-3, reltol = 1.0e-8, abstol = 1.0e-10) :
+                    solve(prob, alg; dtmax = 1.0e-3, reltol = 1.0e-8, abstol = 1.0e-10)
+                @test sol.retcode == ReturnCode.Success
+                times = 0.0:0.0005:2.0
+                @test maximum(abs(sol(t; idxs = sys.var"R1.i") - max(0.0, 10sin(2pi * t)) / 1.0e-3) for t in times) < 1.0e-4
+                for name in (:Ideal, :With_Ron_Goff, :With_Ron_Goff_Vknee)
+                    s = getproperty(sys, Symbol(name, ".s"))
+                    off = getproperty(sys, Symbol(name, ".off"))
+                    @test all(times) do t
+                        value = sol(t; idxs = s)
+                        abs(value) < 1.0e-7 || (sol(t; idxs = off) > 0.5) == (value < 0)
+                    end
+                end
+            end
+        end
     end
 
     @testset "Parameter String" begin

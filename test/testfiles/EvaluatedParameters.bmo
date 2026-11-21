@@ -1,0 +1,12 @@
+//! base 0.1.0
+package 'EvaluatedParameters'
+  model 'EvaluatedParameters'
+    parameter Integer 'n' = 3 annotation(Evaluate = true);
+    parameter Boolean 'useDamper' = false "conditional damper" annotation(Evaluate = true);
+    parameter Real 'k' = 2.0 * 'n' annotation(Evaluate = true);
+    parameter Real 'd' = 0.5 annotation(Evaluate = false);
+    Real 'x'(fixed = true, start = 1.0);
+  equation
+    der('x') = -('k' + 'd') * 'x';
+  end 'EvaluatedParameters';
+end 'EvaluatedParameters';

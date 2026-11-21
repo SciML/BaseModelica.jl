@@ -1,0 +1,14 @@
+//! base 0.1.0
+package 'DiscreteCounter'
+  model 'DiscreteCounter'
+    Real 'x'(fixed = true, start = 0.0);
+    Real 'y' "Algebraic variable depending on the discrete counter";
+    discrete Integer 'n'(start = 0, fixed = true) "Number of threshold crossings";
+  equation
+    der('x') = 1.0;
+    'y' = 2.0 * 'x' + 'n';
+    when 'x' > 0.5 then
+      'n' = pre('n') + 1;
+    end when;
+  end 'DiscreteCounter';
+end 'DiscreteCounter';

@@ -41,6 +41,12 @@ end
     #Class types
     BaseModelicaClassDefinition(class_type, class)
     BaseModelicaEnumeration(name, values)  # name: String, values: Vector{String}
+    # Algorithm sections and statements
+    BaseModelicaAlgorithmSection(statements, initial) # initial::Bool for `initial algorithm`
+    BaseModelicaAssignment(target, expression)  # target := expression
+    BaseModelicaIfStatement(conditions, branches)  # branches[end] is the else branch if longer
+    BaseModelicaForStatement(index, statements)
+    BaseModelicaUnsupportedStatement(description)  # parsed but not convertible (while, when, ...)
 end
 
 @data BaseModelicaExpr <: BaseModelicaASTNode begin
@@ -105,5 +111,13 @@ end
     BaseModelicaEQ(left, right)
     BaseModelicaNEQ(left, right)
     BaseModelicaIfExpression(conditions, expressions)
-    BaseModelicaArrayReference(term, indexes)
+    BaseModelicaArrayReference(term, indexes)  # (expr)[subscripts]; indexes::BaseModelicaArraySubscripts
+    BaseModelicaArrayConstructor(elements)  # {a, b, c}
+    BaseModelicaArrayComprehension(expression, index)  # {expr for i in range}; index::BaseModelicaForIndex
+    BaseModelicaMatrixConstructor(rows)  # [a, b; c, d]; rows::Vector of element lists
+    # Element `index` (a tuple of Ints) of the value of `expression`, or the value itself if it
+    # is a scalar. Created when array declarations are scalarized: the element `x[i]` of
+    # `Real x[3](start = s)` gets start `BaseModelicaArrayElement(s, (i,))`.
+    BaseModelicaArrayElement(expression, index)
+    BaseModelicaUnsupportedExpression(description)  # parsed but not convertible
 end

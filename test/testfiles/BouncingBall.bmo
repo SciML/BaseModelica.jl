@@ -1,0 +1,16 @@
+//! base 0.1.0
+package 'BouncingBall'
+  model 'BouncingBall'
+    parameter Real 'e' = 0.8 "Coefficient of restitution";
+    parameter Real 'g' = 9.81 "Gravity acceleration";
+    Real 'h'(fixed = true, start = 1.0) "Height of ball";
+    Real 'v'(fixed = true, start = 0.0) "Velocity of ball";
+  equation
+    der('h') = 'v';
+    der('v') = -'g';
+    when 'h' < 0.0 then
+      reinit('v', -'e' * pre('v'));
+    end when;
+    annotation(experiment(StartTime = 0, StopTime = 3.0, Tolerance = 1e-06, Interval = 0.01));
+  end 'BouncingBall';
+end 'BouncingBall';

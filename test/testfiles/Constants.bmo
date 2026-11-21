@@ -1,0 +1,15 @@
+//! base 0.1.0
+package 'Constants'
+  model 'Constants'
+    constant Real 'g2' = 2.0 * 'g';
+    constant Real 'g' = 9.81;
+    constant Integer 'k' = 3;
+    constant Boolean 'useDamping' = true;
+    parameter Real 'm' = 'k' * 0.5;
+    Real 'x'(fixed = true, start = 'g');
+    Real 'v'(fixed = true, start = 0.0);
+  equation
+    der('x') = 'v';
+    der('v') = -'g2' * 'x' / 'm' - (if 'useDamping' then 'v' else 0.0);
+  end 'Constants';
+end 'Constants';
