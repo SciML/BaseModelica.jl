@@ -287,7 +287,8 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
             @test sol(0.0; idxs = sys.x)^2 + sol(0.0; idxs = sys.y) ≈ 5
             @test sol(1.0; idxs = [sys.x, sys.y]) ≈ [-1, 4] .* exp(-1) rtol = 1e-7
             sibling = solve(remake(prob; u0 = [sys.y => 3.0]), Tsit5(); reltol = 1e-9, abstol = 1e-11)
-            @test sibling.retcode == ReturnCode.InitialFailure
+            @test sibling.retcode == ReturnCode.Success
+            @test sibling(0.0; idxs = [sys.x, sys.y]) ≈ [-sqrt(2), 3]
         elseif case === :fixed_mixed_coupled
             # V03f: Initial(x) in the projection is a parameter, not an unresolved state.
             @test sol(0.0; idxs = [sys.x, sys.y, sys.z]) ≈ [1, 2, 7]
@@ -295,7 +296,7 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         elseif case in (:array_fixed_mixed_coupled, :array_sum_coupled)
             # V03d and V12: mixed fixed starts and whole-array incidence must
             # select the same declaration-order coordinates in both array modes.
-            elems = [arrays === :keep ? sys.x[i] : getproperty(sys, Symbol("x[$i]")) for i in 1:3]
+            elems = [hasproperty(sys, :x) ? sys.x[i] : getproperty(sys, Symbol("x[$i]")) for i in 1:3]
             @test sol(0.0; idxs = elems) ≈ [1, 2, 7]
             @test sol(1.0; idxs = elems) ≈ [1, 2, 7] .* exp(-1) rtol = 1e-7
             if case === :array_fixed_mixed_coupled

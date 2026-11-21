@@ -261,10 +261,12 @@ Numerically singular linear groups are checked at the declared parameter values:
 inconsistent constraints raise an error, while consistent redundant constraints use
 start defaults for the free coordinates.
 
-Nonlinear algebraic equations may read states with unfixed starts. Nonlinear coupled
+Nonlinear algebraic equations may read states with unfixed starts. When substituting the
+independent starts makes the remaining constraints linear, nonlinear coupled groups also
+receive consistent guesses and allow either state to be overridden. Otherwise these
 groups use declaration-order start defaults for independent initial coordinates and
 ModelingToolkit's nonlinear iteration guesses for the remaining coordinates, preserving
-the baseline behavior. A user `u0` on a sibling state can overdetermine such a nonlinear
+the baseline behavior. A user `u0` on a sibling state can overdetermine that fallback
 group and return `InitialFailure`. Time-driven switches between differential and algebraic
 state constraints are rejected; parameter-driven selections made during initialization
 remain supported.

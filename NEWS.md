@@ -17,8 +17,10 @@
   declaration order. For coupled groups, parameter-only `remake` keeps the previous
   initial point as its guess; pass `u0` or rebuild `ODEProblem` to reevaluate starts.
   Nonlinear algebraic equations can read states with unfixed starts. Nonlinear coupled
-  groups retain declaration-order start defaults and nonlinear iteration guesses;
-  a user `u0` on a sibling can overdetermine initialization (`InitialFailure`).
+  groups receive consistent guesses when substituting independent starts makes the
+  remaining constraints linear, preserving sibling `u0` overrides. Otherwise they retain
+  declaration-order start defaults and nonlinear iteration guesses; a user `u0` on a
+  sibling can overdetermine that fallback (`InitialFailure`).
   Linear initialization constraints are rank-checked at declared parameter values:
   inconsistent constraints fail clearly and redundant constraints use starts for free
   coordinates. Whole-array initial reductions participate in retained-array incidence.

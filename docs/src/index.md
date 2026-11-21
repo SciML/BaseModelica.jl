@@ -133,10 +133,12 @@ How declarations map to ModelingToolkit, and what `remake` can change afterwards
   checked at the declared parameter values: inconsistent constraints raise an error,
   and consistent redundant constraints use start defaults for the free coordinates.
   Nonlinear algebraic equations may read states
-  with unfixed starts. Nonlinear coupled groups use declaration-order start defaults
+  with unfixed starts. Nonlinear coupled groups receive consistent guesses when
+  substituting independent starts makes the remaining constraints linear. Otherwise,
+  they use declaration-order start defaults
   for independent initial coordinates and nonlinear iteration guesses for the remaining
   coordinates, as in the baseline behavior. A user `u0` on a sibling can overdetermine
-  nonlinear initialization and return `InitialFailure`.
+  that fallback initialization and return `InitialFailure`.
 - **Time events**: the instants at which an if-condition comparing `time` with a number or
   an expression of parameters switches (`if time < startTime then ...`) are stored as
   `tstops` on the system. ModelingToolkit passes them to every problem built from it, so

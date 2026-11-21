@@ -1231,8 +1231,10 @@ consistent redundant constraints receive start defaults for their free coordinat
 Independent start expressions remain symbolic and follow parameter changes through
 `remake`. For coupled groups, a parameter-only `remake` retains the previous initial
 point as its guess; pass `u0` or rebuild `ODEProblem` to reevaluate the starts.
-Nonlinear coupled components use independent starts as initial-condition defaults,
-leaving the nonlinear solve to MTK; overriding a sibling can overdetermine initialization.
+Nonlinear coupled components also receive consistent guesses when substituting the
+independent starts makes the remaining constraints affine. Otherwise, they use independent
+starts as initial-condition defaults, leaving the nonlinear solve to MTK; overriding a
+sibling in that fallback can overdetermine initialization.
 Branch-dependent completions retain conditional initialization equations. As with other
 unfixed starts, MTK may report that initialization is underdetermined. Calling this function
 again is safe.
@@ -1638,6 +1640,31 @@ function complete_unfixed_initialization(sys)
                 for state in differentiated_variables([eq])])
         nonlinear = any(value -> !initialization_is_affine(value, check_variables), checks)
         if nonlinear
+            # Some nonlinear constraints become affine once the independent
+            # starts are substituted (e.g. x^2+y=5 with a start for x). In that
+            # case a consistent guess suffices, and a user can still initialize
+            # either coordinate without inheriting an extra start constraint.
+            start_rules = Dict(unknowns[indices[var]] => value for (var, value) in component_starts)
+            remaining = filter(var -> !haskey(start_rules, Symbolics.unwrap(var)), component_unknowns)
+            matched_rows = sort!(unique!(filter(!iszero, original_matching)))
+            reduced = Any[Symbolics.substitute(residual_values[selected_rows[i]], start_rules; fold = Val(true))
+                for i in matched_rows]
+            if length(reduced) == length(remaining) && !isempty(remaining) &&
+                    all(value -> initialization_is_affine(value, remaining), reduced)
+                values = try
+                    Symbolics.symbolic_linear_solve(Equation[0 ~ value for value in reduced], remaining; check = false)
+                catch err
+                    err isa SingularException || rethrow()
+                    nothing
+                end
+                if !isnothing(values) && all(value -> isempty(when_body_unknowns!(Any[], value, component_unknowns)), values)
+                    merge!(projected_guesses, start_rules, Dict(zip(Symbolics.unwrap.(remaining), values)))
+                    for (var, parameter) in constants
+                        haskey(projected_guesses, parameter) && (projected_guesses[var] = projected_guesses[parameter])
+                    end
+                    continue
+                end
+            end
             # Starts provide independent initial coordinates; MTK uses the other
             # starts as iteration guesses for the nonlinear initialization solve.
             append!(starts, Pair[var => get(alias_defaults, var, value) for (var, value) in component_starts])
