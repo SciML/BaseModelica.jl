@@ -4,7 +4,12 @@ using ModelingToolkit
 using OrdinaryDiffEq
 
 # Filters support a separate bounded Julia process for every model/parser/array mode.
-unfixed_cases = (:minimal, :tunable_if, :initial_override, :coupled_initial, :array, :array_partial, :many_switches, :quaternion)
+unfixed_cases = (
+    :minimal, :tunable_if, :initial_override, :coupled_initial, :array, :array_partial,
+    :many_switches, :quaternion, :constant, :constant_initial_override,
+    :constant_array, :constant_array_partial, :constant_coupled, :conditional_state,
+    :nested_conditional_state,
+)
 unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
     Tuple(x for x in values if string(x) == ENV[key])
 
@@ -34,6 +39,43 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         $parameters
         Real 'x'(start = 1);
         equation der('x') = -(($rate)/16)*'x';
+        """
+    elseif case in (:constant, :constant_initial_override)
+        initial = case === :constant_initial_override ? "initial equation 0 = 'x' - 2;" : ""
+        """
+        Real 'x'(start = 3);
+        $initial
+        equation der('x') = 0;
+        """
+    elseif case in (:constant_array, :constant_array_partial)
+        initial = case === :constant_array_partial ? "initial equation 'x'[1] = 5;" : ""
+        """
+        Real 'x'[2](start = {3, 4});
+        $initial
+        equation der('x') = {0, 0};
+        """
+    elseif case === :constant_coupled
+        """
+        Real 'x'(start = 1); Real 'y'(start = 2);
+        initial equation 'x' + 'y' = 10;
+        equation der('x') = 0; der('y') = 0;
+        """
+    elseif case in (:conditional_state, :nested_conditional_state)
+        outer_parameter = case === :nested_conditional_state ? "parameter Boolean 'enable' = true;" : ""
+        before = case === :nested_conditional_state ? "if 'enable' then" : ""
+        after = case === :nested_conditional_state ? "else der('x') = -2*'x'; 0 = 'y' - 'x'; end if;" : ""
+        """
+        $outer_parameter
+        parameter Boolean 'b' = true;
+        Real 'x'(start = 1); Real 'y';
+        equation
+          $before
+          if 'b' then
+            der('x') = -'x'; 0 = 'y' - 'x';
+          else
+            0 = 'y' - der('x'); 0 = 'x' - sin(time);
+          end if;
+          $after
         """
     elseif case === :initial_override
         """
@@ -83,7 +125,7 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         """)
         sys = parse_basemodelica(file; parser, arrays)
         prob = ODEProblem(sys, [], (0.0, 1.0))
-        sol = solve(prob, Tsit5(); reltol = 1e-9, abstol = 1e-11)
+        sol = solve(prob, case in (:conditional_state, :nested_conditional_state) ? Rodas5P() : Tsit5(); reltol = 1e-9, abstol = 1e-11)
         @test sol.retcode == ReturnCode.Success
         if case in (:array, :array_partial)
             for i in 1:2
@@ -91,6 +133,47 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
                 start = case === :array_partial && i == 1 ? 3 : i
                 @test sol(0.0; idxs = x) ≈ start
                 @test sol(1.0; idxs = x) ≈ start*exp(-1) rtol = 1e-7
+            end
+        elseif case in (:constant_array, :constant_array_partial)
+            for i in 1:2
+                x = arrays === :keep ? sys.x[i] : getproperty(sys, Symbol("x[$i]"))
+                start = case === :constant_array_partial && i == 1 ? 5 : i + 2
+                @test sol(0.0; idxs = x) ≈ start
+                @test sol(1.0; idxs = x) ≈ start
+            end
+        elseif case in (:constant, :constant_initial_override)
+            start = case === :constant ? 3 : 2
+            @test sol(0.0; idxs = sys.x) ≈ start
+            @test sol(1.0; idxs = sys.x) ≈ start
+        elseif case === :constant_coupled
+            @test sol(0.0; idxs = sys.x) + sol(0.0; idxs = sys.y) ≈ 10
+            @test any(((sys.x, 1), (sys.y, 2))) do (var, start)
+                isapprox(sol(0.0; idxs = var), start)
+            end
+            @test sol(1.0; idxs = sys.x) + sol(1.0; idxs = sys.y) ≈ 10
+        elseif case in (:conditional_state, :nested_conditional_state)
+            @test sol(0.0; idxs = sys.x) ≈ 1
+            @test sol(0.0; idxs = sys.y) ≈ 1
+            @test sol(1.0; idxs = sys.x) ≈ exp(-1) rtol = 1e-7
+            @test sol(1.0; idxs = sys.y) ≈ exp(-1) rtol = 1e-7
+            algebraic = remake(prob; p = [sys.b => false])
+            other = solve(algebraic, Rodas5P(); reltol = 1e-9, abstol = 1e-11)
+            @test other.retcode == ReturnCode.Success
+            @test other(0.0; idxs = sys.x) ≈ 0 atol = 1e-9
+            @test other(1.0; idxs = sys.x) ≈ sin(1) rtol = 1e-7
+            @test other(1.0; idxs = sys.y) ≈ cos(1) rtol = 1e-7
+            back = solve(remake(algebraic; p = [sys.b => true]), Rodas5P(); reltol = 1e-9, abstol = 1e-11)
+            @test back.retcode == ReturnCode.Success
+            @test back(0.0; idxs = sys.x) ≈ 1
+            @test back(1.0; idxs = sys.x) ≈ exp(-1) rtol = 1e-7
+            if case === :nested_conditional_state
+                # Both inner choices share this outer incidence graph. Keep both
+                # configurations when merging graphs and constructing the guard.
+                disabled = solve(remake(prob; p = [sys.enable => false, sys.b => false]), Rodas5P(); reltol = 1e-9, abstol = 1e-11)
+                @test disabled.retcode == ReturnCode.Success
+                @test disabled(0.0; idxs = sys.x) ≈ 1
+                @test disabled(1.0; idxs = sys.x) ≈ exp(-2) rtol = 1e-7
+                @test disabled(1.0; idxs = sys.y) ≈ exp(-2) rtol = 1e-7
             end
         elseif case === :quaternion
             @test sol(0.0; idxs = sys.x) ≈ 0 atol = 1e-8
