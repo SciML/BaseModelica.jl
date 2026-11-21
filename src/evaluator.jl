@@ -462,8 +462,9 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     # Symbolic conditions with matching targets follow remake. Dynamic differing
     # targets need scalar row pairing, with explicit state derivatives first.
     foreach(cond -> collect_time_events!(eval_AST(cond)), if_eq.ifs)
-    if differing_targets || any(branch -> length(Set(eq.lhs for eq in branch)) != length(branch) ||
-            !isempty(differentiated_variables([0 ~ eq.rhs for eq in branch])), branches)
+    state_rows = if_equation_state_rows(branches)
+    if differing_targets || !isempty(state_rows) ||
+            any(branch -> length(Set(eq.lhs for eq in branch)) != length(branch), branches)
         rows = [
             reduce(vcat, (vec(vcat(Symbolics.scalarize(eq))) for eq in branch); init = Equation[])
                 for branch in branches
@@ -512,11 +513,53 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     return result_equations
 end
 
-# Pair differential rows by state, independently of their order or which side
-# contains the derivative. Consuming a row twice (coupled derivatives) or leaving
-# a derivative in an algebraic residual would recreate implicit initialization.
-function explicit_if_equation_rows(if_eq, rows)
+# An assignment to an ordinary variable reads its RHS derivatives; it does not
+# define them. Residual and differential equations can define a state, provided
+# every branch has one independent row for it. Other derivatives stay as inputs
+# in the per-target or positional lowering.
+function if_equation_state_rows(rows)
     states = differentiated_variables(reduce(vcat, rows; init = Equation[]))
+    result = Pair{Any, Vector{Int}}[]
+    for state in states
+        indices = Int[]
+        for branch in rows
+            matches = findall(branch) do eq
+                derivatives = differentiated_variables([eq])
+                length(derivatives) == 1 && isequal(only(derivatives), state) || return false
+                !isempty(differentiated_variables([eq.lhs ~ 0])) && return true
+                # x(t) and x[i] are variables; -x and 0 are residual left sides.
+                return !any(v -> isequal(Symbolics.unwrap(v), eq.lhs), Symbolics.get_variables(eq.lhs))
+            end
+            length(matches) == 1 || break
+            push!(indices, only(matches))
+        end
+        length(indices) == length(rows) && push!(result, state => indices)
+    end
+    return result
+end
+
+# Pair differential rows by state independently of their order or equation side.
+function explicit_if_equation_rows(if_eq, rows)
+    state_rows = if_equation_state_rows(rows)
+    for branch in rows, eq in branch
+        coupled = differentiated_variables([eq])
+        if length(coupled) > 1 && any(v -> !ModelingToolkitBase.hasdefault(v), coupled)
+            unsupported("if-equation cannot isolate coupled state derivatives without fixed initial values")
+        end
+    end
+    for state in differentiated_variables(reduce(vcat, rows; init = Equation[]))
+        # A state that is defined in one branch but absent from another changes
+        # the differential structure. A derivative used only as an input does
+        # not impose this restriction.
+        defines = any(rows) do branch
+            any(branch) do eq
+                isequal(eq.lhs, Symbolics.unwrap(D(Symbolics.wrap(state))))
+            end
+        end
+        if defines && any(branch -> !any(v -> isequal(v, state), differentiated_variables(branch)), rows)
+            unsupported("if-equation derivative der($state) is missing from a branch that changes the state structure")
+        end
+    end
     remaining = [trues(length(branch)) for branch in rows]
     conditions = [logical_operand(eval_AST(ast)) for ast in if_eq.ifs]
     function choose(values)
@@ -527,15 +570,11 @@ function explicit_if_equation_rows(if_eq, rows)
         return rhs
     end
     result = Equation[]
-    for state in states
+    for (state, indices) in state_rows
         derivative = D(Symbolics.wrap(state))
         values = Any[]
         for (j, branch) in enumerate(rows)
-            indices = findall(eq -> any(v -> isequal(v, state), differentiated_variables([eq])), branch)
-            length(indices) == 1 || unsupported(
-                "if-equation derivative der($state) must occur in exactly one row of every branch; missing or repeated in branch $j"
-            )
-            i = only(indices)
+            i = indices[j]
             remaining[j][i] || unsupported(
                 "if-equation cannot isolate der($state): a row contains coupled state derivatives in branch $j"
             )
@@ -543,6 +582,10 @@ function explicit_if_equation_rows(if_eq, rows)
             a, b, linear = Symbolics.linear_expansion(eq.rhs - eq.lhs, derivative)
             linear && !iszero(a) || unsupported(
                 "if-equation cannot isolate der($state) in branch $j; the row must be linear in that derivative with a nonzero coefficient"
+            )
+            coefficient = concrete_value(resolve_value(a, parameter_val_map))
+            isnothing(coefficient) || !iszero(coefficient) || unsupported(
+                "if-equation cannot isolate der($state) in branch $j; its coefficient is zero at the parameter defaults"
             )
             rhs = -b / a
             isempty(differentiated_variables([0 ~ rhs])) || unsupported(

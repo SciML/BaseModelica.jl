@@ -8,6 +8,11 @@
   `ImplicitDiscreteProblem` with a zero-length time span. Use
   `create_odeproblem(file; saveat = Float64[])`
   and pass the interval as `saveat` to `solve` instead. The README and docs show this path.
+- If-equations can read derivatives defined by other equations, including in only
+  one branch. The Julia parser accepts a negative left side after `else`.
+- Unfixed state starts supply missing initial values after state selection, while
+  explicit initial equations and algebraic initialization constraints take precedence.
+
 - `arrays = :keep` preserves supported numeric arrays as ModelingToolkit array symbols
   and emits whole-array equations, except in models with when-equations, where the
   discrete backend currently returns scalar equations. Unsupported declarations fall back

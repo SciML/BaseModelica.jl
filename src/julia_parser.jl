@@ -675,8 +675,10 @@ spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
     # Guarded equation for if-equation blocks: consume whitespace, then check
     # that we're not at a block-ending keyword before trying to match an equation.
     # This prevents exponential backtracking with NoCache.
-    guarded_eq = spc + Not(Lookahead(e"elseif")) + Not(Lookahead(e"else")) +
-        Not(Lookahead(E"end if")) + equation + E";"
+    # Include whitespace in the lookahead: otherwise Star(spc) can backtrack
+    # before the guard and parse `else\n-x` as the expression `else - x`.
+    guarded_eq = Not(Lookahead(spc + p"(?:elseif|else|end\s+if)\b")) +
+        spc + equation + E";"
     if_equation = (E"if" > BMIf) + expression + (E"then" > BMThen) +
         Star(guarded_eq) + spc +
         Star(

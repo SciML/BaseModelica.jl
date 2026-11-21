@@ -1,0 +1,14 @@
+//! base 0.1.0
+package P
+model M
+  Real x;
+  Real y;
+equation
+  x = sin(time);
+  if time < 0.5 then
+    y = der(x);
+  else
+    y = 2.0 * der(x);
+  end if;
+end M;
+end P;

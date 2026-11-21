@@ -1,0 +1,17 @@
+//! base 0.1.0
+package P
+model M
+  Real x(start = 1, fixed = true);
+  Real y(start = 1, fixed = true);
+  Real z;
+equation
+  der(y) = -y;
+  if time < 0.5 then
+    der(x) + der(y) = 0.0;
+    z = 1.0;
+  else
+    0 = z - 2.0;
+    der(x) = 1.0;
+  end if;
+end M;
+end P;

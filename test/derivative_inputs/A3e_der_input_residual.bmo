@@ -1,0 +1,14 @@
+//! base 0.1.0
+package P
+model M
+  Real v(start = 1, fixed = true);
+  Real a;
+equation
+  der(v) = -v;
+  if time < 0.5 then
+    0 = a - der(v);
+  else
+    0 = a - 2.0 * der(v);
+  end if;
+end M;
+end P;
