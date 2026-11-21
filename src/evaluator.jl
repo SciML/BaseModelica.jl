@@ -181,18 +181,35 @@ eval_AST(::BaseModelicaWhenEquation) =
 # emits this form for if-equations without an explicit else (issue #41).
 # Do not substitute tunable parameter defaults while normalizing the branches.
 function normalize_if_equation(eq::BaseModelicaIfEquation)
-    for (i, ast) in enumerate(eq.ifs)
+    conditions = eltype(eq.ifs)[]
+    branches = eltype(eq.thens)[]
+    for (ast, branch) in zip(eq.ifs, eq.thens)
         condition = try
-            concrete_value(eval_AST(ast))
+            load_if_condition(eval_AST(ast); resolve_parameters = false)
         catch err
             # An earlier parameter branch may make this condition unreachable.
             # Defer errors until branch selection actually needs the condition.
             err isa Union{BoundsError, UnsupportedFeatureError} || rethrow()
-            continue
+            nothing
         end
-        condition === true && return BaseModelicaIfEquation(eq.ifs[1:(i - 1)], eq.thens[1:i])
+        condition === false && continue
+        push!(branches, branch)
+        condition === true && return BaseModelicaIfEquation(conditions, branches)
+        push!(conditions, ast)
     end
-    return eq
+    length(eq.thens) > length(eq.ifs) && push!(branches, eq.thens[end])
+    return BaseModelicaIfEquation(conditions, branches)
+end
+
+# Non-tunable parameters are structural even when their branches have equal
+# counts and targets. Never substitute tunable defaults on this first pass.
+function load_if_condition(condition; resolve_parameters)
+    bindings = resolve_parameters ? parameter_val_map : Dict(
+        sym => value for (sym, value) in parameter_val_map
+            if !ModelingToolkit.istunable(sym) && !(symbol_name(sym) in discrete_variable_names)
+    )
+    value = resolve_value(condition, bindings)
+    return concrete_value(SymbolicUtils.substitute(value, Dict(); fold = Val(true)))
 end
 
 # Count scalar rows, not the unknowns referenced by each row. Record equations
@@ -273,6 +290,109 @@ function balanced_if_equation_count(eq::BaseModelicaIfEquation)
     return count
 end
 
+# Flatten targets across retained arrays and records before comparing branches.
+function scalar_target_values(value)
+    if value isa NamedTuple || is_array(value)
+        elements = value isa NamedTuple ? values(value) : value
+        return reduce(vcat, (scalar_target_values(element) for element in elements); init = Any[])
+    end
+    return Any[value]
+end
+
+# Residual equations (0 = expression) constrain the unknowns in their right side.
+# Inspect references, rather than executing that expression during classification.
+function residual_targets!(targets, node)
+    if node isa BaseModelicaComponentReference ||
+            (node isa BaseModelicaFunctionCall && function_call_name(node) == "der")
+        value = eval_AST(node)
+        for sym in scalar_target_values(value)
+            is_inlined(sym) && continue
+            isequal(sym, t) && continue
+            name = symbol_name(Symbolics.wrap(sym))
+            if !ModelingToolkitBase.isparameter(sym) || name in free_parameter_names ||
+                    name in discrete_variable_names || name in bool_comparison_names
+                push!(targets, Symbolics.unwrap(sym))
+            end
+        end
+    elseif node isa BaseModelicaFunctionCall
+        residual_targets!(targets, node.args)
+    elseif node isa Union{AbstractVector, Tuple}
+        foreach(child -> residual_targets!(targets, child), node)
+    elseif node isa BaseModelicaASTNode
+        for field in fieldnames(typeof(node))
+            residual_targets!(targets, getfield(node, field))
+        end
+    end
+    return targets
+end
+
+# Classify branches from their targets without evaluating right sides. In particular,
+# a discarded equation may contain an out-of-bounds subscript or an undefined call.
+function branch_targets(branch)
+    targets = Set{Any}()
+    for entry in body_list(branch)
+        eq = inner_equation(entry)
+        if eq isa BaseModelicaIfEquation
+            eq = normalize_if_equation(eq)
+            selected = load_if_branch(eq; resolve_parameters = false)
+            if !isnothing(selected)
+                nested = selected == 0 ? Set{Any}() : branch_targets(eq.thens[selected])
+            else
+                nested = balanced_if_targets(eq)
+            end
+            if isnothing(nested)
+                selected = load_if_branch(eq)
+                isnothing(selected) && return nothing
+                nested = selected == 0 ? Set{Any}() : branch_targets(eq.thens[selected])
+            end
+            isnothing(nested) && return nothing
+            union!(targets, nested)
+        elseif eq isa BaseModelicaForEquation
+            outer = LOCAL_SCOPE[]
+            index = loop_index_name(eq.index)
+            for value in loop_range(eq.index)
+                scope = isnothing(outer) ? Dict{Symbol, Any}() : copy(outer)
+                scope[index] = value
+                nested = with_local_scope(() -> branch_targets(eq.equations), scope)
+                isnothing(nested) && return nothing
+                union!(targets, nested)
+            end
+        elseif eq isa BaseModelicaSimpleEquation
+            isnothing(eq.rhs) && continue # assert statements do not constrain a target
+            lhs = eval_AST(eq.lhs)
+            elements = scalar_target_values(lhs)
+            if all(value -> !isnothing(concrete_value(value)), elements)
+                residual_targets!(targets, eq.rhs)
+            else
+                # Equation fields use unwrapped symbols too, so residual and
+                # direct assignments compare the same targets.
+                union!(targets, Symbolics.unwrap.(elements))
+            end
+        else
+            return nothing
+        end
+    end
+    return targets
+end
+
+function balanced_if_targets(eq::BaseModelicaIfEquation)
+    length(eq.thens) > length(eq.ifs) || return nothing
+    targets = nothing
+    for branch in eq.thens
+        current = try
+            branch_targets(branch)
+        catch err
+            # An inactive branch can use indices outside the declared array.
+            err isa Union{BoundsError, UnsupportedFeatureError} || rethrow()
+            return nothing
+        end
+        isnothing(current) && return nothing
+        isnothing(targets) || isequal(current, targets) || return nothing
+        targets = current
+    end
+    return targets
+end
+
 # Zero denotes an absent else. `nothing` means the structure cannot be selected.
 function load_if_branch(
         eq::BaseModelicaIfEquation; record_parameters = false, resolve_parameters = true
@@ -282,8 +402,7 @@ function load_if_branch(
     for (i, ast) in enumerate(eq.ifs)
         condition = eval_AST(ast)
         push!(conditions, condition)
-        value = resolve_parameters ? resolve_value(condition, parameter_val_map) : condition
-        value = concrete_value(SymbolicUtils.substitute(value, Dict(); fold = Val(true)))
+        value = load_if_condition(condition; resolve_parameters)
         value isa Bool || return nothing
         if value
             selected = i
@@ -299,9 +418,8 @@ end
 
 function eval_AST(if_eq::BaseModelicaIfEquation)
     if_eq = normalize_if_equation(if_eq)
-    # Constants and loop indices are already known, so avoid evaluating inactive
-    # branches (which can contain y[i-1] at i=1). Parameter defaults stay symbolic
-    # for balanced branches so initialization and remake can change them.
+    # Constants, non-tunable parameters and loop indices select at load, avoiding
+    # inactive branches (which can contain y[i-1] at i=1).
     selected = load_if_branch(if_eq; resolve_parameters = false)
     if !isnothing(selected)
         return selected == 0 ? Equation[] : branch_equations(if_eq.thens[selected])
@@ -314,10 +432,14 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
         return selected == 0 ? Equation[] : branch_equations(if_eq.thens[selected])
     end
 
-    # Balanced branches keep their symbolic conditions, including in initial sections.
-    # This lets initialization and remake use the current parameter/discrete values.
-    # Time events of the conditions (e.g. `time < 1e-5`), see collect_time_events!
-    foreach(cond -> collect_time_events!(eval_AST(cond)), if_eq.ifs)
+    # Count balance alone is insufficient for a tunable parameter: changing
+    # targets may change the state/initialization structure after remake.
+    if isnothing(balanced_if_targets(if_eq))
+        selected = load_if_branch(if_eq; record_parameters = true)
+        if !isnothing(selected)
+            return selected == 0 ? Equation[] : branch_equations(if_eq.thens[selected])
+        end
+    end
 
     branches = [branch_equations(branch) for branch in if_eq.thens]
 
@@ -334,27 +456,21 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
         end
     end
 
-    # Residual rows can share a literal left side or mix residual and direct
-    # assignments. Preserve every row; matching just by lhs would discard rows.
     targets = Set(eq.lhs for eq in first(branches))
-    if any(branch -> length(Set(eq.lhs for eq in branch)) != length(branch) ||
-            !isequal(Set(eq.lhs for eq in branch), targets), branches)
+    differing_targets = any(branch -> !isequal(Set(eq.lhs for eq in branch), targets), branches)
+
+    # Symbolic conditions with matching targets follow remake. Dynamic differing
+    # targets need scalar row pairing, with explicit state derivatives first.
+    foreach(cond -> collect_time_events!(eval_AST(cond)), if_eq.ifs)
+    if differing_targets || any(branch -> length(Set(eq.lhs for eq in branch)) != length(branch) ||
+            !isempty(differentiated_variables([0 ~ eq.rhs for eq in branch])), branches)
         rows = [
             reduce(vcat, (vec(vcat(Symbolics.scalarize(eq))) for eq in branch); init = Equation[])
                 for branch in branches
         ]
         all(branch -> length(branch) == length(first(rows)), rows) ||
             unsupported("balanced if-equation branches must have the same number of scalar equations")
-        result = Equation[]
-        for i in eachindex(first(rows))
-            rhs = rows[end][i].rhs - rows[end][i].lhs
-            for j in reverse(eachindex(if_eq.ifs))
-                eq = rows[j][i]
-                rhs = modelica_ifelse(logical_operand(eval_AST(if_eq.ifs[j])), eq.rhs - eq.lhs, rhs)
-            end
-            push!(result, 0 ~ rhs)
-        end
-        return result
+        return explicit_if_equation_rows(if_eq, rows)
     end
 
     # Helper to extract RHS for a specific variable from a branch's equation list
@@ -394,6 +510,54 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     end
 
     return result_equations
+end
+
+# Pair differential rows by state, independently of their order or which side
+# contains the derivative. Consuming a row twice (coupled derivatives) or leaving
+# a derivative in an algebraic residual would recreate implicit initialization.
+function explicit_if_equation_rows(if_eq, rows)
+    states = differentiated_variables(reduce(vcat, rows; init = Equation[]))
+    remaining = [trues(length(branch)) for branch in rows]
+    conditions = [logical_operand(eval_AST(ast)) for ast in if_eq.ifs]
+    function choose(values)
+        rhs = values[end]
+        for j in reverse(eachindex(conditions))
+            rhs = modelica_ifelse(conditions[j], values[j], rhs)
+        end
+        return rhs
+    end
+    result = Equation[]
+    for state in states
+        derivative = D(Symbolics.wrap(state))
+        values = Any[]
+        for (j, branch) in enumerate(rows)
+            indices = findall(eq -> any(v -> isequal(v, state), differentiated_variables([eq])), branch)
+            length(indices) == 1 || unsupported(
+                "if-equation derivative der($state) must occur in exactly one row of every branch; missing or repeated in branch $j"
+            )
+            i = only(indices)
+            remaining[j][i] || unsupported(
+                "if-equation cannot isolate der($state): a row contains coupled state derivatives in branch $j"
+            )
+            eq = branch[i]
+            a, b, linear = Symbolics.linear_expansion(eq.rhs - eq.lhs, derivative)
+            linear && !iszero(a) || unsupported(
+                "if-equation cannot isolate der($state) in branch $j; the row must be linear in that derivative with a nonzero coefficient"
+            )
+            rhs = -b / a
+            isempty(differentiated_variables([0 ~ rhs])) || unsupported(
+                "if-equation cannot isolate der($state): a row contains coupled state derivatives in branch $j"
+            )
+            push!(values, rhs)
+            remaining[j][i] = false
+        end
+        push!(result, derivative ~ choose(values))
+    end
+    algebraic = [branch[mask] for (branch, mask) in zip(rows, remaining)]
+    for i in eachindex(first(algebraic))
+        push!(result, 0 ~ choose([branch[i].rhs - branch[i].lhs for branch in algebraic]))
+    end
+    return result
 end
 
 # Names of variables assigned in when-equation bodies: these are discrete variables.
