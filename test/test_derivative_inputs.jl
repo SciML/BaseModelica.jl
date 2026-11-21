@@ -45,6 +45,13 @@ end
                 for (name, value) in expected, t in (0.0, 0.375, 0.75, 1.0)
                     @test sol(t; idxs = derivative_input_member(sys, name)) ≈ value(t) atol = 2e-8 rtol = 2e-7
                 end
+                if startswith(file, "A3c")
+                    other = solve(BaseModelica.SciMLBase.remake(sol.prob; p = [sys.b => false]),
+                        Rodas5P(); reltol = 1e-10, abstol = 1e-12)
+                    @test other.retcode == ReturnCode.Success
+                    @test other(0.375; idxs = sys.a) ≈ 0 atol = 1e-10
+                    @test other(0.375; idxs = sys.v) ≈ exp(-0.375) rtol = 2e-7
+                end
             end
         end
     end
