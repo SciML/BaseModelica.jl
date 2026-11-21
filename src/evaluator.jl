@@ -1,6 +1,7 @@
 # function to convert "AST" to ModelingToolkit
 using ModelingToolkit: t_nounits as t, D_nounits as D
 using DiffEqBase: BrownFullBasicInit
+using LinearAlgebra: rank, qr, ColumnNorm
 
 @data BaseModelicaRuntimeTypes begin
     RTRecord()
@@ -1182,6 +1183,38 @@ function initialization_is_affine(value, variables)
         all(entry -> isempty(when_body_unknowns!(Any[], entry, variables)), remainder)
 end
 
+# Structural matching cannot see redundant linear equations. In particular, MTK's
+# square linear SCC path can report Success for a constant, nonzero residual.
+# Check the numerical rank at the declared parameter values before using that path.
+# Keep symbolic rows for the actual projection so tunable parameters stay symbolic.
+function initialization_linear_rows(residuals, variables, defaults)
+    isempty(residuals) && return nothing
+    coefficients, remainder, linear = Symbolics.linear_expansion(
+        Num[Symbolics.wrap(value) for value in residuals], variables)
+    linear || return nothing
+    entries = vcat(vec(collect(coefficients)), collect(remainder))
+    all(entry -> isempty(when_body_unknowns!(Any[], entry, variables)), entries) || return nothing
+    values = map(entries) do entry
+        concrete_value(resolve_value(entry, defaults))
+    end
+    all(value -> value isa Real && isfinite(value), values) || return nothing
+    nrows, ncols = size(coefficients)
+    matrix = reshape(Float64.(values[1:(nrows * ncols)]), nrows, ncols)
+    rhs = Float64.(values[(nrows * ncols + 1):end])
+    # Equation scaling must not change which constraints count as independent.
+    for row in axes(matrix, 1)
+        scale = max(maximum(abs, view(matrix, row, :); init = 0.0), abs(rhs[row]))
+        iszero(scale) && continue
+        matrix[row, :] ./= scale
+        rhs[row] /= scale
+    end
+    numerical_rank = rank(matrix; rtol = 1.0e-10)
+    rank(hcat(matrix, rhs); rtol = 1.0e-10) > numerical_rank && unsupported(
+        "inconsistent linear initialization constraints at the declared parameter values"
+    )
+    return sort!(qr(permutedims(matrix), ColumnNorm()).p[1:numerical_rank])
+end
+
 # Supply only missing values after state selection and index reduction. An
 # unfixed start must not add a constraint to a state already determined by real
 # initial equations, or prevent a user from choosing another coupled state.
@@ -1193,15 +1226,21 @@ selection, respecting explicit initial equations and algebraic constraints. Retu
 updated system. Independent starts become overridable initial-condition defaults. Coupled
 linear components receive consistent state and derivative guesses, preserving their
 original equations and allowing user initial values to choose any state in the component.
-Start expressions remain symbolic so parameter changes through `remake` are respected.
+Numerically singular linear constraints are checked at declared parameter values;
+consistent redundant constraints receive start defaults for their free coordinates.
+Independent start expressions remain symbolic and follow parameter changes through
+`remake`. For coupled groups, a parameter-only `remake` retains the previous initial
+point as its guess; pass `u0` or rebuild `ODEProblem` to reevaluate the starts.
+Nonlinear coupled components use independent starts as initial-condition defaults,
+leaving the nonlinear solve to MTK; overriding a sibling can overdetermine initialization.
 Branch-dependent completions retain conditional initialization equations. As with other
 unfixed starts, MTK may report that initialization is underdetermined. Calling this function
 again is safe.
 
 This runs automatically when `parse_basemodelica` compiles a system. After
-`simplify = false`, call this on your compiled system, or use
-[`check_algebraic_crossings`](@ref) for the `:mtk` backend to also finalize array reinit
-targets and validate event crossings.
+`simplify = false`, use [`check_algebraic_crossings`](@ref) for the `:mtk` backend:
+it finalizes array reinit targets before completing starts and validating event crossings.
+Call this function directly for other event backends.
 """
 function complete_unfixed_initialization(sys)
     SymbolicUtils.getmetadata(sys, UnfixedInitializationCompleted, false) && return sys
@@ -1262,6 +1301,11 @@ function complete_unfixed_initialization(sys)
             for v in vcat(Symbolics.scalarize(var))
     ]
     indices = Dict(v => i for (i, v) in enumerate(unknowns))
+    array_indices = Dict{Any, BitSet}()
+    for (var, i) in indices
+        SymbolicUtils.iscall(var) && SymbolicUtils.operation(var) === getindex || continue
+        push!(get!(BitSet, array_indices, first(SymbolicUtils.arguments(var))), i)
+    end
     for (var, parameter) in constants
         haskey(indices, parameter) && (indices[var] = indices[parameter])
     end
@@ -1344,6 +1388,15 @@ function complete_unfixed_initialization(sys)
         return get!(expression_nodes, value) do
             if haskey(indices, value)
                 push!(nodes, InitializationIncidenceNode(BitSet([indices[value]]), BitSet(), 0, Int[]))
+                return length(nodes)
+            end
+            if SymbolicUtils.iscall(value) && SymbolicUtils.operation(value) isa ModelingToolkitBase.Initial
+                return 1
+            end
+            # Reductions in retained-array initial equations read the whole array.
+            # Their children need not contain explicit getindex calls.
+            if haskey(array_indices, value)
+                push!(nodes, InitializationIncidenceNode(array_indices[value], BitSet(), 0, Int[]))
                 return length(nodes)
             end
             if SymbolicUtils.iscall(value) && SymbolicUtils.operation(value) === ifelse
@@ -1467,6 +1520,11 @@ function complete_unfixed_initialization(sys)
     starts = Pair[]
     conditional_starts = Equation[]
     projected_guesses = Dict{Any, Any}()
+    numeric_defaults = merge(
+        Dict{Any, Any}(ModelingToolkitBase.bindings(sys)),
+        Dict{Any, Any}(ModelingToolkitBase.initial_conditions(sys)),
+        Dict{Any, Any}(ModelingToolkitBase.bindings(init)),
+        Dict{Any, Any}(ModelingToolkitBase.initial_conditions(init)), time_rule)
     explicit_ode = all(equations(sys)) do eq
         lhs = Symbolics.unwrap(eq.lhs)
         SymbolicUtils.iscall(lhs) && SymbolicUtils.operation(lhs) isa Symbolics.Differential &&
@@ -1477,7 +1535,6 @@ function complete_unfixed_initialization(sys)
         variables = component_variables[component]
         component_unknowns = Symbolics.wrap.(unknowns[variables])
         component_starts = Pair[]
-        nonlinear = nothing
         local_indices = Dict(v => i for (i, v) in enumerate(variables))
         conditions = collect(reduce(union, row_conditions[selected_rows]; init = BitSet()))
         graphs = NamedTuple{(:rows, :assigned), Tuple{Vector{Vector{Int}}, Vector{Int}}}[]
@@ -1502,6 +1559,25 @@ function complete_unfixed_initialization(sys)
             end
             push!(graphs, (rows = variant, assigned = assigned))
         end
+        singular_linear = false
+        if isempty(conditions)
+            independent_rows = initialization_linear_rows(
+                residual_values[selected_rows], component_unknowns, numeric_defaults)
+            if !isnothing(independent_rows) &&
+                    length(independent_rows) < count(!iszero, first(graphs).assigned)
+                # Retain every user equation in sys, but use numerical rank to
+                # identify the free start coordinates. Adding these defaults also
+                # avoids the square singular SCC initialization solve in MTK.
+                singular_linear = true
+                selected_rows = selected_rows[independent_rows]
+                variant = first(graphs).rows[independent_rows]
+                assigned = zeros(Int, length(variables))
+                for row in eachindex(variant)
+                    match_row(variant, assigned, row, falses(length(variables)))
+                end
+                graphs[1] = (rows = variant, assigned = assigned)
+            end
+        end
         original_matching = copy(first(graphs).assigned)
         # A tunable branch can determine a state algebraically. Only add its
         # start in branches where that condition increases the initialization
@@ -1516,22 +1592,6 @@ function complete_unfixed_initialization(sys)
                 matched || pop!(graph.rows)
             end
             if all(independent)
-                if isnothing(nonlinear)
-                    # Do not guess a point on a nonlinear DAE constraint manifold.
-                    checks = explicit_ode ?
-                        Any[eq.lhs - eq.rhs for eq in ModelingToolkitBase.initialization_equations(sys)] :
-                        residual_values[selected_rows]
-                    # Raw initial derivatives are atomic unknowns here, just as
-                    # the lowered derivative variables in generate_initializesystem.
-                    check_variables = vcat(component_unknowns, Any[
-                        D(Symbolics.wrap(state)) for eq in ModelingToolkitBase.initialization_equations(sys)
-                            for state in differentiated_variables([eq])])
-                    nonlinear = any(value -> !initialization_is_affine(value, check_variables), checks)
-                end
-                nonlinear && unsupported(
-                    "unfixed starts in a nonlinear initialization component containing `$var`; " *
-                        "supply fixed starts or explicit initial equations before compiling"
-                )
                 push!(component_starts, var => guesses[var])
             elseif any(independent)
                 any(in(time_conditions), conditions) && unsupported(
@@ -1563,9 +1623,23 @@ function complete_unfixed_initialization(sys)
             end
         end
         isempty(component_starts) && continue
-        if length(component_starts) == count(in(unfixed_state_indices), variables)
+        if singular_linear || length(component_starts) == count(in(unfixed_state_indices), variables)
             # These state coordinates are independent. A user value replaces
             # the default for that same coordinate without constraining another.
+            append!(starts, Pair[var => get(alias_defaults, var, value) for (var, value) in component_starts])
+            continue
+        end
+
+        checks = explicit_ode ?
+            Any[eq.lhs - eq.rhs for eq in ModelingToolkitBase.initialization_equations(sys)] :
+            residual_values[selected_rows]
+        check_variables = vcat(component_unknowns, Any[
+            D(Symbolics.wrap(state)) for eq in ModelingToolkitBase.initialization_equations(sys)
+                for state in differentiated_variables([eq])])
+        nonlinear = any(value -> !initialization_is_affine(value, check_variables), checks)
+        if nonlinear
+            # Starts provide independent initial coordinates; MTK uses the other
+            # starts as iteration guesses for the nonlinear initialization solve.
             append!(starts, Pair[var => get(alias_defaults, var, value) for (var, value) in component_starts])
             continue
         end

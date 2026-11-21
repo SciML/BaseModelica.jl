@@ -1,0 +1,13 @@
+//! base 0.1.0
+package P
+model M
+  parameter Real c = 3;
+  Real x(start = 1);
+  Real y(start = 1);
+initial equation
+  x + y = c;
+equation
+  der(x) = -x;
+  der(y) = -y;
+end M;
+end P;

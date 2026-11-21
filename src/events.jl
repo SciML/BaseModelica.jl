@@ -831,6 +831,8 @@ function when_body_unknowns!(found, expr, candidates; skip_pre = false)
     matched && return found
     SymbolicUtils.iscall(expr) || return found
     op = SymbolicUtils.operation(expr)
+    # Initial(x) is an initialization parameter, not a read of the unknown x.
+    op isa ModelingToolkitBase.Initial && return found
     skip_pre && op isa ModelingToolkit.Pre && return found
     args = SymbolicUtils.arguments(expr)
     # An unmatched static element is not a read of its siblings. Do not descend

@@ -121,7 +121,22 @@ How declarations map to ModelingToolkit, and what `remake` can change afterwards
   This exported hook also completes unfixed state starts and resolves constant-state
   array reinit targets. For another discrete backend, use the exported
   `complete_unfixed_initialization(compiled)` to complete starts alone. Both return a
-  system; keep the returned value. The raw system is not checked or completed.
+  system; keep the returned value. On `:mtk`, `complete_unfixed_initialization` alone
+  does not finalize array reinit targets; call `check_algebraic_crossings` instead,
+  which also completes starts. The raw system is not checked or completed.
+- **Unfixed state starts**: independent starts are overridable defaults. Coupled linear
+  groups receive consistent guesses in declaration order, and a user `u0` can select
+  another state in the group. For coupled groups, a parameter-only
+  `remake(prob; p = [p => v])` keeps the prior initial point as its guess; pass `u0`
+  or rebuild with `ODEProblem(sys, [p => v], tspan)` to reevaluate starts. Independent
+  starts follow parameter-only `remake`. Numerically singular linear constraints are
+  checked at the declared parameter values: inconsistent constraints raise an error,
+  and consistent redundant constraints use start defaults for the free coordinates.
+  Nonlinear algebraic equations may read states
+  with unfixed starts. Nonlinear coupled groups use declaration-order start defaults
+  for independent initial coordinates and nonlinear iteration guesses for the remaining
+  coordinates, as in the baseline behavior. A user `u0` on a sibling can overdetermine
+  nonlinear initialization and return `InitialFailure`.
 - **Time events**: the instants at which an if-condition comparing `time` with a number or
   an expression of parameters switches (`if time < startTime then ...`) are stored as
   `tstops` on the system. ModelingToolkit passes them to every problem built from it, so

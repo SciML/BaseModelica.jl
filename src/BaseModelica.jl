@@ -62,9 +62,13 @@ Parse a BaseModelica source file into a ModelingToolkit system.
   [`compile_system`](@ref) (`mtkcompile`, plus any compiler passes the backend needs).
   `false` returns the unsimplified system, for example to pass to
   `DyadInterface.simplify_model`. A function `f` returns `f(system)`. The `:mtk` backend
-  checks compiled results for unsupported algebraic crossings on both the `true` and
-  function routes. With `false`, this check is not applied; call
-  [`check_algebraic_crossings`](@ref) after compiling the system yourself.
+  completes unfixed state starts, finalizes retained-array reinit targets, and checks
+  compiled results for unsupported algebraic crossings on both the `true` and function
+  routes. With `false`, compile the system yourself and keep the result of
+  `compiled = check_algebraic_crossings(compiled)`. For other discrete backends, use
+  [`complete_unfixed_initialization`](@ref) to complete starts alone. On `:mtk`, that
+  function alone does not finalize array reinit targets; use
+  [`check_algebraic_crossings`](@ref), which also completes starts.
 
 ## Returns
 - A `ModelingToolkitBase.System` representing the equations, variables, parameters,

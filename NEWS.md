@@ -12,13 +12,22 @@
   one branch. The Julia parser accepts a negative left side after `else`.
 - Unfixed state starts supply missing initial values after state selection, while
   explicit initial equations and algebraic initialization constraints take precedence.
-  Completed starts yield to user initial values, including coupled-state overrides
-  through `ODEProblem` and `remake`. Ambiguous starts are chosen in declaration order.
+  Completed starts yield to user initial values, including coupled linear state overrides
+  through `ODEProblem` and `remake(...; u0 = ...)`. Ambiguous starts are chosen in
+  declaration order. For coupled groups, parameter-only `remake` keeps the previous
+  initial point as its guess; pass `u0` or rebuild `ODEProblem` to reevaluate starts.
+  Nonlinear algebraic equations can read states with unfixed starts. Nonlinear coupled
+  groups retain declaration-order start defaults and nonlinear iteration guesses;
+  a user `u0` on a sibling can overdetermine initialization (`InitialFailure`).
+  Linear initialization constraints are rank-checked at declared parameter values:
+  inconsistent constraints fail clearly and redundant constraints use starts for free
+  coordinates. Whole-array initial reductions participate in retained-array incidence.
   After `simplify = false`, the exported `check_algebraic_crossings(compiled)` hook also
-  completes initialization; `complete_unfixed_initialization(compiled)` is available for
-  other discrete backends. Keep the returned system from either hook.
-  Underdetermined nonlinear initialization components and time-driven changes between
-  differential and algebraic state constraints are rejected before solving.
+  completes initialization and finalizes array reinit targets;
+  `complete_unfixed_initialization(compiled)` is available for other discrete backends.
+  On `:mtk`, use `check_algebraic_crossings` for array reinit finalization. Keep the
+  returned system from either hook. Time-driven changes between differential and
+  algebraic state constraints are rejected before solving.
 - Whole-array reads in `when` bodies and relation-Boolean definitions participate in
   the same event dependency checks as element reads, including reductions and aliases.
 

@@ -3,6 +3,21 @@ using BaseModelica
 using ModelingToolkit
 using OrdinaryDiffEq
 
+# Dyad is optional: exercise the documented routes when it is available without
+# making it a test dependency. An installed but broken Dyad should fail visibly.
+unfixed_dyad_available = Base.find_package("DyadInterface") !== nothing
+if unfixed_dyad_available
+    @eval import DyadInterface
+end
+
+# These reviewed probes are tracked fixtures; tests never read ignored outputs/.
+unfixed_fixture_cases = (
+    :nonlinear_algebraic_root, :nonlinear_algebraic_exp, :nonlinear_ode_algebraic,
+    :nonlinear_coupled, :fixed_mixed_coupled, :array_fixed_mixed_coupled,
+    :singular_inconsistent_coupled, :singular_redundant_coupled, :array_sum_coupled,
+    :quaternion_dae, :coupled_start_parameter_remake, :coupled_constraint_parameter_remake,
+)
+
 # Filters support a separate bounded Julia process for every model/parser/array mode.
 unfixed_cases = (
     :minimal, :tunable_if, :initial_override, :coupled_initial, :array, :array_partial,
@@ -10,10 +25,10 @@ unfixed_cases = (
     :constant_array, :constant_array_partial, :constant_coupled, :conditional_state,
     :nested_conditional_state,
     :parameter_start, :coupled_parameter_start, :array_coupled, :array_scalar_coupled,
-    :nonlinear_ode, :nonlinear_dae_rejected, :dynamic_state_rejected,
+    :nonlinear_ode, :dynamic_state_rejected,
     :initial_derivative, :inconsistent_initial, :inconsistent_fixed_start, :inconsistent_direct_initial,
     :index2_start,
-    :repeated_consistent_initial,
+    :repeated_consistent_initial, :dyad_route, unfixed_fixture_cases...,
 )
 unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
     Tuple(x for x in values if string(x) == ENV[key])
@@ -23,7 +38,9 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         parser in unfixed_selected((:julia, :antlr), "BASEMODELICA_REVIEW_PARSER"),
         arrays in unfixed_selected((:scalarize, :keep), "BASEMODELICA_REVIEW_ARRAYS"),
         path in unfixed_selected((:automatic, :manual), "BASEMODELICA_UNFIXED_PATH")
-    body = if case === :minimal
+    body = if case in unfixed_fixture_cases
+        "" # The complete model is read directly from its tracked fixture below.
+    elseif case === :minimal
         """
         parameter Real 'k' = 1;
         Real 'x'(start = 1);
@@ -75,16 +92,6 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         """
         parameter Real 'k' = 1; Real 'x'(start = 1);
         equation der('x') = -'k'*'x'^2;
-        """
-    elseif case === :nonlinear_dae_rejected
-        """
-        parameter Real 'L' = 1; parameter Real 'g' = 9.81;
-        Real 'x'(start = 0.6); Real 'y'(start = -0.8);
-        Real 'vx'(start = 0); Real 'vy'(start = 0); Real 'lam';
-        equation
-          der('x') = 'vx'; der('y') = 'vy';
-          der('vx') = -'lam'*'x'; der('vy') = -'lam'*'y' - 'g';
-          'x'^2 + 'y'^2 = 'L'^2;
         """
     elseif case === :dynamic_state_rejected
         """
@@ -167,7 +174,7 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         initial equation 0 = 'x' - 2;
         equation der('x') = -'k'*'x';
         """
-    elseif case === :coupled_initial
+    elseif case in (:coupled_initial, :dyad_route)
         """
         parameter Real 'k' = 1;
         Real 'x'(start = 1); Real 'y'(start = 1);
@@ -198,8 +205,14 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         """
     end
     mktempdir() do dir
-        file = joinpath(dir, "unfixed.bmo")
-        write(file, """//! base 0.1.0
+        if case === :dyad_route && !unfixed_dyad_available
+            @test_skip unfixed_dyad_available
+            return
+        end
+        file = case in unfixed_fixture_cases ?
+            joinpath(@__DIR__, "unfixed_start", string(case) * ".bmo") :
+            joinpath(dir, "unfixed.bmo")
+        case in unfixed_fixture_cases || write(file, """//! base 0.1.0
         package 'UnfixedStart'
           model 'UnfixedStart'
           $body
@@ -208,11 +221,14 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
         """)
         compile_model() = if path === :manual
             raw = parse_basemodelica(file; parser, arrays, simplify = false)
-            check_algebraic_crossings(mtkcompile(raw))
+            compiled = case === :dyad_route ? DyadInterface.simplify_model(raw) : mtkcompile(raw)
+            check_algebraic_crossings(compiled)
+        elseif case === :dyad_route
+            parse_basemodelica(file; parser, arrays, simplify = DyadInterface.simplify_model)
         else
             parse_basemodelica(file; parser, arrays)
         end
-        if case in (:nonlinear_dae_rejected, :dynamic_state_rejected)
+        if case === :dynamic_state_rejected
             err = try
                 compile_model()
                 nothing
@@ -220,22 +236,106 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
                 e
             end
             @test err isa BaseModelica.UnsupportedFeatureError
-            message = case === :nonlinear_dae_rejected ? "nonlinear initialization component" :
-                "time-dependent if-equation changes the initialization constraints"
-            @test occursin(message, sprint(showerror, err))
+            @test occursin("time-dependent if-equation changes the initialization constraints", sprint(showerror, err))
             return
         end
-        sys = compile_model()
+        sys = try
+            compile_model()
+        catch err
+            # Affine rank checking may reject inconsistency before problem creation.
+            if case in (:inconsistent_initial, :inconsistent_fixed_start,
+                    :inconsistent_direct_initial, :singular_inconsistent_coupled)
+                @test err isa BaseModelica.UnsupportedFeatureError
+                @test occursin("inconsisten", lowercase(sprint(showerror, err)))
+                return
+            end
+            rethrow()
+        end
         @test complete_unfixed_initialization(sys) === sys
         prob = ODEProblem(sys, [], (0.0, 1.0))
-        sol = solve(prob, case in (:conditional_state, :nested_conditional_state, :index2_start) ? Rodas5P() : Tsit5(); reltol = 1e-9, abstol = 1e-11)
-        if case in (:inconsistent_initial, :inconsistent_fixed_start, :inconsistent_direct_initial)
+        sol = solve(prob, case in (:conditional_state, :nested_conditional_state, :index2_start, :nonlinear_algebraic_root, :nonlinear_algebraic_exp, :nonlinear_ode_algebraic, :quaternion_dae) ? Rodas5P() : Tsit5(); reltol = 1e-9, abstol = 1e-11)
+        if case in (:inconsistent_initial, :inconsistent_fixed_start, :inconsistent_direct_initial, :singular_inconsistent_coupled)
             # An independent free y must not hide contradictory constraints on x.
             @test sol.retcode == ReturnCode.InitialFailure
             return
         end
         @test sol.retcode == ReturnCode.Success
-        if case === :repeated_consistent_initial
+        if case in (:nonlinear_algebraic_root, :nonlinear_algebraic_exp, :nonlinear_ode_algebraic)
+            # V04c/e/g: an independent unfixed state must remain supported when a
+            # nonlinear algebraic equation reads it. Check the trajectory and root.
+            @test sol(0.0; idxs = sys.x) ≈ (case === :nonlinear_ode_algebraic ? 2 : 1)
+            if case === :nonlinear_algebraic_exp
+                @test sol(0.0; idxs = sys.y) ≈ 0.4428544010023886 rtol = 1e-7
+            elseif case === :nonlinear_ode_algebraic
+                @test sol(0.0; idxs = sys.y) ≈ 1.4987011335178484 rtol = 1e-7
+            end
+            for t in (0.0, 0.25, 0.75, 1.0)
+                x, y = sol(t; idxs = [sys.x, sys.y])
+                @test x ≈ (case === :nonlinear_ode_algebraic ? 2/(1 + 2t) : exp(-t)) rtol = 1e-7
+                if case === :nonlinear_algebraic_root
+                    @test y ≈ -sqrt(x + 3) rtol = 1e-7
+                elseif case === :nonlinear_algebraic_exp
+                    @test y + exp(y) ≈ x + 1 rtol = 1e-7
+                else
+                    @test 2y ≈ x + sin(y) rtol = 1e-7
+                end
+            end
+        elseif case === :nonlinear_coupled
+            # V04f: declaration-order x=-1 selects OMC's (-1,4), rather than
+            # fixing y's start and selecting the other valid point (-2,1).
+            @test sol(0.0; idxs = [sys.x, sys.y]) ≈ [-1, 4]
+            @test sol(0.0; idxs = sys.x)^2 + sol(0.0; idxs = sys.y) ≈ 5
+            @test sol(1.0; idxs = [sys.x, sys.y]) ≈ [-1, 4] .* exp(-1) rtol = 1e-7
+            sibling = solve(remake(prob; u0 = [sys.y => 3.0]), Tsit5(); reltol = 1e-9, abstol = 1e-11)
+            @test sibling.retcode == ReturnCode.InitialFailure
+        elseif case === :fixed_mixed_coupled
+            # V03f: Initial(x) in the projection is a parameter, not an unresolved state.
+            @test sol(0.0; idxs = [sys.x, sys.y, sys.z]) ≈ [1, 2, 7]
+            @test sol(1.0; idxs = [sys.x, sys.y, sys.z]) ≈ [1, 2, 7] .* exp(-1) rtol = 1e-7
+        elseif case in (:array_fixed_mixed_coupled, :array_sum_coupled)
+            # V03d and V12: mixed fixed starts and whole-array incidence must
+            # select the same declaration-order coordinates in both array modes.
+            elems = [arrays === :keep ? sys.x[i] : getproperty(sys, Symbol("x[$i]")) for i in 1:3]
+            @test sol(0.0; idxs = elems) ≈ [1, 2, 7]
+            @test sol(1.0; idxs = elems) ≈ [1, 2, 7] .* exp(-1) rtol = 1e-7
+            if case === :array_fixed_mixed_coupled
+                @test sol(0.0; idxs = sys.y) ≈ 3
+            end
+        elseif case === :singular_redundant_coupled
+            # V02c is numerically rank deficient despite a full structural matching.
+            @test sol(0.0; idxs = [sys.x, sys.y]) ≈ [1, 2]
+            @test sol(1.0; idxs = [sys.x, sys.y]) ≈ [1, 2] .* exp(-1) rtol = 1e-7
+        elseif case in (:coupled_start_parameter_remake, :coupled_constraint_parameter_remake)
+            @test sol(0.0; idxs = [sys.x, sys.y]) ≈ (case === :coupled_start_parameter_remake ? [2, 1] : [1, 2])
+            parameter = case === :coupled_start_parameter_remake ? sys.x0 : sys.c
+            value = case === :coupled_start_parameter_remake ? 4.0 : 5.0
+            changed = solve(remake(prob; p = [parameter => value]), Tsit5(); reltol = 1e-9, abstol = 1e-11)
+            @test changed.retcode == ReturnCode.Success
+            if case === :coupled_start_parameter_remake
+                @test changed(0.0; idxs = [sys.x, sys.y]) ≈ [2, 1]
+            else
+                # MTK may choose a different point from the new starts, but it
+                # must satisfy the updated real constraint.
+                @test sum(changed(0.0; idxs = [sys.x, sys.y])) ≈ value
+            end
+            expected = case === :coupled_start_parameter_remake ? [4, -1] : [1, 4]
+            for rebuilt in (ODEProblem(sys, [parameter => value], (0.0, 1.0)),
+                    remake(prob; p = [parameter => value], u0 = [sys.x => expected[1]]))
+                reevaluated = solve(rebuilt, Tsit5(); reltol = 1e-9, abstol = 1e-11)
+                @test reevaluated.retcode == ReturnCode.Success
+                @test reevaluated(0.0; idxs = [sys.x, sys.y]) ≈ expected
+            end
+        elseif case === :quaternion_dae
+            # Q2: check OMC's initial point and endpoint, plus the unit constraint.
+            # OMC keeps Q[4]'s rounded start and adjusts Q[1] by about 1.4e-6;
+            # declaration-order completion may instead keep Q[1] exactly at 0.1.
+            elems = [arrays === :keep ? sys.Q[i] : getproperty(sys, Symbol("Q[$i]")) for i in 1:4]
+            @test sol(0.0; idxs = elems) ≈ [0.099998605, 0.2, 0.3, 0.927362] atol = 2e-6
+            @test sol(1.0; idxs = elems) ≈ [0.453528, 0.531817, 0.183178, 0.691324] atol = 2e-6
+            for t in (0.0, 0.25, 0.75, 1.0)
+                @test sum(abs2, sol(t; idxs = elems)) ≈ 1 atol = 1e-7
+            end
+        elseif case === :repeated_consistent_initial
             @test sol(0.0; idxs = sys.x) ≈ 1
             @test sol(0.0; idxs = sys.y) ≈ 5
             @test sol(1.0; idxs = sys.x) ≈ 1
@@ -345,7 +445,7 @@ unfixed_selected(values, key) = isempty(get(ENV, key, "")) ? values :
             @test sol(0.0; idxs = sys.y) ≈ 0 atol = 1e-8
             @test sol(0.0; idxs = sys.z) ≈ 0 atol = 1e-8
             @test abs(sol(0.0; idxs = sys.q)) ≈ 1
-        elseif case in (:coupled_initial, :coupled_parameter_start)
+        elseif case in (:coupled_initial, :coupled_parameter_start, :dyad_route)
             @test sol(0.0; idxs = sys.x) ≈ 1
             @test sol(0.0; idxs = sys.y) ≈ 2
             @test sol(1.0; idxs = sys.x) + sol(1.0; idxs = sys.y) ≈ 3exp(-1) rtol = 1e-7

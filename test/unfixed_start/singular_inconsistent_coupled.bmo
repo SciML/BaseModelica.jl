@@ -1,0 +1,15 @@
+//! base 0.1.0
+package P
+model M
+  Real x(start = 1);
+  Real y(start = 1);
+  Real z(start = 4);
+initial equation
+  x + y = 3;
+  2*x + 2*y = 8;
+equation
+  der(x) = -x;
+  der(y) = -y;
+  der(z) = -z;
+end M;
+end P;
