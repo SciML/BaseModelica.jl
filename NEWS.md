@@ -9,10 +9,20 @@
   `create_odeproblem(file; saveat = Float64[])`
   and pass the interval as `saveat` to `solve` instead. The README and docs show this path.
 - `arrays = :keep` preserves supported numeric arrays as ModelingToolkit array symbols
-  and emits whole-array equations. Unsupported declarations fall back individually to
-  scalar symbols, with debug diagnostics. Matrix powers and mixed loop/whole-array
+  and emits whole-array equations, except in models with when-equations, where the
+  discrete backend currently returns scalar equations. Unsupported declarations fall back
+  individually to scalar symbols, with debug diagnostics. Matrix powers and mixed loop/whole-array
   if-equation branches preserve Modelica array semantics. The default remains
   `arrays = :scalarize`.
+
+- Initial if-equations select branches using load-time constant and parameter values.
+  False branches without an `else` contribute no constraint, preserving variable starts.
+  Conditions that cannot be resolved at load raise an unsupported-feature error.
+- Modelica `promote(A, n)` adds trailing singleton dimensions. `scalar`, `vector` and
+  `matrix` also validate dimensionality when converting arrays.
+- Both parsers accept field access on function results, such as `f(x).y`.
+- Partly assigned array and record function locals report unassigned execution paths
+  instead of failing with an internal type error.
 
 - Records support nested components and parameters, starts and bindings, constructors,
   and record inputs/outputs and field assignments in user functions. Function record values

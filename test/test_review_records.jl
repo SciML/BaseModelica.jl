@@ -79,10 +79,6 @@ end
             @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path(case); parser, arrays)
         end
         @test_throws Exception parse_basemodelica(path("A6"); parser, arrays)
-        if parser === :julia
-            @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path("A11"); parser, arrays)
-        else
-            @test_throws BaseModelica.BaseModelicaParseError parse_basemodelica(path("A11"); parser, arrays)
-        end
+        @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path("A11"); parser, arrays)
     end
 end

@@ -40,6 +40,23 @@ function function_local_value(value, var)
     return value
 end
 
+# Partly initialized aggregates contain `nothing` leaves. Merge those explicitly:
+# symbolic ifelse cannot represent an element/field that has no value on one path.
+# Leaves unassigned in both branches remain available for later assignments.
+function merge_function_local(cond, a, b, var)
+    a === b && return a
+    if a isa UnassignedFunctionLocal || b isa UnassignedFunctionLocal
+        return UNASSIGNED_FUNCTION_LOCAL
+    elseif isnothing(a) || isnothing(b)
+        unsupported("function local `$var` is unassigned on some execution paths")
+    elseif a isa NamedTuple && b isa NamedTuple && keys(a) == keys(b)
+        return NamedTuple{keys(a)}(map((x, y) -> merge_function_local(cond, x, y, var), values(a), values(b)))
+    elseif a isa Array && b isa Array && size(a) == size(b)
+        return typed_numeric_array(map((x, y) -> merge_function_local(cond, x, y, var), a, b))
+    end
+    return modelica_ifelse(cond, a, b)
+end
+
 function with_local_scope(f, scope)
     old = LOCAL_SCOPE[]
     LOCAL_SCOPE[] = scope
@@ -257,11 +274,7 @@ function run_statement!(scope, st::BaseModelicaIfStatement, f)
         for var in union(keys(then_scope), keys(else_scope))
             if haskey(then_scope, var) && haskey(else_scope, var)
                 a, b = then_scope[var], else_scope[var]
-                scope[var] = if a isa UnassignedFunctionLocal || b isa UnassignedFunctionLocal
-                    UNASSIGNED_FUNCTION_LOCAL
-                else
-                    a === b ? a : modelica_ifelse(cond, a, b)
-                end
+                scope[var] = merge_function_local(cond, a, b, var)
             elseif any(entry -> entry[1] == var, f.outputs)
                 unsupported("function `$(f.name)`: `$var` is assigned in only some branches of an if-statement")
             else

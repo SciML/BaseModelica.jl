@@ -17,7 +17,6 @@
 #
 # Array arguments: the functions listed in `ELEMENTWISE_FUNCTIONS` (arrays.jl) apply
 # elementwise; the array functions below follow Spec 10.3 for arrays of symbolic scalars.
-# `promote` is not supported.
 
 function_map = Dict(
     # ── Derivative operator (Spec 3.7.4) ──────────────────────────────────────
@@ -106,7 +105,8 @@ function_map = Dict(
     :cross => x -> cross_product(x...),
     :skew => x -> skew_matrix(only(x)),
     :symmetric => x -> symmetric_matrix(only(x)),
-    :scalar => x -> only(only(x)),
+    :promote => x -> promote_array(x...),
+    :scalar => x -> to_scalar(only(x)),
     :vector => x -> to_vector(only(x)),
     :matrix => x -> to_matrix(only(x)),
     # constsize(a, sizes...) only asserts sizes, which are constant here anyway

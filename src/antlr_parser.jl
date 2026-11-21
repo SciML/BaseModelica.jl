@@ -1172,7 +1172,7 @@ end
 function visit_primary(visitor::ASTBuilderVisitor, ctx::Py)
     # primary: UNSIGNED_NUMBER | STRING | 'false' | 'true'
     #   | ('der' | 'initial' | 'pure') functionCallArgs
-    #   | componentReference functionCallArgs?
+    #   | componentReference (functionCallArgs ('.' IDENT)*)?
     #   | '(' outputExpressionList ')' arraySubscripts?
     #   | '[' expressionList (';' expressionList)* ']'
     #   | '{' arrayArguments '}'
@@ -1216,7 +1216,11 @@ function visit_primary(visitor::ASTBuilderVisitor, ctx::Py)
         if !is_null(ctx.functionCallArgs())
             args = visit_functionCallArgs(visitor, ctx.functionCallArgs())
             # Keep the full (possibly dotted) name, as the :julia parser does
-            return BaseModelicaFunctionCall(comp_ref, args)
+            value = BaseModelicaFunctionCall(comp_ref, args)
+            for field in ctx.IDENT()
+                value = BaseModelicaFieldAccess(value, get_text(field))
+            end
+            return value
         else
             return comp_ref
         end

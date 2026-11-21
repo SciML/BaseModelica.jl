@@ -312,11 +312,11 @@ primary
     | 'false'
     | 'true'
     | ('der' | 'initial' | 'pure') functionCallArgs
-    | componentReference functionCallArgs?
     | '(' outputExpressionList ')' arraySubscripts?
     | '[' expressionList (';' expressionList)* ']'
     | '{' arrayArguments '}'
     | 'end'
+    | componentReference (functionCallArgs ('.' IDENT)*)?
     ;
 
 typeSpecifier

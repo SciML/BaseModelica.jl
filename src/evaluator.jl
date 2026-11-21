@@ -172,6 +172,22 @@ function branch_equations(branch)
 end
 
 function eval_AST(if_eq::BaseModelicaIfEquation)
+    if EVAL_MODE[] === :initial
+        # Initial branches may constrain different variables (or no variables).
+        # Select their structure before evaluating any equations; a missing else
+        # contributes no constraint, rather than a default value for its targets.
+        for (condition, branch) in zip(if_eq.ifs, if_eq.thens)
+            value = resolve_value(eval_AST(condition), parameter_val_map)
+            value = concrete_value(SymbolicUtils.substitute(value, Dict(); fold = Val(true)))
+            value isa Bool || unsupported(
+                "initial if-equation condition must be evaluable at load time from constants or bound parameters"
+            )
+            value && return branch_equations(branch)
+        end
+        return length(if_eq.thens) > length(if_eq.ifs) ?
+            branch_equations(if_eq.thens[end]) : Equation[]
+    end
+
     # Convert if-equation to nested ifelse calls
     # Structure: ifs[i] contains condition, thens[i] contains a list of equations for that branch
     # If length(thens) > length(ifs), thens[end] is the else branch (no condition)

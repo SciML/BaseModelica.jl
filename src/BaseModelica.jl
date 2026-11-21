@@ -47,7 +47,8 @@ Parse a BaseModelica source file into a ModelingToolkit system.
   `:julia` uses the ParserCombinator implementation.
 - `arrays = :scalarize`: Array representation at load. `:scalarize` creates separate scalar
   symbols; `:keep` preserves supported arrays as ModelingToolkit array symbols and emits
-  whole-array equations. Structural sizes are evaluated at load. Unsupported components
+  whole-array equations, except in models with when-equations, where the discrete backend
+  currently returns scalar equations. Structural sizes are evaluated at load. Unsupported components
   fall back individually to scalar symbols with an `@debug` message.
 - `discrete_backend = :auto`: How discrete variables and `when` equations are lowered: the
   name of a registered backend, or an [`AbstractDiscreteBackend`](@ref) instance. `:mtk`

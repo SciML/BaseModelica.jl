@@ -403,13 +403,33 @@ end
 
 symmetric_matrix(A) = [i <= j ? A[i, j] : A[j, i] for i in axes(A, 1), j in axes(A, 2)]
 
+function promote_array(x, n)
+    n = to_int(n, "promote() dimension")
+    dims = is_array(x) ? size(x) : ()
+    n >= length(dims) || unsupported("promote() dimension must be at least ndims(A)")
+    n == length(dims) && return x
+    shape = (dims..., ntuple(_ -> 1, n - length(dims))...)
+    return is_array(x) ? reshape(x, shape) : fill(x, shape)
+end
+
+function to_scalar(x)
+    is_array(x) || return x
+    all(==(1), size(x)) || unsupported("scalar() requires all dimensions to have size 1")
+    return only(x)
+end
+
 function to_vector(x)
     is_array(x) || return [x]
     count(>(1), size(x)) <= 1 || unsupported("vector() of an array with more than one dimension of size > 1")
     return vec(x)
 end
 
-to_matrix(x) = is_array(x) ? (ndims(x) == 1 ? reshape(x, :, 1) : x) : fill(x, 1, 1)
+function to_matrix(x)
+    (!is_array(x) || ndims(x) < 2) && return promote_array(x, 2)
+    all(==(1), size(x)[3:end]) ||
+        unsupported("matrix() requires dimensions after the first two to have size 1")
+    return reshape(x, size(x, 1), size(x, 2))
+end
 
 reduce_or_scalar(f, reduction, x) = length(x) == 1 && is_array(x[1]) ? reduction(x[1]) : f(x...)
 
