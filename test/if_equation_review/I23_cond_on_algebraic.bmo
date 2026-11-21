@@ -1,0 +1,12 @@
+//! base 0.1.0
+package P
+model M
+  Real w;
+  Real x(start = 3.0);
+initial equation
+  if w > 0 then x = 1.0; else x = 2.0; end if;
+equation
+  w = time - 0.5;
+  der(x) = -x;
+end M;
+end P;

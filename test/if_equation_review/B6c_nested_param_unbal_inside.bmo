@@ -1,0 +1,19 @@
+//! base 0.1.0
+package P
+model M
+  parameter Boolean p = false;
+  Real x(start = 1, fixed = true);
+  Real y;
+  Real z;
+equation
+  der(x) = -x;
+  if p then z = 5.0; end if;
+  if time < 0.5 then
+    y = 1.0;
+    if not p then z = 6.0; end if;
+  else
+    y = 3.0;
+    if not p then z = 7.0; end if;
+  end if;
+end M;
+end P;

@@ -1,0 +1,10 @@
+//! base 0.1.0
+package P
+model M
+Real x(start = 3.0);
+initial equation
+if initial() then x = 1.0; end if;
+equation
+der(x) = -x;
+end M;
+end P;

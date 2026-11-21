@@ -1,0 +1,25 @@
+//! base 0.1.0
+package P
+  type Init = enumeration(NoInit, SteadyState, InitialState, InitialOutput);
+model M
+  parameter Init initType = Init.InitialState;
+  parameter Real y_start = 2.0;
+  parameter Init initType2 = Init.SteadyState;
+  Real y;
+  Real z(start = 5.0);
+initial equation
+  if initType == Init.SteadyState then
+    der(y) = 0;
+  elseif initType == Init.InitialState or initType == Init.InitialOutput then
+    y = y_start;
+  end if;
+  if initType2 == Init.SteadyState then
+    der(z) = 0;
+  elseif initType2 == Init.InitialState then
+    z = 3.0;
+  end if;
+equation
+  der(y) = -y;
+  der(z) = 1.0 - z;
+end M;
+end P;

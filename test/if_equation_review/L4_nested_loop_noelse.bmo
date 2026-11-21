@@ -1,0 +1,15 @@
+//! base 0.1.0
+package P
+model M
+  Real x(start = 1, fixed = true);
+  Real y[3, 3];
+equation
+  der(x) = -x;
+  for i in 1:3 loop
+    for j in 1:3 loop
+      if i == j then y[i, j] = x; end if;
+      if i <> j then y[i, j] = i * 10 + j; end if;
+    end for;
+  end for;
+end M;
+end P;

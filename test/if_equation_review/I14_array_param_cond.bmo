@@ -1,0 +1,11 @@
+//! base 0.1.0
+package P
+model M
+  parameter Real v[2] = {-1.0, 2.0};
+  Real x[2](each start = 3.0);
+initial equation
+  if v[1] > 0 then x = {1.0, 1.0}; elseif v[2] > 0 then x = {7.0, 8.0}; end if;
+equation
+  der(x) = -x;
+end M;
+end P;

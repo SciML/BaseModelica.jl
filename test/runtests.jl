@@ -37,6 +37,10 @@ run_tests(;
         return nothing
     end,
     groups = Dict(
+        "IfEquations" => function ()
+            @safetestset "If Equation Review Regressions" include("test_if_equation_review.jl")
+            return nothing
+        end,
         "EventSteps" => function ()
             @safetestset "Event Step Regression Tests" include("test_event_step_regressions.jl")
             return nothing
@@ -44,5 +48,5 @@ run_tests(;
     ),
     qa = (; env = joinpath(@__DIR__, "qa"), body = qa_group),
     umbrellas = Dict("Quality" => ["QA"]),
-    all = ["Core", "EventSteps", "QA"],
+    all = ["Core", "EventSteps", "IfEquations", "QA"],
 )

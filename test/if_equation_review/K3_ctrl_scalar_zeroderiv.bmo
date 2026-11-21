@@ -1,0 +1,8 @@
+//! base 0.1.0
+package P
+model M
+  Real x(start = 3.0);
+equation
+  der(x) = 0.0;
+end M;
+end P;

@@ -1,0 +1,11 @@
+//! base 0.1.0
+package P
+model M
+  parameter Real p = -1.0 annotation(Evaluate = true);
+  Real x(start = 3.0);
+initial equation
+  if p > 0 then x = 1.0; elseif p < -0.5 then x = 7.0; end if;
+equation
+  der(x) = -x;
+end M;
+end P;
