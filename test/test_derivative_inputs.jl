@@ -38,6 +38,10 @@ end
                 elseif startswith(file, "A6c")
                     Dict("x[1]" => t -> 1 - min(t, 0.5) + 2max(t - 0.5, 0),
                         "x[2]" => t -> 1 - 2min(t, 0.5) + max(t - 0.5, 0))
+                elseif startswith(file, "A7")
+                    active = startswith(file, "A7c")
+                    Dict("x" => t -> active ? exp(-t) : 2.0,
+                        "y" => t -> active ? 1.0 : 0.0)
                 elseif startswith(file, "A8_")
                     Dict("x" => t -> exp(-min(t, 0.5)) + max(t - 0.5, 0),
                         "y" => t -> t < 0.5 ? -exp(-t) : 0.0)
@@ -54,6 +58,13 @@ end
                     @test other.retcode == ReturnCode.Success
                     @test other(0.375; idxs = sys.a) ≈ 0 atol = 1e-10
                     @test other(0.375; idxs = sys.v) ≈ exp(-0.375) rtol = 2e-7
+                elseif startswith(file, "A7")
+                    active = startswith(file, "A7b")
+                    other = solve(BaseModelica.SciMLBase.remake(sol.prob; p = [sys.b => active]),
+                        Rodas5P(); reltol = 1e-10, abstol = 1e-12)
+                    @test other.retcode == ReturnCode.Success
+                    @test other(0.375; idxs = sys.x) ≈ (active ? exp(-0.375) : 2.0) rtol = 2e-7
+                    @test other(0.375; idxs = sys.y) ≈ (active ? 1.0 : 0.0) atol = 1e-10
                 end
             end
         end

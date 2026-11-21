@@ -1185,7 +1185,7 @@ function complete_unfixed_initialization(sys)
             for v in vcat(Symbolics.scalarize(var))
     ]
     indices = Dict(v => i for (i, v) in enumerate(unknowns))
-    function incidence!(row, value)
+    function incidence!(row, value, choices, conditions)
         value = Symbolics.unwrap(value)
         if haskey(indices, value)
             push!(row, indices[value])
@@ -1193,17 +1193,24 @@ function complete_unfixed_initialization(sys)
         end
         if SymbolicUtils.iscall(value) && SymbolicUtils.operation(value) === ifelse
             args = SymbolicUtils.arguments(value)
-            condition = concrete_value(SymbolicUtils.substitute(
+            expression = Symbolics.unwrap(SymbolicUtils.substitute(
                 first(args), time_rule; fold = Val(true)
             ))
+            condition = concrete_value(expression)
+            if !(condition isa Bool)
+                push!(conditions, expression)
+                condition = get(choices, expression, nothing)
+            end
             if condition isa Bool
-                incidence!(row, args[condition ? 2 : 3])
+                incidence!(row, args[condition ? 2 : 3], choices, conditions)
                 return
             end
         end
-        return foreach(child -> incidence!(row, child), differentiated_children(value))
+        return foreach(child -> incidence!(row, child, choices, conditions), differentiated_children(value))
     end
+    residuals = Any[]
     rows = Vector{Int}[]
+    row_conditions = Set{Any}[]
     for eq in equations(init)
         # Scalar equations already expose their variables to the incidence walk.
         # Recursively scalarizing their builtin calls can require unknown shapes.
@@ -1217,38 +1224,93 @@ function complete_unfixed_initialization(sys)
             # An initial time condition has only its active branch's incidence.
             # Counting both could fix the state constrained by that active branch.
             row = Int[]
-            incidence!(row, scalar_eq.lhs - scalar_eq.rhs)
+            conditions = Set{Any}()
+            residual = scalar_eq.lhs - scalar_eq.rhs
+            incidence!(row, residual, Dict(), conditions)
+            push!(residuals, residual)
             push!(rows, unique!(row))
+            push!(row_conditions, conditions)
         end
     end
 
     # Augmenting paths let an existing equation move to another variable when a start
     # is added. Thus x+y=1 can determine y while x uses its start; simply excluding
     # every state mentioned in an initial equation would leave both unconstrained.
-    assigned = zeros(Int, length(unknowns))
-    function match_row(row, seen)
+    function match_row(rows, assigned, row, seen)
         for v in rows[row]
             seen[v] && continue
             seen[v] = true
-            if assigned[v] == 0 || match_row(assigned[v], seen)
+            if assigned[v] == 0 || match_row(rows, assigned, assigned[v], seen)
                 assigned[v] = row
                 return true
             end
         end
         return false
     end
-    for row in eachindex(rows)
-        match_row(row, falses(length(unknowns)))
+    # Separate independent incidence components before considering symbolic
+    # branches. Many independent conditional ODEs then need two graphs each,
+    # rather than a product of every model-wide Boolean combination.
+    parent = collect(eachindex(unknowns))
+    function root(v)
+        while parent[v] != v
+            parent[v] = parent[parent[v]]
+            v = parent[v]
+        end
+        return v
     end
+    for row in rows
+        isempty(row) && continue
+        for v in row
+            parent[root(v)] = root(first(row))
+        end
+    end
+    candidates = Any[
+        Symbolics.unwrap(var) for state in states for var in vcat(Symbolics.scalarize(state))
+            if haskey(guesses, Symbolics.unwrap(var)) && haskey(indices, Symbolics.unwrap(var))
+    ]
     starts = Pair[]
-    for state in states, var in vcat(Symbolics.scalarize(state))
-        var = Symbolics.unwrap(var)
-        haskey(guesses, var) && haskey(indices, var) || continue
-        push!(rows, [indices[var]])
-        if match_row(length(rows), falses(length(unknowns)))
-            push!(starts, var => guesses[var])
-        else
-            pop!(rows)
+    for component in unique(root(indices[var]) for var in candidates)
+        selected_rows = findall(row -> !isempty(row) && root(first(row)) == component, rows)
+        conditions = collect(reduce(union, row_conditions[selected_rows]; init = Set{Any}()))
+        graphs = NamedTuple{(:rows, :assigned), Tuple{Vector{Vector{Int}}, Vector{Int}}}[]
+        seen_graphs = Set{Any}()
+        for values in Iterators.product(((false, true) for _ in conditions)...)
+            choices = Dict(zip(conditions, values))
+            variant = Vector{Int}[]
+            for i in selected_rows
+                row = Int[]
+                incidence!(row, residuals[i], choices, Set{Any}())
+                push!(variant, sort!(unique!(row)))
+            end
+            signature = Tuple(Tuple(row) for row in variant)
+            signature in seen_graphs && continue
+            push!(seen_graphs, signature)
+            assigned = zeros(Int, length(unknowns))
+            for row in eachindex(variant)
+                match_row(variant, assigned, row, falses(length(unknowns)))
+            end
+            push!(graphs, (rows = variant, assigned = assigned))
+        end
+        # A tunable branch can make an apparent state algebraically determined.
+        # Promote its start only when the extra condition is independent in
+        # every branch, preserving real constraints and remake in either direction.
+        for var in candidates
+            root(indices[var]) == component || continue
+            proposed = [copy(graph.assigned) for graph in graphs]
+            independent = true
+            for (i, graph) in enumerate(graphs)
+                push!(graph.rows, [indices[var]])
+                matched = match_row(graph.rows, proposed[i], length(graph.rows), falses(length(unknowns)))
+                independent &= matched
+            end
+            if independent
+                push!(starts, var => guesses[var])
+                for (i, graph) in enumerate(graphs)
+                    graph.assigned .= proposed[i]
+                end
+            else
+                foreach(graph -> pop!(graph.rows), graphs)
+            end
         end
     end
     isempty(starts) && return sys
