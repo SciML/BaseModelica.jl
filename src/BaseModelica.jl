@@ -316,7 +316,7 @@ end
 include("precompilation.jl")
 
 export parse_basemodelica, create_odeproblem, parse_experiment_annotation,
-    experiment_settings
+    experiment_settings, check_algebraic_crossings, complete_unfixed_initialization
 
 # The discrete backend interface is public but not exported (`public` needs Julia 1.11).
 @static if VERSION >= v"1.11"
@@ -324,8 +324,7 @@ export parse_basemodelica, create_odeproblem, parse_experiment_annotation,
         Meta.parse(
             "public AbstractDiscreteBackend, MTKEventsBackend, DiscreteModel, WhenBlock, " *
                 "LoweredDiscrete, lower_discrete, declare_discrete, compile_system, when_edge, " *
-                "register_discrete_backend!, unregister_discrete_backend!, UnsupportedFeatureError, " *
-                "check_algebraic_crossings"
+                "register_discrete_backend!, unregister_discrete_backend!, UnsupportedFeatureError"
         )
     )
 end

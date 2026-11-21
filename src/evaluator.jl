@@ -1139,6 +1139,9 @@ function eval_AST(
         tstops = isempty(tstops_collection) ? [] : Any[copy(tstops_collection)],
     )
     experiment = parse_experiment_annotation(composition.annotation)
+    # Compilation and state selection can reorder the equations and unknowns.
+    # Keep the Modelica declaration order for choosing among unfixed starts.
+    sys = SymbolicUtils.setmetadata(sys, InitializationDeclarationOrder, copy(vars))
     if !isnothing(experiment)
         sys = SymbolicUtils.setmetadata(sys, ExperimentAnnotation, experiment)
     end
@@ -1161,12 +1164,32 @@ struct InitializationIncidenceNode
     children::Vector{Int}
 end
 
+struct InitializationDeclarationOrder end
+struct UnfixedInitializationCompleted end
+
+"""
+    complete_unfixed_initialization(compiled)
+
+Complete missing initial values from unfixed Modelica starts after compilation and state
+selection, respecting explicit initial equations and algebraic constraints. Return the
+updated system. Start expressions remain symbolic so parameter changes through `remake`
+are respected. Unconditional completions use solvable offsets guessed at zero, so user
+initial values and additional initialization equations can determine the state instead.
+Branch-dependent completions retain conditional initialization equations. As with other
+unfixed starts, MTK may report that initialization is underdetermined. Calling this function
+again is safe.
+
+This runs automatically when `parse_basemodelica` compiles a system. After
+`simplify = false`, call this on your compiled system, or use
+[`check_algebraic_crossings`](@ref) for the `:mtk` backend to also finalize array reinit
+targets and validate event crossings.
+"""
 # Supply only the missing initial conditions, after state selection and index reduction.
 # In particular, an unfixed start is not an extra constraint on a quaternion, or on a
 # state already determined by an initial equation. MTK currently loses guesses for
-# unconstrained states in parameter-dependent initialization systems (see the pure MTK
-# reproduction in the initialization regression tests).
+# unconstrained states in parameter-dependent initialization systems.
 function complete_unfixed_initialization(sys)
+    SymbolicUtils.getmetadata(sys, UnfixedInitializationCompleted, false) && return sys
     # MTK replaces zero-derivative states by constant parameters. Retain their
     # original state names so their starts take part in the same rank analysis.
     integrated = ModelingToolkitBase.analytically_integrated(sys)
@@ -1205,6 +1228,11 @@ function complete_unfixed_initialization(sys)
         Symbolics.unwrap(var) for state in states for var in vcat(Symbolics.scalarize(state))
             if haskey(guesses, Symbolics.unwrap(var)) && !(Symbolics.unwrap(var) in fixed)
     ]
+    declarations = SymbolicUtils.getmetadata(sys, InitializationDeclarationOrder, Any[])
+    declaration_order = Dict(
+        Symbolics.unwrap(var) => i for (i, var) in enumerate(
+            Any[v for declaration in declarations for v in vcat(Symbolics.scalarize(declaration))]))
+    sort!(candidates; by = var -> get(declaration_order, var, typemax(Int)))
     isempty(candidates) && return sys
 
     # This includes fixed starts, real initial equations, algebraic constraints and
@@ -1233,6 +1261,24 @@ function complete_unfixed_initialization(sys)
     condition_values = Dict{Any, Any}()
     condition_indices = Dict{Any, Int}()
     parameter_conditions = BitSet()
+    time_conditions = BitSet()
+    # Initial equations are evaluated only at the initial instant. Conditions in
+    # the continuous equations can change later, so retain both incidences when
+    # deciding whether a start remains independent across a time-driven switch.
+    dynamic_conditions = Set{Any}()
+    iv = Symbolics.unwrap(ModelingToolkitBase.get_iv(sys))
+    function collect_dynamic_conditions(value)
+        value = Symbolics.unwrap(value)
+        if SymbolicUtils.iscall(value) && SymbolicUtils.operation(value) === ifelse
+            condition = first(SymbolicUtils.arguments(value))
+            iv in Symbolics.get_variables(condition) && push!(dynamic_conditions, condition)
+        end
+        foreach(collect_dynamic_conditions, differentiated_children(value))
+    end
+    for eq in equations(sys)
+        collect_dynamic_conditions(eq.lhs)
+        collect_dynamic_conditions(eq.rhs)
+    end
     function union_node(children)
         filter!(!=(1), children)
         sort!(unique!(children))
@@ -1259,14 +1305,17 @@ function complete_unfixed_initialization(sys)
                 # in both branches. They require no Boolean configurations at all.
                 yes_node == no_node && return yes_node
                 node_expression = get!(condition_values, first(node_args)) do
-                    Symbolics.unwrap(SymbolicUtils.substitute(first(node_args), time_rule; fold = Val(true)))
+                    first(node_args) in dynamic_conditions ? first(node_args) :
+                        Symbolics.unwrap(SymbolicUtils.substitute(first(node_args), time_rule; fold = Val(true)))
                 end
                 node_condition = concrete_value(node_expression)
                 node_condition isa Bool && return node_condition ? yes_node : no_node
                 condition_index = get!(condition_indices, node_expression) do
                     node_index = length(condition_indices) + 1
                     node_variables = Symbolics.get_variables(node_expression)
-                    if all(var -> all(v -> !haskey(indices, Symbolics.unwrap(v)), vcat(Symbolics.scalarize(var))), node_variables)
+                    if node_expression in dynamic_conditions
+                        push!(time_conditions, node_index)
+                    elseif all(var -> all(v -> !haskey(indices, Symbolics.unwrap(v)), vcat(Symbolics.scalarize(var))), node_variables)
                         push!(parameter_conditions, node_index)
                     end
                     node_index
@@ -1297,6 +1346,7 @@ function complete_unfixed_initialization(sys)
         end
     end
     residual_nodes = Int[]
+    residual_values = Any[]
     rows = Vector{Int}[]
     row_conditions = BitSet[]
     for eq in equations(init)
@@ -1313,6 +1363,7 @@ function complete_unfixed_initialization(sys)
             # Counting both could fix the state constrained by that active branch.
             node = incidence_node(scalar_eq.lhs - scalar_eq.rhs)
             push!(residual_nodes, node)
+            push!(residual_values, scalar_eq.lhs - scalar_eq.rhs)
             push!(rows, collect(nodes[node].variables))
             push!(row_conditions, nodes[node].conditions)
         end
@@ -1367,9 +1418,29 @@ function complete_unfixed_initialization(sys)
     end
     starts = Pair[]
     conditional_starts = Equation[]
+    offsets = Any[]
+    offset_guesses = Dict{Any, Any}()
+    function completion_residual(var)
+        # A zero guess selects the Modelica start without fixing the state.
+        # A user IC on this state, or on another variable of its component, can
+        # solve for the offset instead. Keeping it solvable is essential for
+        # symbolic remake, which rebuilds initialization from this same system.
+        name = gensym(:unfixed_start_offset)
+        offset = only(@parameters $name)
+        push!(offsets, offset)
+        offset_guesses[offset] = 0.0
+        return Symbolics.wrap(var) - guesses[var] - offset
+    end
+    explicit_ode = all(equations(sys)) do eq
+        lhs = Symbolics.unwrap(eq.lhs)
+        SymbolicUtils.iscall(lhs) && SymbolicUtils.operation(lhs) isa Symbolics.Differential &&
+            isempty(differentiated_variables([0 ~ eq.rhs]))
+    end
     for (component, component_states) in component_candidates
         selected_rows = get(component_rows, component, Int[])
         variables = component_variables[component]
+        component_unknowns = Symbolics.wrap.(unknowns[variables])
+        nonlinear = nothing
         local_indices = Dict(v => i for (i, v) in enumerate(variables))
         conditions = collect(reduce(union, row_conditions[selected_rows]; init = BitSet()))
         graphs = NamedTuple{(:rows, :assigned), Tuple{Vector{Vector{Int}}, Vector{Int}}}[]
@@ -1407,8 +1478,26 @@ function complete_unfixed_initialization(sys)
                 matched || pop!(graph.rows)
             end
             if all(independent)
+                if isnothing(nonlinear)
+                    # Free offsets are only a reliable soft completion when
+                    # tearing can resolve the remaining constraints linearly.
+                    # For nonlinear DAEs, least squares may move the offset and
+                    # silently choose a different point on a constraint manifold.
+                    checks = explicit_ode ?
+                        Any[eq.lhs - eq.rhs for eq in ModelingToolkitBase.initialization_equations(sys)] :
+                        residual_values[selected_rows]
+                    nonlinear = any(value -> !Symbolics.isaffine(value, component_unknowns), checks)
+                end
+                nonlinear && unsupported(
+                    "unfixed starts in a nonlinear initialization component containing `$var`; " *
+                        "supply fixed starts or explicit initial equations before compiling"
+                )
                 push!(starts, var => guesses[var])
             elseif any(independent)
+                any(in(time_conditions), conditions) && unsupported(
+                    "time-dependent if-equation changes the initialization constraints on `$var`; " *
+                        "dynamic changes between differential and algebraic state constraints are not supported"
+                )
                 # State-dependent guards require nonlinear branch selection during
                 # initialization. Limit added conditional constraints to known
                 # parameters and discrete values; keep those selections symbolic.
@@ -1427,6 +1516,9 @@ function complete_unfixed_initialization(sys)
                     end
                     guard = ifelse(branch, true, guard)
                 end
+                # Keep a branch-dependent completion square. A free offset in
+                # an inactive branch leaves a singular nonlinear row, and MTK's
+                # least-squares initialization can then move the active start.
                 push!(conditional_starts, 0 ~ ifelse(guard, Symbolics.wrap(var) - guesses[var], 0))
             end
             for i in findall(independent)
@@ -1435,30 +1527,17 @@ function complete_unfixed_initialization(sys)
         end
     end
     isempty(starts) && isempty(conditional_starts) && return sys
-    # MTK stores array initial conditions atomically. Preserve unspecified elements
-    # as `nothing`, including elements determined by real initial equations.
-    defaults = Dict{Any, Any}()
-    for (var, value) in starts
-        if SymbolicUtils.iscall(var) && SymbolicUtils.operation(var) === getindex
-            args = SymbolicUtils.arguments(var)
-            array = first(args)
-            values = get!(defaults, array) do
-                buffer = Array{Any}(undef, size(Symbolics.scalarize(array)))
-                old = get(initial, array, nothing)
-                isnothing(old) ? fill!(buffer, nothing) : (buffer .= old)
-                buffer
-            end
-            values[map(concrete_value, args[2:end])...] = value
-        else
-            defaults[var] = value
-        end
-    end
-    if !isempty(conditional_starts)
-        sys = ConstructionBase.setproperties(sys;
-            initialization_eqs = vcat(ModelingToolkitBase.initialization_equations(sys), conditional_starts))
-    end
-    isempty(defaults) || (sys = ModelingToolkitBase.set_defaults(sys, defaults))
-    return ModelingToolkitBase.complete(sys)
+    append!(conditional_starts, Equation[0 ~ completion_residual(var) for (var, _) in starts])
+    bindings = Dict(ModelingToolkitBase.bindings(sys))
+    merge!(bindings, Dict(offset => missing for offset in offsets))
+    new_guesses = Dict(ModelingToolkitBase.guesses(sys))
+    merge!(new_guesses, offset_guesses)
+    sys = ConstructionBase.setproperties(sys;
+        ps = vcat(ModelingToolkitBase.parameters(sys; initial_parameters = true), offsets),
+        bindings, guesses = new_guesses,
+        initialization_eqs = vcat(ModelingToolkitBase.initialization_equations(sys), conditional_starts))
+    sys = ModelingToolkitBase.complete(sys)
+    return SymbolicUtils.setmetadata(sys, UnfixedInitializationCompleted, true)
 end
 
 """

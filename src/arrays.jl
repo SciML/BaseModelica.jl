@@ -1011,6 +1011,16 @@ function (::ArrayEventAssignment)(modified, observed, ctx, integ)
     return observed
 end
 
+# MTKBase has no public callback remake API that preserves compiled affects and
+# every callback option. Keep its internal positional reconstruction here, shared
+# by both array adapters. Mapping every field also covers initialize/finalize and
+# negative-edge affects without resetting root finding or initialization options.
+# The retained-array tests check this contract for both callback types; revisit
+# this adapter if MTK changes their constructors or introduces a public remake.
+function array_map_callback_affects(f, callback)
+    return typeof(callback)((f(getfield(callback, field)) for field in fieldnames(typeof(callback)))...)
+end
+
 # MTK analytically integrates zero-derivative states into parameters. Symbolic
 # affects handle this mapping internally; our explicit array adapter must resolve
 # its reinit targets after compilation, before setters and save clocks are built.
@@ -1025,17 +1035,21 @@ function array_reinit_callback_targets(sys)
         isequal(modified, affect.modified) && return affect
         changed = true
         return ModelingToolkitBase.ImperativeAffect(
-            affect.f, affect.obs, affect.obs_syms, modified, affect.mod_syms,
-            affect.ctx, affect.skip_checks
+            affect.f;
+            observed = NamedTuple{Tuple(affect.obs_syms)}(Tuple(affect.obs)),
+            modified = NamedTuple{Tuple(affect.mod_syms)}(Tuple(modified)),
+            ctx = affect.ctx, skip_checks = affect.skip_checks
         )
     end
     callbacks = map(ModelingToolkitBase.discrete_events(sys)) do callback
-        typeof(callback)((resolve(getfield(callback, field)) for field in fieldnames(typeof(callback)))...)
+        array_map_callback_affects(resolve, callback)
     end
     changed || return sys
     sys = ConstructionBase.setproperties(sys; discrete_events = callbacks)
-    # Rebuild MTK's parameter partitions so a reinitialized constant state also
-    # has a saved discrete history, rather than only its final live value.
+    # MTKBase internal contract: completing again rebuilds parameter partitions
+    # and save clocks for the new targets, but drops parameter_bindings_graph.
+    # Preserve that graph explicitly until MTK offers a public callback-remake
+    # API. Constant-state reinit tests check both old and new saved values.
     bindings_graph = ModelingToolkitBase.get_parameter_bindings_graph(sys)
     sys = ModelingToolkitBase.complete(sys; flatten = false)
     return ConstructionBase.setproperties(sys; parameter_bindings_graph = bindings_graph)
@@ -1067,6 +1081,6 @@ end
 function array_callbacks(callbacks)
     any(name -> name in discrete_variable_names, keys(kept_array_dims)) || return callbacks
     return map(callbacks) do callback
-        typeof(callback)((array_callback_part(getfield(callback, field)) for field in fieldnames(typeof(callback)))...)
+        array_map_callback_affects(array_callback_part, callback)
     end
 end

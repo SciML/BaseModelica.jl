@@ -115,8 +115,12 @@ How declarations map to ModelingToolkit, and what `remake` can change afterwards
   memory even after the relation moves away from zero. Differential-state crossings and
   explicit signals eliminated by compilation remain supported.
   The `:mtk` backend checks both `simplify = true` and `simplify = f` results.
-  With `simplify = false`, call `BaseModelica.check_algebraic_crossings(compiled)` after
-  compiling the returned system yourself; the raw system is not checked.
+  With `simplify = false`, use `compiled = check_algebraic_crossings(compiled)` after
+  compiling the returned system yourself (including with `DyadInterface.simplify_model`).
+  This exported hook also completes unfixed state starts and resolves constant-state
+  array reinit targets. For another discrete backend, use the exported
+  `complete_unfixed_initialization(compiled)` to complete starts alone. Both return a
+  system; keep the returned value. The raw system is not checked or completed.
 - **Time events**: the instants at which an if-condition comparing `time` with a number or
   an expression of parameters switches (`if time < startTime then ...`) are stored as
   `tstops` on the system. ModelingToolkit passes them to every problem built from it, so

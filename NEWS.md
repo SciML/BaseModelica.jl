@@ -12,6 +12,15 @@
   one branch. The Julia parser accepts a negative left side after `else`.
 - Unfixed state starts supply missing initial values after state selection, while
   explicit initial equations and algebraic initialization constraints take precedence.
+  Completed starts yield to user initial values, including coupled-state overrides
+  through `ODEProblem` and `remake`. Ambiguous starts are chosen in declaration order.
+  After `simplify = false`, the exported `check_algebraic_crossings(compiled)` hook also
+  completes initialization; `complete_unfixed_initialization(compiled)` is available for
+  other discrete backends. Keep the returned system from either hook.
+  Underdetermined nonlinear initialization components and time-driven changes between
+  differential and algebraic state constraints are rejected before solving.
+- Whole-array reads in `when` bodies and relation-Boolean definitions participate in
+  the same event dependency checks as element reads, including reductions and aliases.
 
 - `arrays = :keep` preserves supported numeric arrays as ModelingToolkit array symbols
   and emits whole-array equations, except in models with when-equations, where the

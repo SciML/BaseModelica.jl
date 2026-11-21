@@ -235,10 +235,25 @@ read with `experiment_settings(sys)`.
 
 ## Unsimplified systems and Dyad
 
-For the `:mtk` events backend, both `simplify = true` and `simplify = f` check the compiled
-result for unsupported algebraic crossings. `simplify = false` does not apply this check.
-After compiling such a system yourself, call `BaseModelica.check_algebraic_crossings(compiled)`
-before constructing a problem.
+For the `:mtk` events backend, both `simplify = true` and `simplify = f` complete unfixed
+state starts and check the compiled result for unsupported algebraic crossings. With
+`simplify = false`, run the exported post-compilation hook and use its returned system:
+
+```julia
+raw = parse_basemodelica("model.bmo"; simplify = false)
+compiled = check_algebraic_crossings(mtkcompile(raw))
+prob = ODEProblem(compiled, [], (0.0, 1.0))
+```
+
+This hook also resolves retained-array reinit targets for constant states. For another
+discrete backend, `complete_unfixed_initialization(compiled)` completes starts without
+the `:mtk` event checks. Both hooks return a system and can be called again safely.
+
+Unconditional completed starts remain guesses that yield to user initial values, including
+another state in the same coupled group. Underdetermined nonlinear DAE initialization
+components require fixed starts or explicit initial equations and are rejected cleanly.
+Time-driven switches between differential and algebraic state constraints are also rejected;
+parameter-driven selections made during initialization remain supported.
 
 By default `parse_basemodelica` returns a system already compiled with `mtkcompile`.
 Pass `simplify = false` to get the unsimplified `System`, for example to use the Dyad
@@ -248,9 +263,10 @@ is loaded):
 ```julia
 using BaseModelica, DyadInterface
 
-model = parse_basemodelica("BouncingBall.bmo"; simplify = false)
+raw = parse_basemodelica("BouncingBall.bmo"; simplify = false)
+model = check_algebraic_crossings(DyadInterface.simplify_model(raw))
 settings = experiment_settings(model)
-result = TransientAnalysis(; model, stop = settings.StopTime)
+prob = ODEProblem(model, [], (settings.StartTime, settings.StopTime))
 
 # or build the problem yourself:
 prob = create_odeproblem("BouncingBall.bmo"; simplify = DyadInterface.simplify_model)

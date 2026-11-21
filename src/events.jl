@@ -500,11 +500,13 @@ compile_system(::MTKEventsBackend, sys) = check_algebraic_crossings(mtkcompile(s
 Check a compiled BaseModelica system for when-crossings and hysteresis Boolean crossings
 that depend on retained algebraic unknowns in the `:mtk` backend, throwing
 [`UnsupportedFeatureError`](@ref) if one is found. Return the
-system otherwise, resolving retained-array reinit targets for analytically integrated
-constant states. This check runs automatically for `simplify = true` and
-`simplify = f`. After `simplify = false`, call it on the result of your own compilation.
+system otherwise, completing unfixed state starts and resolving retained-array reinit
+targets for analytically integrated constant states. This check runs automatically for
+`simplify = true` and `simplify = f`. After `simplify = false`, call it on the result of
+your own compilation.
 """
 function check_algebraic_crossings(compiled)
+    compiled = complete_unfixed_initialization(compiled)
     compiled = array_reinit_callback_targets(compiled)
     callbacks = ModelingToolkitBase.continuous_events(compiled)
     isempty(callbacks) && return compiled
@@ -805,15 +807,43 @@ end
 # values in that solve and therefore stop dependency propagation.
 function when_body_unknowns!(found, expr, candidates; skip_pre = false)
     expr = Symbolics.unwrap(expr)
+    matched = false
     for var in candidates
         if isequal(expr, Symbolics.unwrap(var))
             any(isequal(var), found) || push!(found, var)
-            return found
+            matched = true
+            break
         end
     end
+    if expr isa Union{AbstractArray, Tuple}
+        foreach(arg -> when_body_unknowns!(found, arg, candidates; skip_pre), expr)
+        return found
+    end
+    # Retained-array expressions (reductions, dot products, etc.) contain the
+    # parent array, whereas the event IR lists scalar element candidates. A
+    # whole-array read depends on every candidate element of that same array.
+    for var in candidates
+        element = Symbolics.unwrap(var)
+        SymbolicUtils.iscall(element) && SymbolicUtils.operation(element) === getindex || continue
+        isequal(expr, first(SymbolicUtils.arguments(element))) || continue
+        any(isequal(var), found) || push!(found, var)
+    end
+    matched && return found
     SymbolicUtils.iscall(expr) || return found
-    skip_pre && SymbolicUtils.operation(expr) isa ModelingToolkit.Pre && return found
-    for arg in SymbolicUtils.arguments(expr)
+    op = SymbolicUtils.operation(expr)
+    skip_pre && op isa ModelingToolkit.Pre && return found
+    args = SymbolicUtils.arguments(expr)
+    # An unmatched static element is not a read of its siblings. Do not descend
+    # into its bare parent array; still walk indexed expressions such as (2*c)[1].
+    if op === getindex && all(i -> concrete_value(i) isa Integer, args[2:end]) &&
+            any(candidates) do var
+                element = Symbolics.unwrap(var)
+                SymbolicUtils.iscall(element) && SymbolicUtils.operation(element) === getindex &&
+                    isequal(first(args), first(SymbolicUtils.arguments(element)))
+            end
+        args = args[2:end]
+    end
+    for arg in args
         when_body_unknowns!(found, arg, candidates; skip_pre)
     end
     return found
