@@ -48,10 +48,17 @@ The `:mtk` backend supports array discrete updates, `pre`, element initializatio
 
 ## Constants and parameters
 
-Initial if-equations select a branch at load using constant and bound parameter values.
-If all conditions are false and there is no `else`, they add no initial equations.
-Conditions that cannot be resolved at load raise `UnsupportedFeatureError`.
-Reload the model after changing a parameter used to select an initial branch.
+Initial and regular if-equations whose branches (including an explicit `else`) set the
+same variables retain symbolic `ifelse` expressions. Their conditions can depend on time,
+discrete variables or tunable parameters; balanced initial equations follow `remake`.
+
+If there is no `else`, or branches set different variables, the loader selects the branch
+using constants and bound parameter values. Inactive branches contribute no equations;
+there is no implicit zero fallback. An unbalanced if with a time-varying or discrete
+condition raises `UnsupportedFeatureError`. A warning once per model load names tunable
+parameters used to select unbalanced branches, including their binding dependencies.
+Changing those parameters with `remake` does not rebuild the equation structure: reload
+the model to select a different branch.
 
 How declarations map to ModelingToolkit, and what `remake` can change afterwards:
 

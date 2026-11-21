@@ -120,24 +120,37 @@ initial_if_element(sys, i) = hasproperty(sys, :x) ? sys.x[i] :
     sys, sol = initial_if_solve("""
         parameter Boolean b = true;
         Real x[2];
+        Real y(start = 0);
       initial equation
         if b then
           for i in 1:2 loop
             if i > 1 then x[i] = 4; else x[i] = 2; end if;
           end for;
         else
-          x = missingFunction(1);
+          y = missingFunction(1);
         end if;
       equation
         der(x) = -x;
+        der(y) = -y;
         """; parser, arrays)
     for i in 1:2
         var = initial_if_element(sys, i)
         @test sol(0; idxs = var) ≈ 2i
     end
 
-    # A dynamic condition is unsupported even with an else or terminal true.
-    for tail in ("", "else x = 2;", "elseif true then x = 2;")
+    # Balanced explicit else branches retain their dynamic condition.
+    sys, sol = initial_if_solve("""
+        Real x(start = 3);
+      initial equation
+        if time > 0 then x = 1; else x = 2; end if;
+      equation
+        der(x) = -x;
+        """; parser, arrays)
+    @test sol(0; idxs = sys.x) ≈ 2
+
+    # An explicit else is required for symbolic lowering. A terminal true
+    # elseif still has an implicit empty else branch.
+    for tail in ("", "elseif true then x = 2;")
         path = initial_if_file("""
             Real x(start = 3);
           initial equation

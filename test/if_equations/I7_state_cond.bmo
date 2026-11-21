@@ -1,0 +1,12 @@
+//! base 0.1.0
+package P
+model M
+  Real z(start = 1.0, fixed = true);
+  Real x(start = 3.0);
+initial equation
+  if z > 0 then x = 1.0; else x = 2.0; end if;
+equation
+  der(z) = -z;
+  der(x) = -x;
+end M;
+end P;

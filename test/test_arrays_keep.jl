@@ -232,7 +232,7 @@ end
             """
             if time < 0.5 then
                 y = x;
-            elseif true then
+            else
                 y = -x;
             end if;
             """,

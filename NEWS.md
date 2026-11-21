@@ -15,9 +15,12 @@
   if-equation branches preserve Modelica array semantics. The default remains
   `arrays = :scalarize`.
 
-- Initial if-equations select branches using load-time constant and parameter values.
-  False branches without an `else` contribute no constraint, preserving variable starts.
-  Conditions that cannot be resolved at load raise an unsupported-feature error.
+- Initial and regular if-equations share branch semantics: balanced branches retain
+  symbolic `ifelse` expressions, so tunable parameters follow `remake` and dynamic initial
+  conditions are supported. Unbalanced branches select at load without evaluating inactive
+  equations or adding a zero fallback. Dynamic unbalanced conditions raise an unsupported
+  feature error; tunable parameters used in structural selection are named in a warning
+  once per load and require reloading to change the equation structure.
 - Modelica `promote(A, n)` adds trailing singleton dimensions. `scalar`, `vector` and
   `matrix` also validate dimensionality when converting arrays.
 - Both parsers accept field access on function results, such as `f(x).y`.

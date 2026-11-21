@@ -161,3 +161,24 @@ function warn_structural_parameters(model_name, evaluated, inert)
     end
     return nothing
 end
+
+# Warn once per model load about tunable parameters baked into equation structure.
+# Include binding dependencies: p = q must name both p and q if p selects a branch.
+const if_condition_parameter_names = Set{String}()
+
+function record_if_parameters!(condition, visited = Set{Any}())
+    for raw in Symbolics.get_variables(condition)
+        sym = Symbolics.wrap(raw)
+        sym in visited && continue
+        push!(visited, sym)
+        ModelingToolkitBase.isparameter(sym) || continue
+        name = symbol_name(sym)
+        if ModelingToolkit.istunable(sym) && !(name in discrete_variable_names)
+            text = string(name)
+            push!(if_condition_parameter_names, get(scalarized_from, text, text))
+        end
+        binding = get(parameter_val_map, sym, nothing)
+        isnothing(binding) || record_if_parameters!(binding, visited)
+    end
+    return nothing
+end

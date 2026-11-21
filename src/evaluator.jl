@@ -171,29 +171,127 @@ function branch_equations(branch)
     return result
 end
 
-function eval_AST(if_eq::BaseModelicaIfEquation)
-    if EVAL_MODE[] === :initial
-        # Initial branches may constrain different variables (or no variables).
-        # Select their structure before evaluating any equations; a missing else
-        # contributes no constraint, rather than a default value for its targets.
-        for (condition, branch) in zip(if_eq.ifs, if_eq.thens)
-            value = resolve_value(eval_AST(condition), parameter_val_map)
-            value = concrete_value(SymbolicUtils.substitute(value, Dict(); fold = Val(true)))
-            value isa Bool || unsupported(
-                "initial if-equation condition must be evaluable at load time from constants or bound parameters"
-            )
-            value && return branch_equations(branch)
+# Residual equations (0 = expression) constrain the unknowns in their right side.
+# Inspect references, rather than executing that expression during classification.
+function residual_targets!(targets, node)
+    if node isa BaseModelicaComponentReference ||
+            (node isa BaseModelicaFunctionCall && function_call_name(node) == "der")
+        value = eval_AST(node)
+        for sym in (is_array(value) ? vec(collect(value)) : [value])
+            is_inlined(sym) && continue
+            isequal(sym, t) && continue
+            name = symbol_name(Symbolics.wrap(sym))
+            if !ModelingToolkitBase.isparameter(sym) || name in free_parameter_names ||
+                    name in discrete_variable_names || name in bool_comparison_names
+                push!(targets, Symbolics.unwrap(sym))
+            end
         end
-        return length(if_eq.thens) > length(if_eq.ifs) ?
-            branch_equations(if_eq.thens[end]) : Equation[]
+    elseif node isa BaseModelicaFunctionCall
+        residual_targets!(targets, node.args)
+    elseif node isa Union{AbstractVector, Tuple}
+        foreach(child -> residual_targets!(targets, child), node)
+    elseif node isa BaseModelicaASTNode
+        for field in fieldnames(typeof(node))
+            residual_targets!(targets, getfield(node, field))
+        end
+    end
+    return targets
+end
+
+# Classify branches from their targets without evaluating right sides. In particular,
+# a discarded equation may contain an out-of-bounds subscript or an undefined call.
+function branch_targets(branch)
+    targets = Set{Any}()
+    for entry in body_list(branch)
+        eq = inner_equation(entry)
+        if eq isa BaseModelicaIfEquation
+            nested = balanced_if_targets(eq)
+            if isnothing(nested)
+                selected = load_if_branch(eq)
+                isnothing(selected) && return nothing
+                nested = selected == 0 ? Set{Any}() : branch_targets(eq.thens[selected])
+            end
+            isnothing(nested) && return nothing
+            union!(targets, nested)
+        elseif eq isa BaseModelicaForEquation
+            outer = LOCAL_SCOPE[]
+            index = loop_index_name(eq.index)
+            for value in loop_range(eq.index)
+                scope = isnothing(outer) ? Dict{Symbol, Any}() : copy(outer)
+                scope[index] = value
+                nested = with_local_scope(() -> branch_targets(eq.equations), scope)
+                isnothing(nested) && return nothing
+                union!(targets, nested)
+            end
+        elseif eq isa BaseModelicaSimpleEquation
+            isnothing(eq.rhs) && continue # assert statements do not constrain a target
+            lhs = eval_AST(eq.lhs)
+            elements = is_array(lhs) ? vec(collect(lhs)) : [lhs]
+            if all(value -> !isnothing(concrete_value(value)), elements)
+                residual_targets!(targets, eq.rhs)
+            else
+                # Equation fields use unwrapped symbols too, so residual and
+                # direct assignments compare the same targets.
+                union!(targets, Symbolics.unwrap.(elements))
+            end
+        else
+            return nothing
+        end
+    end
+    return targets
+end
+
+function balanced_if_targets(eq::BaseModelicaIfEquation)
+    length(eq.thens) > length(eq.ifs) || return nothing
+    targets = nothing
+    for branch in eq.thens
+        current = try
+            branch_targets(branch)
+        catch err
+            # An inactive branch can use indices outside the declared array.
+            err isa Union{BoundsError, UnsupportedFeatureError} || rethrow()
+            return nothing
+        end
+        isnothing(current) && return nothing
+        isnothing(targets) || isequal(current, targets) || return nothing
+        targets = current
+    end
+    return targets
+end
+
+# Zero denotes an absent else. `nothing` means the structure cannot be selected.
+function load_if_branch(eq::BaseModelicaIfEquation; record_parameters = false)
+    conditions = Any[]
+    selected = 0
+    for (i, ast) in enumerate(eq.ifs)
+        condition = eval_AST(ast)
+        push!(conditions, condition)
+        value = resolve_value(condition, parameter_val_map)
+        value = concrete_value(SymbolicUtils.substitute(value, Dict(); fold = Val(true)))
+        value isa Bool || return nothing
+        if value
+            selected = i
+            break
+        end
+    end
+    if selected == 0 && length(eq.thens) > length(eq.ifs)
+        selected = length(eq.thens)
+    end
+    record_parameters && foreach(record_if_parameters!, conditions)
+    return selected
+end
+
+function eval_AST(if_eq::BaseModelicaIfEquation)
+    if isnothing(balanced_if_targets(if_eq))
+        selected = load_if_branch(if_eq; record_parameters = true)
+        isnothing(selected) && unsupported(
+            "$(EVAL_MODE[] === :initial ? "initial " : "")if-equation condition must be evaluable at load time when branches do not set the same variables, including an explicit else; time-varying or discrete conditions require balanced branches"
+        )
+        return selected == 0 ? Equation[] : branch_equations(if_eq.thens[selected])
     end
 
-    # Convert if-equation to nested ifelse calls
-    # Structure: ifs[i] contains condition, thens[i] contains a list of equations for that branch
-    # If length(thens) > length(ifs), thens[end] is the else branch (no condition)
-
-    has_else = length(if_eq.thens) > length(if_eq.ifs)
-
+    # Balanced branches keep their symbolic conditions, including in initial sections.
+    # This lets initialization and remake use the current parameter/discrete values.
     # Time events of the conditions (e.g. `time < 1e-5`), see collect_time_events!
     foreach(cond -> collect_time_events!(eval_AST(cond)), if_eq.ifs)
 
@@ -212,6 +310,29 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
         end
     end
 
+    # Residual rows can share a literal left side or mix residual and direct
+    # assignments. Preserve every row; matching just by lhs would discard rows.
+    targets = Set(eq.lhs for eq in first(branches))
+    if length(targets) != length(first(branches)) ||
+            any(branch -> !isequal(Set(eq.lhs for eq in branch), targets), branches)
+        rows = [
+            reduce(vcat, (vec(vcat(Symbolics.scalarize(eq))) for eq in branch); init = Equation[])
+                for branch in branches
+        ]
+        all(branch -> length(branch) == length(first(rows)), rows) ||
+            unsupported("balanced if-equation branches must have the same number of scalar equations")
+        result = Equation[]
+        for i in eachindex(first(rows))
+            rhs = rows[end][i].rhs - rows[end][i].lhs
+            for j in reverse(eachindex(if_eq.ifs))
+                eq = rows[j][i]
+                rhs = modelica_ifelse(logical_operand(eval_AST(if_eq.ifs[j])), eq.rhs - eq.lhs, rhs)
+            end
+            push!(result, 0 ~ rhs)
+        end
+        return result
+    end
+
     # Helper to extract RHS for a specific variable from a branch's equation list
     function get_rhs_for_var(var_lhs, branch)
         idx = findfirst(eq -> isequal(eq.lhs, var_lhs), branch)
@@ -228,15 +349,7 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     function build_ifelse_for_var(var_lhs, idx = 1)
         if idx > length(if_eq.ifs)
             # Past all conditions
-            if has_else
-                rhs = get_rhs_for_var(var_lhs, branches[end])
-                if isnothing(rhs)
-                    error("Variable $var_lhs not assigned in else branch")
-                end
-                return rhs
-            else
-                error("If-equation has no else branch and exhausted all conditions for $var_lhs")
-            end
+            return get_rhs_for_var(var_lhs, branches[end])
         end
 
         condition = logical_operand(eval_AST(if_eq.ifs[idx]))
@@ -246,15 +359,8 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
             error("Variable $var_lhs not assigned in branch $idx")
         end
 
-        if idx == length(if_eq.ifs) && !has_else
-            # Last conditional branch with no else clause
-            # In well-formed Modelica, this should be elseif true (always true)
-            fallback = is_array(rhs) ? fill(zero(eltype(rhs)), size(rhs)) : zero(rhs)
-            return modelica_ifelse(condition, rhs, fallback)
-        else
-            else_expr = build_ifelse_for_var(var_lhs, idx + 1)
-            return modelica_ifelse(condition, rhs, else_expr)
-        end
+        else_expr = build_ifelse_for_var(var_lhs, idx + 1)
+        return modelica_ifelse(condition, rhs, else_expr)
     end
 
     result_equations = []
@@ -367,6 +473,7 @@ function eval_AST(
     empty!(integer_variable_names)
     empty!(free_parameter_names)
     empty!(evaluated_parameter_names)
+    empty!(if_condition_parameter_names)
     empty!(tstops_collection)
     empty!(bool_comparison_names)
     empty!(relation_boolean_syms)
@@ -718,6 +825,14 @@ function eval_AST(
                 push!(initialization_eqs, var ~ value)
             end
         end
+    end
+
+    if !isempty(if_condition_parameter_names)
+        model_name = class_specifier.name
+        model_name isa BaseModelicaIdentifier && (model_name = model_name.name)
+        # Symbols already occur in equations and binding expressions. Retain those
+        # symbols and warn: MTK also permits remake of parameters marked non-tunable.
+        @warn "BaseModelica model '$model_name': parameters $(quoted_names(sort!(collect(if_condition_parameter_names)))) select unbalanced if-equation branches at load time; changing them with remake does not update the equation structure, reload the model to change them"
     end
 
     # Pass 4: Apply explicit guess values from parameter equations.

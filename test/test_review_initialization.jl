@@ -135,7 +135,8 @@ review_selected(values, selection) = isempty(selection) ? values :
             @test sol(0.75; idxs = var) == starts[i] + increments[i]
         end
     elseif case === :if_no_else
-        # P2a_if_no_else_array.bmo, plus the implicit zero fallback itself.
+        # Dynamic no-else equations are rejected. An explicit else can express
+        # either the sign switch or a zero value in a balanced equation.
         path = review_initialization_model("""
             Real 'x'[2](start = {1, 2}, each fixed = true);
             Real 'y'[2]; Real 'z'[2];
@@ -143,13 +144,16 @@ review_selected(values, selection) = isempty(selection) ? values :
             der('x') = -'x';
             if time < 0.5 then
               'y' = 'x';
-            elseif true then
+            else
               'y' = -'x';
             end if;
             if time < 0.5 then
               'z' = 'x';
             end if;
         """)
+        @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path; parser, arrays)
+        balanced = replace(read(path, String), "'z' = 'x';" => "'z' = 'x'; else 'z' = zeros(2);")
+        write(path, balanced)
         sys = parse_basemodelica(path; parser, arrays)
         sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
         @test sol.retcode == ReturnCode.Success

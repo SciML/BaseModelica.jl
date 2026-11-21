@@ -125,9 +125,8 @@ PC = BM.ParserCombinator
         )
         if_equations_package = BM.parse_file_julia(if_equations_path)
         @test if_equations_package isa BM.BaseModelicaPackage
-        if_equations_system = BM.baseModelica_to_ModelingToolkit(if_equations_package)
-        @test if_equations_system isa System
-        @test parse_basemodelica(if_equations_path, parser = :julia) isa System
+        @test_throws BM.UnsupportedFeatureError BM.baseModelica_to_ModelingToolkit(if_equations_package)
+        @test_throws BM.UnsupportedFeatureError parse_basemodelica(if_equations_path, parser = :julia)
     end
 
     @testset "Inline If Expression (issue #39)" begin
@@ -180,9 +179,10 @@ PC = BM.ParserCombinator
         )
         noelse_package = BM.parse_file_julia(noelse_path)
         @test noelse_package isa BM.BaseModelicaPackage
-        noelse_system = BM.baseModelica_to_ModelingToolkit(noelse_package)
-        @test noelse_system isa System
-        @test parse_basemodelica(noelse_path, parser = :julia) isa System
+        # A terminal `elseif true` still has no explicit else. Dynamic unbalanced
+        # if-equations must be rejected rather than given an implicit zero fallback.
+        @test_throws BM.UnsupportedFeatureError BM.baseModelica_to_ModelingToolkit(noelse_package)
+        @test_throws BM.UnsupportedFeatureError parse_basemodelica(noelse_path, parser = :julia)
     end
 
     @testset "When Equation" begin

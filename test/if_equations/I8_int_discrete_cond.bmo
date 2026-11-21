@@ -1,0 +1,12 @@
+//! base 0.1.0
+package P
+model M
+  Integer k(start = 1, fixed = true);
+  Real x(start = 3.0);
+initial equation
+  if k == 1 then x = 1.0; else x = 2.0; end if;
+equation
+  der(x) = -x;
+  when time > 0.5 then k = 2; end when;
+end M;
+end P;
