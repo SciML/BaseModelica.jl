@@ -1146,12 +1146,14 @@ function eval_AST(
         sys = SymbolicUtils.setmetadata(sys, ExperimentAnnotation, experiment)
     end
     if simplify === true
-        return complete_unfixed_initialization(compile_system(backend, sys))
+        compiled = compile_system(backend, sys)
+        return backend isa MTKEventsBackend ? compiled : complete_unfixed_initialization(compiled)
     elseif simplify === false
         return sys
     else
-        compiled = complete_unfixed_initialization(simplify(sys))
-        return backend isa MTKEventsBackend ? check_algebraic_crossings(compiled) : compiled
+        compiled = simplify(sys)
+        return backend isa MTKEventsBackend ? check_algebraic_crossings(compiled) :
+            complete_unfixed_initialization(compiled)
     end
 end
 
