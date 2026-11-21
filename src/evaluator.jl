@@ -161,7 +161,8 @@ end
 function branch_equations(branch)
     result = Equation[]
     for eq in (isa(branch, AbstractArray) ? branch : [branch])
-        eq_obj = isa(eq, BaseModelicaAnyEquation) ? eval_AST(eq.equation) : eval_AST(eq)
+        inner = inner_equation(eq)
+        eq_obj = eval_AST(inner)
         if eq_obj isa Equation
             push!(result, eq_obj)
         elseif eq_obj isa AbstractVector
@@ -171,102 +172,117 @@ function branch_equations(branch)
     return result
 end
 
-# Residual equations (0 = expression) constrain the unknowns in their right side.
-# Inspect references, rather than executing that expression during classification.
-function residual_targets!(targets, node)
-    if node isa BaseModelicaComponentReference ||
-            (node isa BaseModelicaFunctionCall && function_call_name(node) == "der")
-        value = eval_AST(node)
-        for sym in (is_array(value) ? vec(collect(value)) : [value])
-            is_inlined(sym) && continue
-            isequal(sym, t) && continue
-            name = symbol_name(Symbolics.wrap(sym))
-            if !ModelingToolkitBase.isparameter(sym) || name in free_parameter_names ||
-                    name in discrete_variable_names || name in bool_comparison_names
-                push!(targets, Symbolics.unwrap(sym))
-            end
+# Top-level when-equations go through the discrete backend. Encountering one
+# here means it is in a structured equation body that is not lowered as events.
+eval_AST(::BaseModelicaWhenEquation) =
+    unsupported("when-equations in nested equation bodies are not supported")
+
+# A concrete true condition is an else, even after symbolic conditions. OMC
+# emits this form for if-equations without an explicit else (issue #41).
+# Do not substitute tunable parameter defaults while normalizing the branches.
+function normalize_if_equation(eq::BaseModelicaIfEquation)
+    for (i, ast) in enumerate(eq.ifs)
+        condition = try
+            concrete_value(eval_AST(ast))
+        catch err
+            # An earlier parameter branch may make this condition unreachable.
+            # Defer errors until branch selection actually needs the condition.
+            err isa Union{BoundsError, UnsupportedFeatureError} || rethrow()
+            continue
         end
-    elseif node isa BaseModelicaFunctionCall
-        residual_targets!(targets, node.args)
-    elseif node isa Union{AbstractVector, Tuple}
-        foreach(child -> residual_targets!(targets, child), node)
-    elseif node isa BaseModelicaASTNode
-        for field in fieldnames(typeof(node))
-            residual_targets!(targets, getfield(node, field))
-        end
+        condition === true && return BaseModelicaIfEquation(eq.ifs[1:(i - 1)], eq.thens[1:i])
     end
-    return targets
+    return eq
 end
 
-# Classify branches from their targets without evaluating right sides. In particular,
-# a discarded equation may contain an out-of-bounds subscript or an undefined call.
-function branch_targets(branch)
-    targets = Set{Any}()
+# Count scalar rows, not the unknowns referenced by each row. Record equations
+# contribute one row per scalar field, just like their field-by-field form.
+function scalar_equation_count(value)
+    if value isa NamedTuple || is_array(value)
+        elements = value isa NamedTuple ? values(value) : value
+        # A generator counts concrete rows even for a retained symbolic array;
+        # sum(f, array) can instead construct a symbolic reduction.
+        return sum((scalar_equation_count(element) for element in elements); init = 0)
+    end
+    return 1
+end
+
+function branch_equation_count(branch)
+    count = 0
     for entry in body_list(branch)
         eq = inner_equation(entry)
-        if eq isa BaseModelicaIfEquation
-            nested = balanced_if_targets(eq)
-            if isnothing(nested)
-                selected = load_if_branch(eq)
-                isnothing(selected) && return nothing
-                nested = selected == 0 ? Set{Any}() : branch_targets(eq.thens[selected])
+        current = if eq isa BaseModelicaIfEquation
+            eq = normalize_if_equation(eq)
+            selected = load_if_branch(eq; resolve_parameters = false)
+            if !isnothing(selected)
+                selected == 0 ? 0 : branch_equation_count(eq.thens[selected])
+            else
+                nested = balanced_if_equation_count(eq)
+                if isnothing(nested)
+                    selected = load_if_branch(eq)
+                    isnothing(selected) && return nothing
+                    selected == 0 ? 0 : branch_equation_count(eq.thens[selected])
+                else
+                    nested
+                end
             end
-            isnothing(nested) && return nothing
-            union!(targets, nested)
         elseif eq isa BaseModelicaForEquation
             outer = LOCAL_SCOPE[]
             index = loop_index_name(eq.index)
+            subtotal = 0
             for value in loop_range(eq.index)
                 scope = isnothing(outer) ? Dict{Symbol, Any}() : copy(outer)
                 scope[index] = value
-                nested = with_local_scope(() -> branch_targets(eq.equations), scope)
+                nested = with_local_scope(() -> branch_equation_count(eq.equations), scope)
                 isnothing(nested) && return nothing
-                union!(targets, nested)
+                subtotal += nested
             end
+            subtotal
         elseif eq isa BaseModelicaSimpleEquation
-            isnothing(eq.rhs) && continue # assert statements do not constrain a target
+            isnothing(eq.rhs) && continue # assert statements do not constrain a row
             lhs = eval_AST(eq.lhs)
-            elements = is_array(lhs) ? vec(collect(lhs)) : [lhs]
-            if all(value -> !isnothing(concrete_value(value)), elements)
-                residual_targets!(targets, eq.rhs)
-            else
-                # Equation fields use unwrapped symbols too, so residual and
-                # direct assignments compare the same targets.
-                union!(targets, Symbolics.unwrap.(elements))
-            end
+            # Scalar residuals may have an array on their right side. Otherwise
+            # only inspect the left side, leaving inactive right sides untouched.
+            value = !is_array(lhs) && !(lhs isa NamedTuple) &&
+                !isnothing(concrete_value(lhs)) ? eval_AST(eq.rhs) : lhs
+            scalar_equation_count(value)
         else
             return nothing
         end
+        isnothing(current) && return nothing
+        count += current
     end
-    return targets
+    return count
 end
 
-function balanced_if_targets(eq::BaseModelicaIfEquation)
+function balanced_if_equation_count(eq::BaseModelicaIfEquation)
     length(eq.thens) > length(eq.ifs) || return nothing
-    targets = nothing
+    count = nothing
     for branch in eq.thens
         current = try
-            branch_targets(branch)
+            branch_equation_count(branch)
         catch err
-            # An inactive branch can use indices outside the declared array.
+            # An inactive branch can use invalid indices or unsupported calls.
             err isa Union{BoundsError, UnsupportedFeatureError} || rethrow()
             return nothing
         end
         isnothing(current) && return nothing
-        isnothing(targets) || isequal(current, targets) || return nothing
-        targets = current
+        isnothing(count) || current == count || return nothing
+        count = current
     end
-    return targets
+    return count
 end
 
 # Zero denotes an absent else. `nothing` means the structure cannot be selected.
-function load_if_branch(eq::BaseModelicaIfEquation; record_parameters = false)
+function load_if_branch(
+        eq::BaseModelicaIfEquation; record_parameters = false, resolve_parameters = true
+    )
     conditions = Any[]
     selected = 0
     for (i, ast) in enumerate(eq.ifs)
         condition = eval_AST(ast)
         push!(conditions, condition)
-        value = resolve_value(condition, parameter_val_map)
+        value = resolve_parameters ? resolve_value(condition, parameter_val_map) : condition
         value = concrete_value(SymbolicUtils.substitute(value, Dict(); fold = Val(true)))
         value isa Bool || return nothing
         if value
@@ -282,10 +298,18 @@ function load_if_branch(eq::BaseModelicaIfEquation; record_parameters = false)
 end
 
 function eval_AST(if_eq::BaseModelicaIfEquation)
-    if isnothing(balanced_if_targets(if_eq))
+    if_eq = normalize_if_equation(if_eq)
+    # Constants and loop indices are already known, so avoid evaluating inactive
+    # branches (which can contain y[i-1] at i=1). Parameter defaults stay symbolic
+    # for balanced branches so initialization and remake can change them.
+    selected = load_if_branch(if_eq; resolve_parameters = false)
+    if !isnothing(selected)
+        return selected == 0 ? Equation[] : branch_equations(if_eq.thens[selected])
+    end
+    if isnothing(balanced_if_equation_count(if_eq))
         selected = load_if_branch(if_eq; record_parameters = true)
         isnothing(selected) && unsupported(
-            "$(EVAL_MODE[] === :initial ? "initial " : "")if-equation condition must be evaluable at load time when branches do not set the same variables, including an explicit else; time-varying or discrete conditions require balanced branches"
+            "$(EVAL_MODE[] === :initial ? "initial " : "")if-equation condition must be evaluable at load time when branches do not have the same number of scalar equations, including an else; time-varying or discrete conditions require balanced branches"
         )
         return selected == 0 ? Equation[] : branch_equations(if_eq.thens[selected])
     end
@@ -313,8 +337,8 @@ function eval_AST(if_eq::BaseModelicaIfEquation)
     # Residual rows can share a literal left side or mix residual and direct
     # assignments. Preserve every row; matching just by lhs would discard rows.
     targets = Set(eq.lhs for eq in first(branches))
-    if length(targets) != length(first(branches)) ||
-            any(branch -> !isequal(Set(eq.lhs for eq in branch), targets), branches)
+    if any(branch -> length(Set(eq.lhs for eq in branch)) != length(branch) ||
+            !isequal(Set(eq.lhs for eq in branch), targets), branches)
         rows = [
             reduce(vcat, (vec(vcat(Symbolics.scalarize(eq))) for eq in branch); init = Equation[])
                 for branch in branches

@@ -148,9 +148,18 @@ initial_if_element(sys, i) = hasproperty(sys, :x) ? sys.x[i] :
         """; parser, arrays)
     @test sol(0; idxs = sys.x) ≈ 2
 
-    # An explicit else is required for symbolic lowering. A terminal true
-    # elseif still has an implicit empty else branch.
-    for tail in ("", "elseif true then x = 2;")
+    # A terminal true elseif provides the fallback for symbolic lowering.
+    sys, sol = initial_if_solve("""
+        Real x(start = 3);
+      initial equation
+        if time > 0 then x = 1; elseif true then x = 2; end if;
+      equation
+        der(x) = -x;
+        """; parser, arrays)
+    @test sol(0; idxs = sys.x) ≈ 2
+
+    # A genuinely missing else has an empty branch.
+    for tail in ("",)
         path = initial_if_file("""
             Real x(start = 3);
           initial equation

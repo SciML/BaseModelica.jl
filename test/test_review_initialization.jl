@@ -144,7 +144,7 @@ review_selected(values, selection) = isempty(selection) ? values :
             der('x') = -'x';
             if time < 0.5 then
               'y' = 'x';
-            else
+            elseif true then
               'y' = -'x';
             end if;
             if time < 0.5 then

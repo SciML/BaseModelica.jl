@@ -11,16 +11,11 @@ end
     path(case) = joinpath(@__DIR__, "review_arrays", "$case.bmo")
     for case in ("P2a_if_no_else_array", "P2b_if_branches_loop_vs_whole", "P2c_matrix_power", "P3_empty_sum", "div_initial_zero_lhs", "div_pre_whole_array_initial")
         @testset "$case" begin
-            if case == "P2a_if_no_else_array"
-                # The original review input has dynamic conditions and no else.
-                @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path(case); parser, arrays)
-                continue
-            end
             sys = parse_basemodelica(path(case); parser, arrays)
             sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Rodas5P(); reltol = 1e-10, abstol = 1e-12)
             @test sol.retcode == ReturnCode.Success
-            if startswith(case, "P2b")
-                n = 3
+            if startswith(case, "P2a") || startswith(case, "P2b")
+                n = startswith(case, "P2a") ? 2 : 3
                 y = review_array_member(sys, "y", (n,), arrays)
                 @test sol(0.25; idxs = y) ≈ collect(1:n) .* exp(-0.25) atol = 1e-8
                 @test sol(0.75; idxs = y) ≈ -collect(1:n) .* exp(-0.75) atol = 1e-8

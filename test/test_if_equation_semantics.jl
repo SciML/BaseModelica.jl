@@ -84,7 +84,7 @@ end
         @test [changed(0; idxs = sys.y), changed(0; idxs = sys.z)] ≈ [1, 2]
     end
 
-    @testset "Residuals on distinct variables require structural selection" begin
+    @testset "Residuals on distinct variables remain balanced by count" begin
         path = if_equation_file(
             """
               Real x(start = 1);
@@ -96,10 +96,12 @@ end
               der(y) = -y;
               """
         )
-        @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path; parser, arrays)
+        sys = parse_basemodelica(path; parser, arrays)
+        sol = if_equation_solve(sys)
+        @test sol(0; idxs = sys.y) ≈ 4
     end
 
-    @testset "Inactive branch target discovery is conservative" begin
+    @testset "Inactive branch equation counting is conservative" begin
         path = if_equation_file(
             """
               constant Boolean enabled = false;
@@ -170,7 +172,7 @@ end
             Real x(start = 1, fixed = true);
             Real y(start = 2);
             $(section == "initial" ? "initial equation" : "equation")
-            if time > 0 then x = 1; else y = 2; end if;
+            if time > 0 then x = 1; y = 3; else y = 2; end if;
             $(section == "initial" ? "equation" : "")
             der(x) = -x;
             der(y) = -y;
@@ -180,7 +182,7 @@ end
     end
 
     @testset "Regular dynamic no-else if is rejected ($tail)" for tail in (
-            "", "elseif true then y = 2;",
+            "",
         )
         path = if_equation_file(
             """
@@ -192,6 +194,72 @@ end
               """
         )
         @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path; parser, arrays)
+    end
+
+    @testset "Inactive elseif conditions are not evaluated structurally" begin
+        path = if_equation_file(
+            """
+              parameter Boolean enabled = true;
+              Real x(start = 1, fixed = true);
+              Real y[1];
+            equation
+              der(x) = -x;
+              if enabled then
+                  y[1] = 2;
+              elseif y[0] > 0 then
+                  y[1] = 3;
+                  x = 0;
+              else
+                  y[1] = 4;
+              end if;
+              """
+        )
+        sys = parse_basemodelica(path; parser, arrays)
+        sol = if_equation_solve(sys)
+        @test sol(0; idxs = if_equation_element(sys, :y, 1)) ≈ 2
+    end
+
+    @testset "Nested when diagnostics also cover loop bodies" begin
+        path = if_equation_file(
+            """
+              parameter Boolean enabled = true;
+              Real x(start = 0, fixed = true);
+              discrete Real y(start = 0, fixed = true);
+            equation
+              der(x) = 1;
+              if enabled then
+                  for i in 1:1 loop
+                      when time > 0.5 then y = 1; end when;
+                  end for;
+              end if;
+              """
+        )
+        @test_throws r"when-equations in nested equation bodies" parse_basemodelica(path; parser, arrays)
+    end
+
+    @testset "First concrete true elseif terminates the branches" begin
+        path = if_equation_file(
+            """
+              Real x(start = 1, fixed = true);
+              Real y;
+            equation
+              der(x) = -x;
+              if time < 0.5 then
+                  y = x;
+              elseif 2 > 1 then
+                  y = 2*x;
+              elseif time > 1 then
+                  y = missingFunction(1);
+                  y = missingFunction(2);
+              else
+                  y = missingFunction(3);
+              end if;
+              """
+        )
+        sys = parse_basemodelica(path; parser, arrays)
+        sol = if_equation_solve(sys)
+        @test sol(0.25; idxs = sys.y) ≈ exp(-0.25) rtol = 1.0e-7
+        @test sol(0.75; idxs = sys.y) ≈ 2exp(-0.75) rtol = 1.0e-7
     end
 
     @testset "Structural selection warns once and names tunable condition parameters" begin
