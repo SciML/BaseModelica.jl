@@ -1,13 +1,16 @@
-These fixtures cover the if-equation probes from reviews `6ca1b4a3` and
-`ac4593fe`. The available review snapshots are
+These fixtures cover the if-equation probes from reviews `6ca1b4a3`,
+`ac4593fe` and the re-review at `9d51c3e8`. The available review snapshots are
 `5640278420bc74040928d01eaa0115782f5114a7:outputs/REVIEW.md` and
-`e6718305:outputs/REVIEW.md`, respectively.
+`e6718305:outputs/REVIEW.md`, followed by
+`9d51c3e8b9be4013afd26842163e62041b61b813:outputs/REVIEW.md`.
 
 All 41 `outputs/repros/*.bmo` files from the first snapshot are copied byte for
 byte. Another 18 files (I1–I4, I11–I14, I16–I17, I19–I20, P1 variants/controls,
 K1/K3) are copied from the second snapshot. I10, I15, K2, K4 and R7 were listed
 in its review/results but absent from its tree; their minimal shapes are
-reconstructed here. There are 64 fixtures in this directory. Nothing replaces
+reconstructed here. S1d, U1, U2, U5 and N11 are copied byte for byte from the
+third snapshot. D1–D4 and S6–S9 are additional focused controls. There are 77
+fixtures in this directory. Nothing replaces
 or modifies the 15 existing accepted fixtures in `../if_equations`.
 
 Reference provenance
@@ -35,7 +38,7 @@ In regular probes with an independent x, x(t)=exp(-t). In the following table,
 | B2b | x=exp(-t) until .5, then exp(-.5)+t-.5 |
 | B3, B7 | y: {1,2} → {3,4} |
 | B4 | y: {1,2,5} → {3,4,6} |
-| B4b | y={3,7}; its default parameter value is the valid branch |
+| B4b | y={3,7}; its default parameter value is the valid branch; select at load with one warning naming b, and retain no b in the raw equations; loading b=true rejects the conflicting y[2] constraints |
 | B5, B5b | {r.a,r.b}: {1,2} → {3,4}, including swapped field order |
 | B6 | y=1 before .25, 2 from .25 to .5, 3 afterward |
 | B6b, B6c | y: 1 → 3; z: 6 → 7 |
@@ -55,6 +58,26 @@ In regular probes with an independent x, x(t)=exp(-t). In the following table,
 | I23 | x=2e, w=t-.5 |
 | L3, L5 | y={1,2,4}e; inactive y[0] is never evaluated |
 | L4 | y[i,i]=e; y[i,j]=10i+j for i≠j |
+| S1d | x=y=e, including x(0)=1 without fixed=true; differing targets select at load with a warning naming b |
+| U5 | x=e, y=exp(-2t), both starting at 1 without fixed=true; differing targets select at load with a warning naming b |
+| U1, U2, D1 | x=e until .5, then exp(-.5)+t-.5; y: 1 → 2; raw der(x) stays explicit regardless of row order, side or linear coefficient |
+| N11 | y: 1 → 2, z=1; a dead false branch with two rows cannot affect balancing |
+| S6, S7 | x=e, y=2e; constant/Evaluate conditions select at load even with equal counts and targets; S7 keeps the existing Evaluate=true warning |
+| S8 | x={1,1}e, y=e; structural size condition selects at load with equal counts and targets |
+| S9 | x=y=e; same targets remain tunable without warning, remake(b=false) gives x=exp(-2t), y=2exp(-2t) |
+| D2–D4 | Explicitly unsupported dynamic rows: missing derivative, nonlinear derivative, or coupled derivatives; rejection occurs before MTK compilation |
+
+The third review's OMC output supplies the S1d/U1/U2/U5/N11 expectations.
+The new D1 and S6–S9 controls were also run independently with OMC 1.27.1,
+DASSL, tolerance 1e-10, using the same sample times above. S9 was additionally
+translated with its source binding changed to b=false to check the remake
+expectations. D2–D4 deliberately
+reject forms outside the supported explicit derivative lowering. OMC simulates
+D2/D3; D2 freezes after the switch rather than satisfying the changed branch,
+and D3 follows the negative root of its squared derivative. D4's OMC simulation
+times out after producing a partial CSV. None of these results supplies a
+numeric expectation for this loader. Logs and CSVs remain rebuildable scratch
+under `outputs/test-worker-omc/`.
 
 Earlier-review inventory
 ------------------------

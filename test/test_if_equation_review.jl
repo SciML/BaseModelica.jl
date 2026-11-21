@@ -39,6 +39,32 @@ end
 
 if_review_rows(eqs) = reduce(vcat, (vec(vcat(Symbolics.scalarize(eq))) for eq in eqs); init = Symbolics.Equation[])
 
+function if_review_depends_on(eqs, variable)
+    return any(eqs) do eq
+        any((eq.lhs, eq.rhs)) do side
+            any(v -> isequal(Symbolics.unwrap(v), Symbolics.unwrap(variable)), Symbolics.get_variables(side))
+        end
+    end
+end
+
+function if_review_contains(expr, target)
+    value = Symbolics.unwrap(expr)
+    isequal(value, Symbolics.unwrap(target)) && return true
+    BaseModelica.SymbolicUtils.iscall(value) || return false
+    return any(arg -> if_review_contains(arg, target), BaseModelica.SymbolicUtils.arguments(value))
+end
+
+function if_review_explicit_derivative(raw, name)
+    variable = getproperty(raw, Symbol(name); namespace = false)
+    derivative = Symbolics.Differential(ModelingToolkit.get_iv(raw))(variable)
+    rows = if_review_rows(equations(raw))
+    @test count(eq -> isequal(Symbolics.unwrap(eq.lhs), Symbolics.unwrap(derivative)), rows) == 1
+    # An explicit derivative must not also hide in an implicit residual or RHS.
+    @test all(eq -> !if_review_contains(eq.rhs, derivative), rows)
+    @test !BaseModelica.ModelingToolkitBase.hasdefault(variable)
+    @test BaseModelica.ModelingToolkitBase.getguess(variable) == 1
+end
+
 function if_review_initial_value(raw, variable, value)
     rows = if_review_rows(initialization_equations(raw))
     if BaseModelica.ModelingToolkitBase.hasdefault(variable)
@@ -63,7 +89,21 @@ end
     path = joinpath(@__DIR__, "if_equation_review", case * ".bmo")
     id = first(split(case, '_'))
 
-    if id in ("B8", "B8b", "B8c", "E2", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "I10", "I11", "I15")
+    if id in ("D2", "D3", "D4")
+        # Balanced dynamic rows must reject a missing/nonlinear/coupled
+        # derivative before MTK can silently move a non-fixed state's start.
+        err = try
+            parse_basemodelica(path; parser, arrays, simplify = false)
+            nothing
+        catch exception
+            exception
+        end
+        @test err isa BaseModelica.UnsupportedFeatureError
+        if err isa Exception
+            diagnostic = id == "D2" ? r"derivative.*missing" : id == "D3" ? r"isolate.*linear" : r"coupled state derivatives"
+            @test occursin(diagnostic, sprint(showerror, err))
+        end
+    elseif id in ("B8", "B8b", "B8c", "E2", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "I10", "I11", "I15")
         # Parameter-selected nested when is valid Modelica but deliberately
         # unsupported. Dynamic unbalanced branches may never use start values.
         @test_throws BaseModelica.UnsupportedFeatureError parse_basemodelica(path; parser, arrays)
@@ -108,12 +148,41 @@ end
             @test BaseModelica.ModelingToolkitBase.getguess(var) == 3
         end
     else
+        if id in ("B4b", "S1d", "U5")
+            # One warning per model load, even for equal scalar counts. The
+            # selected branch cannot follow remake once its targets differ.
+            for _ in 1:2
+                raw = @test_logs (:warn, r"(?is)(?=.*\bb\b)(?=.*(?:if-equation|if equation|branch))") min_level = Base.CoreLogging.Warn parse_basemodelica(
+                    path; parser, arrays, simplify = false
+                )
+                @test !if_review_depends_on(equations(raw), getproperty(raw, :b; namespace = false))
+                if id in ("S1d", "U5")
+                    if_review_explicit_derivative(raw, "x")
+                    id == "U5" && @test BaseModelica.ModelingToolkitBase.getguess(raw.y) == 1
+                end
+            end
+        elseif id in ("D1", "U1", "U2")
+            raw = parse_basemodelica(path; parser, arrays, simplify = false)
+            if_review_explicit_derivative(raw, "x")
+        elseif id in ("S6", "S7", "S8")
+            raw = parse_basemodelica(path; parser, arrays, simplify = false)
+            # Equal counts/targets do not keep a structural condition symbolic.
+            @test all(eq -> !occursin("ifelse", string(eq)), equations(raw))
+            if id == "S7"
+                @test !ModelingToolkit.istunable(raw.b)
+                @test !if_review_depends_on(equations(raw), getproperty(raw, :b; namespace = false))
+            end
+        end
         sys = if id == "E1"
             @test_logs (:warn, r"parameters 'p', 'q' select unbalanced if-equation") min_level = Base.CoreLogging.Warn parse_basemodelica(path; parser, arrays)
         elseif id == "E13"
             @test_logs (:warn, r"parameters 'initType', 'initType2' select unbalanced if-equation") min_level = Base.CoreLogging.Warn parse_basemodelica(path; parser, arrays)
-        elseif id == "B13"
+        elseif id in ("B13", "S6", "S8", "S9")
             @test_logs min_level = Base.CoreLogging.Warn parse_basemodelica(path; parser, arrays)
+        elseif id in ("B4b", "S1d", "U5")
+            @test_logs (:warn, r"(?is)(?=.*\bb\b)(?=.*(?:if-equation|if equation|branch))") min_level = Base.CoreLogging.Warn parse_basemodelica(path; parser, arrays)
+        elseif id == "S7"
+            @test_logs (:warn, r"Evaluate=true") min_level = Base.CoreLogging.Warn parse_basemodelica(path; parser, arrays)
         else
             parse_basemodelica(path; parser, arrays)
         end
@@ -135,8 +204,9 @@ end
             end
         elseif id == "B2"
             if_review_values(sys, sol, "y", t -> t < 0.5 ? exp(-t) : 2)
-        elseif id == "B2b"
+        elseif id in ("B2b", "D1", "U1", "U2")
             if_review_values(sys, sol, "x", t -> t < 0.5 ? exp(-t) : exp(-0.5) + t - 0.5)
+            id != "B2b" && if_review_values(sys, sol, "y", t -> t < 0.5 ? 1 : 2)
         elseif id in ("B3", "B4", "B7")
             for i in 1:(id == "B4" ? 3 : 2)
                 before, after = (1, 2, 5)[i], (3, 4, 6)[i]
@@ -145,6 +215,13 @@ end
         elseif id == "B4b"
             if_review_values(sys, sol, "y[1]", t -> 3)
             if_review_values(sys, sol, "y[2]", t -> 7)
+            # OMC rejects the other load-time configuration: its y[2]=1
+            # conflicts with the outer y[2]=7. It must never report Success.
+            mktempdir() do dir
+                invalid = joinpath(dir, "B4b_true.bmo")
+                write(invalid, replace(read(path, String), "Boolean b = false" => "Boolean b = true"))
+                @test_throws r"system is unbalanced" parse_basemodelica(invalid; parser, arrays)
+            end
         elseif id in ("B5", "B5b")
             if_review_values(sys, sol, "r.a", t -> t < 0.5 ? 1 : 3)
             if_review_values(sys, sol, "r.b", t -> t < 0.5 ? 2 : 4)
@@ -167,6 +244,23 @@ end
             changed = if_review_solve(sys; problem = remake(ODEProblem(sys, [], (0.0, 1.0)); p = [sys.p => false]))
             if_review_values(sys, changed, "r.a", t -> exp(-t))
             if_review_values(sys, changed, "r.b", t -> 2exp(-t))
+        elseif id == "N11"
+            if_review_values(sys, sol, "y", t -> t < 0.5 ? 1 : 2)
+            if_review_values(sys, sol, "z", t -> 1)
+        elseif id in ("S1d", "U5", "S6", "S7", "S9")
+            if_review_values(sys, sol, "x", t -> exp(-t))
+            if_review_values(sys, sol, "y", t -> id == "U5" ? exp(-2t) : id in ("S6", "S7") ? 2exp(-t) : exp(-t))
+            if id == "S9"
+                @test ModelingToolkit.istunable(sys.b)
+                changed = if_review_solve(sys; problem = remake(ODEProblem(sys, [], (0.0, 1.0)); p = [sys.b => false]))
+                if_review_values(sys, changed, "x", t -> exp(-2t))
+                if_review_values(sys, changed, "y", t -> 2exp(-2t))
+            end
+        elseif id == "S8"
+            for i in 1:2
+                if_review_values(sys, sol, "x[$i]", t -> exp(-t))
+            end
+            if_review_values(sys, sol, "y", t -> exp(-t))
         elseif id in ("E1", "E3", "E4", "R7")
             if_review_values(sys, sol, "y", t -> id == "E1" ? 1 : 2)
         elseif id == "E13"
