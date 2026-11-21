@@ -935,9 +935,10 @@ function array_mtk_affect(equations, discretes)
         length(pending) == before && return equations
     end
     equations = Equation[eq.lhs ~ resolved[eq.lhs] for eq in equations]
-    affect = array_callback_part(
-        ModelingToolkitBase.SymbolicAffect(equations; discrete_parameters = discretes)
+    callback = ModelingToolkitBase.SymbolicDiscreteCallback(
+        true, equations; discrete_parameters = discretes
     )
+    affect = array_callback_part(callback.affect)
     result = copy(affect.affect)
     # These are explicit simultaneous assignments from the validated event IR.
     # Compiling a second symbolic system lets MTK alias an updated array element
