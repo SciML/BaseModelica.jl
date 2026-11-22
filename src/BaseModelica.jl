@@ -1,7 +1,9 @@
 module BaseModelica
 
 import CondaPkg
+import ConstructionBase
 using DiffEqBase: BrownFullBasicInit
+using LinearAlgebra: Diagonal
 using MLStyle: @data, @match
 import ModelingToolkit
 using ModelingToolkitBase: @discretes, @named, @parameters, System, equations, mtkcompile
@@ -12,8 +14,9 @@ using ParserCombinator:
 import ParserCombinator
 using PrecompileTools: @compile_workload, @setup_workload
 const set_name = ParserCombinator.set_name
-using PythonCall: Py, pyconvert, pyhasattr, pyimport, pylen
-using SciMLBase: ODEProblem
+using PythonCall: Py, pyconvert, pydict, pyexec, pyhasattr, pyimport, pylen
+import SciMLBase
+using SciMLBase: ODEProblem, add_tstop!
 import SymbolicIndexingInterface
 using SymbolicUtils: substitute
 import SymbolicUtils
@@ -23,12 +26,19 @@ import Symbolics
 include("ast.jl")
 include("julia_parser.jl")
 include("antlr_parser.jl")
+include("events.jl")
+include("relation_booleans.jl")
 include("evaluator.jl")
+include("parameters.jl")
+include("functions.jl")
+include("arrays.jl")
+include("records.jl")
 
 """
-    parse_basemodelica(filename::AbstractString; parser::Symbol = :antlr)
+    parse_basemodelica(filename::AbstractString; parser::Symbol = :antlr,
+                       discrete_backend = :auto, simplify = true, arrays = :scalarize)
 
-Parse a BaseModelica source file into a compiled ModelingToolkit system.
+Parse a BaseModelica source file into a ModelingToolkit system.
 
 ## Arguments
 - `filename::AbstractString`: Path to a BaseModelica source file.
@@ -36,14 +46,34 @@ Parse a BaseModelica source file into a compiled ModelingToolkit system.
 ## Keyword Arguments
 - `parser::Symbol = :antlr`: Parsing backend. `:antlr` uses the bundled ANTLR grammar;
   `:julia` uses the ParserCombinator implementation.
+- `arrays = :scalarize`: Array representation at load. `:scalarize` creates separate scalar
+  symbols; `:keep` preserves supported arrays as ModelingToolkit array symbols and emits
+  whole-array equations, except in models with when-equations, where the discrete backend
+  currently returns scalar equations. Structural sizes are evaluated at load. Unsupported components
+  fall back individually to scalar symbols with an `@debug` message.
+- `discrete_backend = :auto`: How discrete variables and `when` equations are lowered: the
+  name of a registered backend, or an [`AbstractDiscreteBackend`](@ref) instance. `:mtk`
+  (built in) uses ModelingToolkit symbolic events (`@discretes` updated by callback
+  affects). Other packages register further backends with
+  [`register_discrete_backend!`](@ref); for example `:synchtoolkit` (clocked variables
+  compiled by SynchToolkit.jl) is available after `using SynchToolkit`. `:auto` selects the
+  registered backend that opted in to automatic selection, and `:mtk` if none did.
+- `simplify = true`: `true` returns the system compiled by the backend's
+  [`compile_system`](@ref) (`mtkcompile`, plus any compiler passes the backend needs).
+  `false` returns the unsimplified system, for example to pass to
+  `DyadInterface.simplify_model`. A function `f` returns `f(system)`. The `:mtk` backend
+  finalizes retained-array reinit targets and checks compiled results for unsupported
+  algebraic crossings on both the `true` and function routes. With `false`, compile the
+  system yourself and keep the result of `compiled = check_algebraic_crossings(compiled)`.
 
 ## Returns
-- A compiled `ModelingToolkitBase.System` representing the equations, variables, parameters,
+- A `ModelingToolkitBase.System` representing the equations, variables, parameters,
   and events in `filename`.
 
 ## Errors
 - Throws an error when `parser` is neither `:antlr` nor `:julia`, or when the selected parser
   cannot parse `filename`.
+- Throws an `ArgumentError` when `arrays` is neither `:scalarize` nor `:keep`, or no backend is registered under `discrete_backend`.
 
 ## Examples
 
@@ -55,16 +85,25 @@ system = parse_basemodelica(filename)
 @assert !isnothing(system)
 ```
 """
-function parse_basemodelica(filename::AbstractString; parser::Symbol = :antlr)
-    filename = String(filename)
-    package = if parser == :antlr
-        parse_file_antlr(filename)
-    elseif parser == :julia
-        parse_file_julia(filename)
-    else
-        error("Unknown parser: $parser. Use :julia or :antlr")
+function parse_basemodelica(
+        filename::AbstractString; parser::Symbol = :antlr, discrete_backend = :auto,
+        simplify = true, arrays = :scalarize
+    )
+    validate_array_mode(arrays)
+    return @lock CONVERSION_LOCK begin
+        package = parse_package(filename, parser)
+        baseModelica_to_ModelingToolkit(package; discrete_backend, simplify, arrays)
     end
-    return baseModelica_to_ModelingToolkit(package)
+end
+
+function parse_package(filename::AbstractString, parser::Symbol)
+    filename = String(filename)
+    if parser == :antlr
+        return parse_file_antlr(filename)
+    elseif parser == :julia
+        return parse_file_julia(filename)
+    end
+    return error("Unknown parser: $parser. Use :julia or :antlr")
 end
 
 """
@@ -165,13 +204,51 @@ function parse_experiment_annotation(annotation::Union{BaseModelicaAnnotation, N
 end
 
 """
-    create_odeproblem(filename::AbstractString; parser::Symbol = :antlr, u0 = [], kwargs...)
+    ExperimentAnnotation
+
+Metadata key under which the settings of a model's `annotation(experiment(...))` are stored
+on the system returned by [`parse_basemodelica`](@ref). Read them with
+[`experiment_settings`](@ref).
+"""
+struct ExperimentAnnotation end
+
+"""
+    experiment_settings(sys)
+
+Return the experiment annotation settings of a system created by [`parse_basemodelica`](@ref)
+as a named tuple `(StartTime, StopTime, Tolerance, Interval)` (see
+[`parse_experiment_annotation`](@ref)), or `nothing` if the model has no experiment
+annotation. Available on both simplified and unsimplified systems.
+
+## Examples
+
+```julia
+using BaseModelica
+
+filename = joinpath(pkgdir(BaseModelica), "test", "testfiles", "Experiment.bmo")
+experiment_settings(parse_basemodelica(filename; simplify = false)).StopTime
+# output
+2.0
+```
+"""
+experiment_settings(sys) = SymbolicUtils.getmetadata(sys, ExperimentAnnotation, nothing)
+
+"""
+    create_odeproblem(filename::AbstractString; parser::Symbol = :antlr, u0 = [],
+                      discrete_backend = :auto, simplify = true, arrays = :scalarize, kwargs...)
 
 Parse a BaseModelica source file and create an ODE problem with experiment settings.
 
 If the model has an `annotation(experiment(...))` block, its `StartTime` and `StopTime` become
-the problem time span, `Tolerance` becomes `reltol`, and `Interval` becomes `saveat`. Explicit
-keyword arguments override those annotation-derived defaults.
+the problem time span, `Tolerance` becomes `reltol`, and `Interval` becomes `saveat`. A model
+without differential states also gets `dtmax = Interval` (or a 500th of the time span): the
+step size of such a model is not limited by error control, and events between the few
+points of a single long step would be missed. Explicit keyword arguments override those
+defaults.
+
+The time instants at which if-conditions such as `time < startTime` switch are stored as
+`tstops` on the system, so they reach the solver also when the problem is built with
+`SciMLBase.ODEProblem(parse_basemodelica(filename), ...)`.
 
 ## Arguments
 - `filename::AbstractString`: Path to a BaseModelica source file.
@@ -179,8 +256,12 @@ keyword arguments override those annotation-derived defaults.
 
 ## Keyword Arguments
 - `parser::Symbol = :antlr`: Parsing backend, either `:antlr` or `:julia`.
-- `kwargs...`: Keyword arguments forwarded to `SciMLBase.ODEProblem`. `reltol` and `saveat`
-  override values read from an experiment annotation.
+- `arrays = :scalarize`: Array representation; see [`parse_basemodelica`](@ref).
+- `discrete_backend = :auto`: See [`parse_basemodelica`](@ref).
+- `simplify = true`: How the system is simplified before building the problem: `true` for
+  the default `mtkcompile`, or a function such as `DyadInterface.simplify_model`.
+- `kwargs...`: Keyword arguments forwarded to `SciMLBase.ODEProblem`. `reltol`, `saveat` and
+  `dtmax` override the defaults described above, `tstops` replaces the model's.
 
 ## Returns
 - A `SciMLBase.ODEProblem` constructed from the imported ModelingToolkit system.
@@ -200,69 +281,52 @@ prob.tspan
 (0.0, 2.0)
 ```
 """
-function create_odeproblem(filename::AbstractString; parser::Symbol = :antlr, u0 = [], kwargs...)
-    filename = String(filename)
-    # Parse the file to get the package
-    package = if parser == :antlr
-        parse_file_antlr(filename)
-    elseif parser == :julia
-        parse_file_julia(filename)
-    else
-        error("Unknown parser: $parser. Use :julia or :antlr")
+function create_odeproblem(
+        filename::AbstractString; parser::Symbol = :antlr, u0 = [], discrete_backend = :auto,
+        simplify = true, arrays = :scalarize, kwargs...
+    )
+    simplify === false &&
+        throw(ArgumentError("create_odeproblem needs a simplified system; pass `simplify = true` or a function"))
+    sys = parse_basemodelica(filename; parser, discrete_backend, simplify, arrays)
+
+    # Experiment settings travel with the system as metadata; explicit keyword arguments
+    # take precedence over the defaults derived from them
+    experiment = experiment_settings(sys)
+    tspan = isnothing(experiment) ? (0.0, 1.0) : (experiment.StartTime, experiment.StopTime)
+    defaults = Dict{Symbol, Any}()
+    if !isnothing(experiment)
+        defaults[:reltol] = experiment.Tolerance
+        isnothing(experiment.Interval) || (defaults[:saveat] = experiment.Interval)
     end
-
-    # Convert to ModelingToolkit
-    sys = baseModelica_to_ModelingToolkit(package)
-
-    # Collect tstops from time-based if-equation conditions (e.g. `if time < 1e-5`)
-    # so the ODE solver stops exactly at each discontinuity.
-    model_tstops = isempty(tstops_collection) ? nothing : sort!(collect(tstops_collection))
-
-    # Extract experiment annotation from the model's composition
-    annotation = nothing
-    if package.model isa BaseModelicaModel
-        long_class = package.model.long_class_specifier
-        if long_class isa BaseModelicaLongClass
-            composition = long_class.composition
-            if composition isa BaseModelicaComposition
-                annotation = composition.annotation
-            end
-        end
+    # Without differential states the error estimate is zero, so the step size is unbounded:
+    # one step can span the whole simulation and miss events between its few sample points.
+    # Stop at least once per output interval, as Modelica tools do.
+    if isempty(differentiated_variables(equations(sys)))
+        interval = isnothing(experiment) ? nothing : experiment.Interval
+        defaults[:dtmax] = something(interval, (tspan[2] - tspan[1]) / 500)
     end
-
-    # Parse experiment settings
-    exp_params = parse_experiment_annotation(annotation)
-
-    # Create ODEProblem with appropriate time span and tolerance
-    if !isnothing(exp_params)
-        tspan = (exp_params.StartTime, exp_params.StopTime)
-
-        # Build kwargs with annotation defaults, but allow user overrides
-        # Check if reltol or saveat are already in kwargs
-        kwargs_keys = keys(kwargs)
-
-        # Start with annotation values
-        annotation_kwargs = NamedTuple()
-        if !(:reltol in kwargs_keys)
-            annotation_kwargs = merge(annotation_kwargs, (reltol = exp_params.Tolerance,))
-        end
-        if !(:saveat in kwargs_keys) && !isnothing(exp_params.Interval)
-            annotation_kwargs = merge(annotation_kwargs, (saveat = exp_params.Interval,))
-        end
-
-        # Merge annotation defaults with user kwargs (user kwargs take precedence)
-        prob = ODEProblem(sys, u0, tspan; missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0), annotation_kwargs..., kwargs...)
-        return prob
-    else
-        # Default time span if no annotation
-        tspan = (0.0, 1.0)
-        prob = ODEProblem(sys, u0, tspan; missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0), kwargs...)
-        return prob
-    end
+    defaults = NamedTuple(k => v for (k, v) in defaults if !haskey(kwargs, k))
+    return ODEProblem(
+        sys, u0, tspan;
+        missing_guess_value = ModelingToolkitBase.MissingGuessValue.Constant(0.0),
+        defaults..., kwargs...
+    )
 end
 
 include("precompilation.jl")
 
-export parse_basemodelica, create_odeproblem, parse_experiment_annotation
+export parse_basemodelica, create_odeproblem, parse_experiment_annotation,
+    experiment_settings, check_algebraic_crossings
+
+# The discrete backend interface is public but not exported (`public` needs Julia 1.11).
+@static if VERSION >= v"1.11"
+    eval(
+        Meta.parse(
+            "public AbstractDiscreteBackend, MTKEventsBackend, DiscreteModel, WhenBlock, " *
+                "LoweredDiscrete, lower_discrete, declare_discrete, compile_system, when_edge, " *
+                "register_discrete_backend!, unregister_discrete_backend!, UnsupportedFeatureError"
+        )
+    )
+end
 
 end

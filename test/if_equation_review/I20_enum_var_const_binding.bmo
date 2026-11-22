@@ -1,0 +1,12 @@
+//! base 0.1.0
+package P
+  type E = enumeration(a, b);
+model M
+  E s = E.b;
+  Real x(start = 3.0);
+initial equation
+  if s == E.a then x = 1.0; end if;
+equation
+  der(x) = -x;
+end M;
+end P;

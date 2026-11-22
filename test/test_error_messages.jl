@@ -157,3 +157,81 @@ using ParserCombinator
         @test isa(result, BaseModelica.BaseModelicaPackage)
     end
 end
+
+@testset "Error Messages (ANTLR Parser)" begin
+    # Syntax errors must throw instead of being printed to stderr while a partial model
+    # is silently returned.
+    @testset "Syntax error throws" begin
+        invalid_modelica = """//! base 0.1.0
+        package Test
+          model TestModel
+            Real x;
+          equation
+            der(x) = -x +;
+          end TestModel;
+        end Test;"""
+        err = try
+            BaseModelica.parse_with_antlr(invalid_modelica)
+            nothing
+        catch e
+            e
+        end
+        @test err isa BaseModelica.BaseModelicaParseError
+        @test occursin("syntax error", err.msg)
+        @test occursin("line 6, column 18", err.msg)
+        @test occursin("Error context:", err.msg)
+        @test occursin("→", err.msg)
+    end
+
+    @testset "Lexer error throws" begin
+        invalid_token = """//! base 0.1.0
+        package Test
+          model TestModel
+            Real x;
+          equation
+            der(x) = -x # 2;
+          end TestModel;
+        end Test;"""
+        @test_throws BaseModelica.BaseModelicaParseError BaseModelica.parse_with_antlr(invalid_token)
+    end
+
+    @testset "File errors include the filename" begin
+        temp_file = tempname() * ".bmo"
+        try
+            write(
+                temp_file, """//! base 0.1.0
+                package Test
+                  model TestModel
+                    Real x
+                  equation
+                    der(x) = -x;
+                  end TestModel;
+                end Test;"""
+            )
+            err = try
+                parse_basemodelica(temp_file; parser = :antlr)
+                nothing
+            catch e
+                e
+            end
+            @test err isa BaseModelica.BaseModelicaParseError
+            @test occursin("Error in file:", err.msg)
+            @test occursin(temp_file, err.msg)
+        finally
+            rm(temp_file, force = true)
+        end
+    end
+
+    @testset "Valid code does not throw" begin
+        valid_modelica = """//! base 0.1.0
+        package Test
+          model TestModel
+            Real x;
+          equation
+            der(x) = -x;
+          end TestModel;
+        end Test;"""
+        @test BaseModelica.antlr_tree_to_ast(BaseModelica.parse_with_antlr(valid_modelica)) isa
+            BaseModelica.BaseModelicaPackage
+    end
+end

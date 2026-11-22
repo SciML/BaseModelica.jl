@@ -1,0 +1,13 @@
+//! base 0.1.0
+package P
+  type E = enumeration(a, b);
+model M
+  discrete E s(start = E.b);
+  Real x(start = 3.0);
+initial equation
+  if s == E.a then x = 1.0; else x = 2.0; end if;
+equation
+  der(x) = -x;
+  when time > 0.5 then s = E.a; end when;
+end M;
+end P;

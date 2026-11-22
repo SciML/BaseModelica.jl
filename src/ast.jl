@@ -37,11 +37,21 @@ end
     BaseModelicaComposition(components, equations, initial_equations, parameter_equations, annotation)
     BaseModelicaLongClass(name, description, composition)
     BaseModelicaModification(class_modifications, expr)
-    BaseModelicaClassModificationArg(name, modification)
+    BaseModelicaClassModificationArg(name, modification, each)
     #Class types
     BaseModelicaClassDefinition(class_type, class)
     BaseModelicaEnumeration(name, values)  # name: String, values: Vector{String}
+    # Algorithm sections and statements
+    BaseModelicaAlgorithmSection(statements, initial) # initial::Bool for `initial algorithm`
+    BaseModelicaAssignment(target, expression)  # target := expression
+    BaseModelicaIfStatement(conditions, branches)  # branches[end] is the else branch if longer
+    BaseModelicaForStatement(index, statements)
+    BaseModelicaUnsupportedStatement(description)  # parsed but not convertible (while, when, ...)
 end
+
+# Keep the existing constructor for modifiers without `each`.
+BaseModelicaClassModificationArg(name, modification) =
+    BaseModelicaClassModificationArg(name, modification, false)
 
 @data BaseModelicaExpr <: BaseModelicaASTNode begin
     # these are basically just tokens...
@@ -91,6 +101,8 @@ end
     BaseModelicaParens(BaseModelicaExpr)
     BaseModelicaFunctionArgs(args)
     BaseModelicaFunctionCall(func_name, args)
+    BaseModelicaNamedArgument(name, expression)
+    BaseModelicaFieldAccess(expression, field)
     BaseModelicaRange(start, step, stop)
     BaseModelicaArraySubscripts(subscripts)
 
@@ -105,5 +117,15 @@ end
     BaseModelicaEQ(left, right)
     BaseModelicaNEQ(left, right)
     BaseModelicaIfExpression(conditions, expressions)
-    BaseModelicaArrayReference(term, indexes)
+    BaseModelicaArrayReference(term, indexes)  # (expr)[subscripts]; indexes::BaseModelicaArraySubscripts
+    BaseModelicaArrayConstructor(elements)  # {a, b, c}
+    BaseModelicaArrayComprehension(expression, index)  # {expr for i in range}; index::BaseModelicaForIndex
+    BaseModelicaMatrixConstructor(rows)  # [a, b; c, d]; rows::Vector of element lists
+    # Element `index` (a tuple of Ints) of the value of `expression`, or the value itself if it
+    # is a scalar. Created when array declarations are scalarized: the element `x[i]` of
+    # `Real x[3](start = s)` gets start `BaseModelicaArrayElement(s, (i,))`.
+    BaseModelicaArrayElement(expression, index)
+    BaseModelicaArraySlice(expression, index) # leading indices of a record array modifier
+    BaseModelicaArrayFieldBinding(expression, name) # array record fields cannot broadcast scalar bindings
+    BaseModelicaUnsupportedExpression(description)  # parsed but not convertible
 end

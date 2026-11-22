@@ -1,0 +1,14 @@
+//! base 0.1.0
+package 'DependentBindings'
+  model 'DependentBindings'
+    parameter Real 'p' = 2.0;
+    parameter Real 'q' = 3.0;
+    parameter Real 'r' = 'p' * 'q';
+    parameter Real 's' = 'r' + 1.0;
+    parameter Real 'u' = 2.0 * 'w';
+    parameter Real 'w' = 1.5;
+    Real 'x'(fixed = true, start = 1.0);
+  equation
+    der('x') = -('r' + 's' + 'u') * 'x' / 16.0;
+  end 'DependentBindings';
+end 'DependentBindings';

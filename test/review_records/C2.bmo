@@ -1,0 +1,15 @@
+//! base 0.1.0
+package 'P'
+record 'R' Real 'x'; end 'R';
+function 'g'
+  input 'R' 'rs'[:];
+  output Real 'y';
+algorithm
+  'y' := 0.0;
+end 'g';
+model 'M'
+  Real 'z'(start = 1.0, fixed = true);
+equation
+  der('z') = -'z';
+end 'M';
+end 'P';

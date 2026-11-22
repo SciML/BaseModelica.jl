@@ -1,0 +1,10 @@
+//! base 0.1.0
+package P
+model M
+  parameter Boolean b = false;
+  Real x(start = 1, fixed = true);
+equation
+  if b then der(x) = -x; end if;
+  if not b then der(x) = 1.0; end if;
+end M;
+end P;

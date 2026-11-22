@@ -1,0 +1,11 @@
+//! base 0.1.0
+package 'P'
+record 'R' Real 'x'; Real 'y' = 2 * 'x'; end 'R';
+model 'M'
+  parameter Real 'x' = 100.0;
+  parameter 'R' 'r'('x' = 3.0);
+  Real 'z';
+equation
+  'z' = 'r'.'y' + 0 * 'x';
+end 'M';
+end 'P';

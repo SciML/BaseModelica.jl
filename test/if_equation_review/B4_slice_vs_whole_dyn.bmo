@@ -1,0 +1,10 @@
+//! base 0.1.0
+package P
+model M
+  Real x(start = 1, fixed = true);
+  Real y[3];
+equation
+  der(x) = -x;
+  if time < 0.5 then y[1:2] = {1.0, 2.0}; y[3] = 5.0; else y = {3.0, 4.0, 6.0}; end if;
+end M;
+end P;

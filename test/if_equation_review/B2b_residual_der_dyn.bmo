@@ -1,0 +1,8 @@
+//! base 0.1.0
+package P
+model M
+  Real x(start = 1, fixed = true);
+equation
+  if time < 0.5 then 0 = der(x) + x; else 0 = der(x) - 1.0; end if;
+end M;
+end P;

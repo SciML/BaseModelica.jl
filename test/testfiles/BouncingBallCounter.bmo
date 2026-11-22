@@ -1,0 +1,18 @@
+//! base 0.1.0
+package 'BouncingBallCounter'
+  model 'BouncingBallCounter'
+    parameter Real 'e' = 0.8 "Coefficient of restitution";
+    parameter Real 'g' = 9.81 "Gravity acceleration";
+    Real 'h'(fixed = true, start = 1.0) "Height of ball";
+    Real 'v'(fixed = true, start = 0.0) "Velocity of ball";
+    discrete Integer 'bounces'(start = 0) "Number of bounces";
+  equation
+    der('h') = 'v';
+    der('v') = -'g';
+    when 'h' < 0.0 then
+      reinit('v', -'e' * pre('v'));
+      'bounces' = pre('bounces') + 1;
+    end when;
+    annotation(experiment(StartTime = 0, StopTime = 3.0, Tolerance = 1e-06, Interval = 0.01));
+  end 'BouncingBallCounter';
+end 'BouncingBallCounter';

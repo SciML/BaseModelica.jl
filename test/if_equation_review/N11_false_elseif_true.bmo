@@ -1,0 +1,17 @@
+//! base 0.1.0
+package P
+model M
+  Real y;
+  Real z;
+equation
+  z = 1.0;
+  if false then
+    y = 9.0;
+    z = 9.0;
+  elseif time < 0.5 then
+    y = 1.0;
+  elseif true then
+    y = 2.0;
+  end if;
+end M;
+end P;

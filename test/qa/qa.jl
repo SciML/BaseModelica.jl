@@ -1,3 +1,3 @@
-using BaseModelica, SciMLTesting
+using BaseModelica, SciMLTesting, JET
 
 run_qa(BaseModelica)

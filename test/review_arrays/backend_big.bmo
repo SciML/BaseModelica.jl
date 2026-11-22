@@ -1,0 +1,10 @@
+//! base 0.1.0
+package P
+model M
+  Real x[3000](each start=1, each fixed=true);
+  discrete Real d(start=0);
+equation
+  der(x) = -x;
+  when time > 0.5 then d = pre(d) + 1; end when;
+end M;
+end P;

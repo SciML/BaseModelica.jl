@@ -1,0 +1,17 @@
+//! base 0.1.0
+package P
+model M
+  parameter Integer n = 3;
+  parameter Boolean b = true;
+  Real x(start = 1, fixed = true);
+  Real y[3];
+equation
+  der(x) = -x;
+  if b then
+    for i in 1:n loop
+      if i > 1 then y[i] = 2 * y[i - 1]; else y[i] = x; end if;
+    end for;
+  end if;
+  if not b then y = {1.0, 2.0, 3.0}; end if;
+end M;
+end P;

@@ -1,0 +1,15 @@
+//! base 0.1.0
+package P
+  type Init = enumeration(NoInit, SteadyState, InitialState);
+model M
+  parameter Init initType = Init.NoInit;
+  parameter Init other = initType;
+  Real y(start = 2);
+initial equation
+  if other == Init.SteadyState then der(y) = 0;
+  elseif other == Init.InitialState then y = 5;
+  end if;
+equation
+  der(y) = 1 - y;
+end M;
+end P;

@@ -1,0 +1,12 @@
+//! base 0.1.0
+package P
+model M
+  Real x(start = 1, fixed = true);
+  Real y[3];
+equation
+  der(x) = -x;
+  for i in 1:3 loop
+    if i == 1 then y[i] = x; else y[i] = 2 * y[i - 1]; end if;
+  end for;
+end M;
+end P;

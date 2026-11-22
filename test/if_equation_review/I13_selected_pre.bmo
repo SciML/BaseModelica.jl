@@ -1,0 +1,13 @@
+//! base 0.1.0
+package P
+model M
+  parameter Boolean enabled = true;
+  Real x(start = 0, fixed = true);
+  discrete Boolean b(start = true);
+initial equation
+  if enabled then pre(b) = false; end if;
+equation
+  der(x) = 1;
+  when time > 0.5 then b = true; end when;
+end M;
+end P;

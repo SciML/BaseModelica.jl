@@ -1,0 +1,16 @@
+//! base 0.1.0
+package P
+model M
+  parameter Real m = 0.0;
+  Real v(start = 1, fixed = true);
+  Real y;
+equation
+  if time < 0.5 then
+    m * der(v) = 1.0 - v;
+    y = 1.0;
+  else
+    0 = y - 2.0;
+    der(v) = 1.0;
+  end if;
+end M;
+end P;

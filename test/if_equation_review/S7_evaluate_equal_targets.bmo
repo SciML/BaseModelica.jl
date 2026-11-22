@@ -1,0 +1,11 @@
+//! base 0.1.0
+package P
+model M
+  parameter Boolean b = false annotation(Evaluate = true);
+  Real x(start = 1);
+  Real y;
+equation
+  der(x) = -x;
+  if b then y = x; else y = 2.0*x; end if;
+end M;
+end P;

@@ -1,0 +1,9 @@
+//! base 0.1.0
+package 'P'
+record 'R' Real 'x'; Real 'y'; end 'R';
+model 'M'
+  'R' 'r';
+equation
+  'r' = if time > 0.5 then 'R'(1.0, 2.0) else 'R'(3.0, 4.0);
+end 'M';
+end 'P';

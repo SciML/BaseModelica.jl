@@ -1,0 +1,15 @@
+//! base 0.1.0
+package P
+model M
+  parameter Boolean b = true;
+  Real x(start = 1, fixed = true);
+  discrete Real d(start = 0, fixed = true);
+equation
+  der(x) = -x;
+  if b then
+    when time > 0.5 then d = 1.0; end when;
+  else
+    when time > 0.5 then d = 2.0; end when;
+  end if;
+end M;
+end P;

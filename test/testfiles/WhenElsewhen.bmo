@@ -1,0 +1,15 @@
+//! base 0.1.0
+package 'WhenElsewhen'
+  model 'WhenElsewhen'
+    Real 'x'(fixed = true, start = 0.0);
+    discrete Real 'a'(start = 0.0, fixed = true);
+    discrete Real 'b'(start = 0.0, fixed = true);
+  equation
+    der('x') = 1.0;
+    when 'x' > 0.25 then
+      'a' = 1.0;
+    elsewhen 'x' > 0.75 then
+      'b' = 2.0;
+    end when;
+  end 'WhenElsewhen';
+end 'WhenElsewhen';

@@ -15,6 +15,26 @@ PC = BM.ParserCombinator
         unary_minus_test = only(PC.parse_one("-5", BM.arithmetic_expression))
         @test unary_minus_test isa BM.BaseModelicaUnaryMinus
         @test BM.eval_AST(unary_minus_test) == -5.0
+
+        # Terms after a leading unary minus must not be dropped
+        @test BM.eval_AST(only(PC.parse_one("-5 - 3", BM.arithmetic_expression))) == -8.0
+        @test BM.eval_AST(only(PC.parse_one("-2*3 + 10", BM.arithmetic_expression))) == 4.0
+        @test BM.eval_AST(only(PC.parse_one("-2^2 + 1", BM.arithmetic_expression))) == -3.0
+        @test BM.eval_AST(only(PC.parse_one("+2 - 3 + 4", BM.arithmetic_expression))) == 3.0
+        @test BM.eval_AST(only(PC.parse_one("-1 + 2 - 3", BM.arithmetic_expression))) == -2.0
+    end
+
+    @testset "Leading Unary Minus In Equation" begin
+        unary_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "UnaryMinusLeading.bmo"
+        )
+        unary_system = parse_basemodelica(unary_path, parser = :julia)
+        dv_eq = only(filter(eq -> isequal(eq.lhs, BM.D(unary_system.v)), equations(unary_system)))
+        # der('v') = -'x' - 0.1*'v' must keep the damping term
+        rhs_val = ModelingToolkit.substitute(
+            dv_eq.rhs, Dict(unary_system.x => 2.0, unary_system.v => 3.0)
+        )
+        @test ModelingToolkit.Symbolics.value(rhs_val) ≈ -2.3
     end
 
     @testset "Annotation Parsing" begin
@@ -26,6 +46,30 @@ PC = BM.ParserCombinator
         )
         @test annotation_test isa BM.BaseModelicaAnnotation
         @test BM.eval_AST(annotation_test) === nothing
+    end
+
+    @testset "Comments (trailing, own-line and block)" begin
+        comments_path = joinpath(
+            dirname(dirname(pathof(BM))), "test", "testfiles", "TrailingComments.bmo"
+        )
+        # A trailing `// comment` used to make the parser backtrack for minutes. Parse in a
+        # subprocess so a regression fails the test instead of hanging the suite.
+        code = "using BaseModelica; BaseModelica.parse_file_julia(ARGS[1])"
+        proc = run(
+            pipeline(
+                `$(Base.julia_cmd()) --project=$(Base.active_project()) -e $code $comments_path`;
+                stdout = devnull, stderr = devnull
+            );
+            wait = false
+        )
+        finished = timedwait(() -> process_exited(proc), 300.0)
+        finished === :ok || kill(proc)
+        @test finished === :ok
+        @test success(proc)
+
+        comments_system = parse_basemodelica(comments_path, parser = :julia)
+        @test comments_system isa System
+        @test length(unknowns(comments_system)) == 1
     end
 
     @testset "Newton Cooling" begin
@@ -81,8 +125,7 @@ PC = BM.ParserCombinator
         )
         if_equations_package = BM.parse_file_julia(if_equations_path)
         @test if_equations_package isa BM.BaseModelicaPackage
-        if_equations_system = BM.baseModelica_to_ModelingToolkit(if_equations_package)
-        @test if_equations_system isa System
+        @test BM.baseModelica_to_ModelingToolkit(if_equations_package) isa System
         @test parse_basemodelica(if_equations_path, parser = :julia) isa System
     end
 
@@ -136,8 +179,8 @@ PC = BM.ParserCombinator
         )
         noelse_package = BM.parse_file_julia(noelse_path)
         @test noelse_package isa BM.BaseModelicaPackage
-        noelse_system = BM.baseModelica_to_ModelingToolkit(noelse_package)
-        @test noelse_system isa System
+        # OpenModelica emits a terminal `elseif true` in place of an else.
+        @test BM.baseModelica_to_ModelingToolkit(noelse_package) isa System
         @test parse_basemodelica(noelse_path, parser = :julia) isa System
     end
 
@@ -266,5 +309,18 @@ PC = BM.ParserCombinator
         @test "Modelica.Blocks.Types.LimiterHomotopy" in enum_names
 
         @test parse_basemodelica(pid_path, parser = :julia) isa System
+    end
+end
+
+@testset "Whitespace before a signed relation operand" begin
+    for (expr, ast_type, value) in (
+            ("2 < -1.0", BM.BaseModelicaLessThan, false),
+            ("-1.0 <= -0.5", BM.BaseModelicaLEQ, true),
+            ("2 >= +1.0", BM.BaseModelicaGEQ, true),
+            ("if 1 > -1.0 then 2 else 3", BM.BaseModelicaIfExpression, 2),
+        )
+        ast = only(PC.parse_one(expr, BM.expression))
+        @test ast isa ast_type
+        @test BM.eval_AST(ast) == value
     end
 end

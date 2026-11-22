@@ -1,0 +1,11 @@
+//! base 0.1.0
+package P
+model M
+parameter Boolean b = false;
+Real x(start = 1.0, fixed = true);
+Real y;
+equation
+der(x) = -x;
+if b then y = 1.0; elseif not b then y = 2.0; end if;
+end M;
+end P;

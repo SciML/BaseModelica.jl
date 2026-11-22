@@ -1,0 +1,16 @@
+//! base 0.1.0
+package P
+  record R
+    Real a;
+    Real b;
+  end R;
+model M
+  parameter Boolean p = true;
+  R r(a(start = 0), b(start = 0));
+initial equation
+  if p then r = R(3.0, 4.0); else r.a = 1.0; r.b = 2.0; end if;
+equation
+  der(r.a) = -r.a;
+  der(r.b) = -r.b;
+end M;
+end P;

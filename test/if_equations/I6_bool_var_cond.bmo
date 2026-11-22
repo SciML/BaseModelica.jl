@@ -1,0 +1,11 @@
+//! base 0.1.0
+package P
+model M
+  Boolean b = time > 0.5;
+  Real x(start = 3.0);
+initial equation
+  if b then x = 1.0; else x = 2.0; end if;
+equation
+  der(x) = -x;
+end M;
+end P;

@@ -1,0 +1,12 @@
+//! base 0.1.0
+package P
+model M
+Real x1(start = 3.0);
+Real x2(start = 3.0);
+initial equation
+x2 = 2.0;
+equation
+der(x1) = -x1;
+der(x2) = -x2;
+end M;
+end P;

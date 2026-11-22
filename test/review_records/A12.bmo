@@ -1,0 +1,11 @@
+//! base 0.1.0
+package 'P'
+type 'E' = enumeration('a', 'b');
+record 'R' Integer 'n' = 2; Boolean 'b' = true; 'E' 'e' = 'E'.'b'; end 'R';
+model 'M'
+  parameter 'R' 'p'('n' = 3);
+  Real 'z';
+equation
+  'z' = if 'p'.'b' and 'p'.'e' == 'E'.'b' then 'p'.'n' else -1.0;
+end 'M';
+end 'P';

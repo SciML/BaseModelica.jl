@@ -1,0 +1,16 @@
+//! base 0.1.0
+package 'InitialAssert'
+  model 'InitialAssert' "assert statements in an initial algorithm"
+    parameter Real 'period' = 0.5;
+    parameter Real 'width' = 0.2;
+    discrete Real 'counter';
+    Real 'x'(fixed = true, start = 1.0);
+  initial algorithm
+    assert('period' > 0.0, "period must be positive");
+    'counter' := 2.0 * 'period';
+    assert('width' < 'period', "width must be smaller than period", AssertionLevel.warning);
+    assert('x' > 0.0 and 'counter' > 0.0, "x and counter must be positive at initialization");
+  equation
+    der('x') = -'x';
+  end 'InitialAssert';
+end 'InitialAssert';

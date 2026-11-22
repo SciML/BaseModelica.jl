@@ -1,0 +1,11 @@
+//! base 0.1.0
+package P
+
+model M
+  Real x[2];
+initial equation
+  0 = x - {1,2};
+equation
+  der(x) = -x;
+end M;
+end P;

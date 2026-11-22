@@ -1,0 +1,13 @@
+//! base 0.1.0
+package P
+model M
+  parameter Boolean b = false;
+  Real x(start = 1, fixed = true);
+  Real y;
+  Real z;
+equation
+  der(x) = -x;
+  z + y = 3.0;
+  if b then y = 1.0; z = 2.0; else 0 = y - 2.0*z; end if;
+end M;
+end P;

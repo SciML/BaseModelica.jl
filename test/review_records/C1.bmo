@@ -1,0 +1,10 @@
+//! base 0.1.0
+package 'P'
+type 'Len' = Real(unit = "m");
+record 'R' 'Len' 'x'; end 'R';
+model 'M'
+  Real 'z'(start = 1.0, fixed = true);
+equation
+  der('z') = -'z';
+end 'M';
+end 'P';

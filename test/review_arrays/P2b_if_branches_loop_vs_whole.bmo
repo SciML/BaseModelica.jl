@@ -1,0 +1,17 @@
+//! base 0.1.0
+package P
+
+model M
+  Real x[3](start={1,2,3}, each fixed=true);
+  Real y[3];
+equation
+  der(x) = -x;
+  if time < 0.5 then
+    for i in 1:3 loop
+      y[i] = x[i];
+    end for;
+  else
+    y = -x;
+  end if;
+end M;
+end P;

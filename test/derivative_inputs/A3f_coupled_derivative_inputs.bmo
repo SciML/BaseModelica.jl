@@ -1,0 +1,20 @@
+//! base 0.1.0
+package P
+model M
+  parameter Real k = 1;
+  Real v(start = 1);
+  Real w(start = 2);
+  Real a;
+  Real z;
+equation
+  der(v) = -k*v;
+  der(w) = -k*w;
+  if time < 0.5 then
+    a = der(v) + der(w);
+    z = 0.0;
+  else
+    0 = a;
+    0 = z;
+  end if;
+end M;
+end P;

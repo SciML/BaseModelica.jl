@@ -1,6 +1,11 @@
 [Core]
 versions = ["lts", "1", "pre"]
 
+[EventSteps]
+versions = ["lts", "1", "pre"]
+
+[IfEquations]
+versions = ["lts", "1", "pre"]
 
 [QA]
 versions = ["lts", "1"]

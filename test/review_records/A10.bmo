@@ -1,0 +1,19 @@
+//! base 0.1.0
+package 'P'
+function 'f'
+  input Real 'u';
+  output Real 'y';
+protected
+  Real 'x';
+algorithm
+  if 'u' > 0.5 then
+    'x' := 10.0;
+  end if;
+  'y' := 'x';
+end 'f';
+model 'M'
+  Real 'z';
+equation
+  'z' = 'f'(time);
+end 'M';
+end 'P';

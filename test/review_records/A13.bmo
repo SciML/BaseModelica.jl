@@ -1,0 +1,9 @@
+//! base 0.1.0
+package 'P'
+record 'R' Real 'x'; Real 'y'; end 'R';
+model 'M'
+  'R' 'r'(start = 'R'('x' = 1.0), fixed = true);
+equation
+  der('r'.'x') = 0.0; der('r'.'y') = 0.0;
+end 'M';
+end 'P';

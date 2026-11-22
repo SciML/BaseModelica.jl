@@ -1,0 +1,14 @@
+//! base 0.1.0
+package P
+  record R
+    Real a;
+    Real b;
+  end R;
+model M
+  Real x(start = 1, fixed = true);
+  R r;
+equation
+  der(x) = -x;
+  if time < 0.5 then r.a = 1.0; r.b = 2.0; else r.b = 4.0; r.a = 3.0; end if;
+end M;
+end P;

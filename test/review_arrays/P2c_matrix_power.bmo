@@ -1,0 +1,12 @@
+//! base 0.1.0
+package P
+model M
+  Real A[2,2](start={{1,2},{3,4}}, each fixed=true);
+  Real x[3](start={1,2,3}, each fixed=true);
+  Real P2[2,2];
+equation
+  der(A) = -0.1*A;
+  der(x) = -x;
+  P2 = A^2;
+end M;
+end P;
