@@ -3,7 +3,7 @@ module BaseModelica
 import CondaPkg
 import ConstructionBase
 using DiffEqBase: BrownFullBasicInit
-using LinearAlgebra: Diagonal, SingularException
+using LinearAlgebra: Diagonal
 using MLStyle: @data, @match
 import ModelingToolkit
 using ModelingToolkitBase: @discretes, @named, @parameters, System, equations, mtkcompile
@@ -62,13 +62,9 @@ Parse a BaseModelica source file into a ModelingToolkit system.
   [`compile_system`](@ref) (`mtkcompile`, plus any compiler passes the backend needs).
   `false` returns the unsimplified system, for example to pass to
   `DyadInterface.simplify_model`. A function `f` returns `f(system)`. The `:mtk` backend
-  completes unfixed state starts, finalizes retained-array reinit targets, and checks
-  compiled results for unsupported algebraic crossings on both the `true` and function
-  routes. With `false`, compile the system yourself and keep the result of
-  `compiled = check_algebraic_crossings(compiled)`. For other discrete backends, use
-  [`complete_unfixed_initialization`](@ref) to complete starts alone. On `:mtk`, that
-  function alone does not finalize array reinit targets; use
-  [`check_algebraic_crossings`](@ref), which also completes starts.
+  finalizes retained-array reinit targets and checks compiled results for unsupported
+  algebraic crossings on both the `true` and function routes. With `false`, compile the
+  system yourself and keep the result of `compiled = check_algebraic_crossings(compiled)`.
 
 ## Returns
 - A `ModelingToolkitBase.System` representing the equations, variables, parameters,
@@ -320,7 +316,7 @@ end
 include("precompilation.jl")
 
 export parse_basemodelica, create_odeproblem, parse_experiment_annotation,
-    experiment_settings, check_algebraic_crossings, complete_unfixed_initialization
+    experiment_settings, check_algebraic_crossings
 
 # The discrete backend interface is public but not exported (`public` needs Julia 1.11).
 @static if VERSION >= v"1.11"

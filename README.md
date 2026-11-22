@@ -235,8 +235,8 @@ read with `experiment_settings(sys)`.
 
 ## Unsimplified systems and Dyad
 
-For the `:mtk` events backend, both `simplify = true` and `simplify = f` complete unfixed
-state starts and check the compiled result for unsupported algebraic crossings. With
+For the `:mtk` events backend, both `simplify = true` and `simplify = f` check
+the compiled result for unsupported algebraic crossings. With
 `simplify = false`, run the exported post-compilation hook and use its returned system:
 
 ```julia
@@ -245,31 +245,13 @@ compiled = check_algebraic_crossings(mtkcompile(raw))
 prob = ODEProblem(compiled, [], (0.0, 1.0))
 ```
 
-This hook also resolves retained-array reinit targets for constant states. For another
-discrete backend, `complete_unfixed_initialization(compiled)` completes starts without
-the `:mtk` event checks. On `:mtk`, calling `complete_unfixed_initialization` alone does
-not finalize array reinit targets; call `check_algebraic_crossings` instead, which also
-completes starts. Both hooks return a system and can be called again safely.
+This hook also resolves retained-array reinit targets for constant states. Keep its
+returned system; it can be called again safely.
 
-Independent completed starts are overridable defaults; coupled linear groups receive
-consistent guesses without adding equations or unknowns. User initial values can choose
-another state in the same linear group. For coupled groups, a parameter-only
-`remake(prob; p = [p => v])` keeps the previous initial point as its guess. Pass `u0` as
-well, or rebuild with `ODEProblem(sys, [p => v], tspan)`, to reevaluate starts using the
-new parameters. Independent starts continue to follow parameter-only `remake`.
-Numerically singular linear groups are checked at the declared parameter values:
-inconsistent constraints raise an error, while consistent redundant constraints use
-start defaults for the free coordinates.
-
-Nonlinear algebraic equations may read states with unfixed starts. When substituting the
-independent starts makes the remaining constraints linear, nonlinear coupled groups also
-receive consistent guesses and allow either state to be overridden. Otherwise these
-groups use declaration-order start defaults for independent initial coordinates and
-ModelingToolkit's nonlinear iteration guesses for the remaining coordinates, preserving
-the baseline behavior. A user `u0` on a sibling state can overdetermine that fallback
-group and return `InitialFailure`. Time-driven switches between differential and algebraic
-state constraints are rejected; parameter-driven selections made during initialization
-remain supported.
+A state start with `fixed = false` (the default) is passed to ModelingToolkit as a guess.
+In some models it initializes to 0 instead of its start: upstream MTK ignores a
+guess-only state when the compiled system keeps a parameter. Set `fixed = true` or
+provide an initial equation to specify the initial value.
 
 By default `parse_basemodelica` returns a system already compiled with `mtkcompile`.
 Pass `simplify = false` to get the unsimplified `System`, for example to use the Dyad

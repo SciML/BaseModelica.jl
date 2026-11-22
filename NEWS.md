@@ -10,26 +10,12 @@
   and pass the interval as `saveat` to `solve` instead. The README and docs show this path.
 - If-equations can read derivatives defined by other equations, including in only
   one branch. The Julia parser accepts a negative left side after `else`.
-- Unfixed state starts supply missing initial values after state selection, while
-  explicit initial equations and algebraic initialization constraints take precedence.
-  Completed starts yield to user initial values, including coupled linear state overrides
-  through `ODEProblem` and `remake(...; u0 = ...)`. Ambiguous starts are chosen in
-  declaration order. For coupled groups, parameter-only `remake` keeps the previous
-  initial point as its guess; pass `u0` or rebuild `ODEProblem` to reevaluate starts.
-  Nonlinear algebraic equations can read states with unfixed starts. Nonlinear coupled
-  groups receive consistent guesses when substituting independent starts makes the
-  remaining constraints linear, preserving sibling `u0` overrides. Otherwise they retain
-  declaration-order start defaults and nonlinear iteration guesses; a user `u0` on a
-  sibling can overdetermine that fallback (`InitialFailure`).
-  Linear initialization constraints are rank-checked at declared parameter values:
-  inconsistent constraints fail clearly and redundant constraints use starts for free
-  coordinates. Whole-array initial reductions participate in retained-array incidence.
-  After `simplify = false`, the exported `check_algebraic_crossings(compiled)` hook also
-  completes initialization and finalizes array reinit targets;
-  `complete_unfixed_initialization(compiled)` is available for other discrete backends.
-  On `:mtk`, use `check_algebraic_crossings` for array reinit finalization. Keep the
-  returned system from either hook. Time-driven changes between differential and
-  algebraic state constraints are rejected before solving.
+- Known upstream initialization limitation: a state with a start but no `fixed = true`
+  can initialize to 0 instead of its start. Starts with `fixed = false` are passed as
+  guesses; MTK can ignore a guess-only state when the compiled system keeps a parameter.
+  Set `fixed = true` or provide an initial equation as a workaround.
+- The exported `check_algebraic_crossings(compiled)` hook finalizes retained-array
+  reinit targets after manual compilation. Keep the returned system.
 - Whole-array reads in `when` bodies and relation-Boolean definitions participate in
   the same event dependency checks as element reads, including reductions and aliases.
 

@@ -500,13 +500,12 @@ compile_system(::MTKEventsBackend, sys) = check_algebraic_crossings(mtkcompile(s
 Check a compiled BaseModelica system for when-crossings and hysteresis Boolean crossings
 that depend on retained algebraic unknowns in the `:mtk` backend, throwing
 [`UnsupportedFeatureError`](@ref) if one is found. Return the
-system otherwise, completing unfixed state starts and resolving retained-array reinit
+system otherwise, resolving retained-array reinit
 targets for analytically integrated constant states. This check runs automatically for
 `simplify = true` and `simplify = f`. After `simplify = false`, call it on the result of
 your own compilation.
 """
 function check_algebraic_crossings(compiled)
-    compiled = complete_unfixed_initialization(compiled)
     compiled = array_reinit_callback_targets(compiled)
     callbacks = ModelingToolkitBase.continuous_events(compiled)
     isempty(callbacks) && return compiled

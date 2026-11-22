@@ -29,6 +29,52 @@ function initialization_model(body)
 end
 
 @testset "Initialization regressions ($parser)" for parser in (:antlr, :julia)
+    @testset "Guess-only state with a retained parameter ($arrays)" for arrays in (:scalarize, :keep)
+        path = initialization_model("""
+            parameter Real 'k' = 1;
+            Real 'x'(start = 1, fixed = false);
+          equation
+            der('x') = -'k'*'x';
+        """)
+        raw = parse_basemodelica(path; parser, arrays, simplify = false)
+        @test !BaseModelica.ModelingToolkitBase.hasdefault(raw.x)
+        @test BaseModelica.ModelingToolkitBase.getguess(raw.x) == 1
+        sys = parse_basemodelica(path; parser, arrays)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        # Upstream MTK ignores this guess when the compiled system keeps k.
+        @test_broken sol(0.0; idxs = sys.x) ≈ 1
+        @test sol(0.0; idxs = sys.x) == 0
+        original = read(path, String)
+        for workaround in (:fixed, :initial_equation)
+            source = original
+            source = workaround === :fixed ? replace(source, "fixed = false" => "fixed = true") :
+                replace(source, "equation" => "initial equation 'x' = 1;\n equation")
+            write(path, source)
+            fixed_sys = parse_basemodelica(path; parser, arrays)
+            fixed_sol = solve(ODEProblem(fixed_sys, [], (0.0, 1.0)), Tsit5())
+            @test fixed_sol.retcode == ReturnCode.Success
+            @test fixed_sol(0.0; idxs = fixed_sys.x) ≈ 1
+        end
+    end
+
+    @testset "Whole-array initial reduction ($arrays)" for arrays in (:scalarize, :keep)
+        # The V12 reduction must remain an initial constraint without start completion.
+        path = initialization_model("""
+            Real 'x'[3](start = {1, 2, 3});
+          initial equation
+            'x'[1] = 1; 'x'[2] = 2; sum('x') = 10;
+          equation
+            der('x') = -'x';
+        """)
+        sys = parse_basemodelica(path; parser, arrays)
+        sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Tsit5())
+        @test sol.retcode == ReturnCode.Success
+        values = arrays === :keep ? sol(0.0; idxs = sys.x) :
+            [sol(0.0; idxs = getproperty(sys, Symbol("x[$i]"))) for i in 1:3]
+        @test values ≈ [1, 2, 7]
+    end
+
     @testset "Initial algorithm array reads observe earlier element writes" begin
         path = initialization_model(
             """

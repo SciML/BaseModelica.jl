@@ -20,7 +20,6 @@ parse_basemodelica
 parse_experiment_annotation
 create_odeproblem
 experiment_settings
-complete_unfixed_initialization
 BaseModelica.UnsupportedFeatureError
 ```
 
@@ -118,27 +117,12 @@ How declarations map to ModelingToolkit, and what `remake` can change afterwards
   The `:mtk` backend checks both `simplify = true` and `simplify = f` results.
   With `simplify = false`, use `compiled = check_algebraic_crossings(compiled)` after
   compiling the returned system yourself (including with `DyadInterface.simplify_model`).
-  This exported hook also completes unfixed state starts and resolves constant-state
-  array reinit targets. For another discrete backend, use the exported
-  `complete_unfixed_initialization(compiled)` to complete starts alone. Both return a
-  system; keep the returned value. On `:mtk`, `complete_unfixed_initialization` alone
-  does not finalize array reinit targets; call `check_algebraic_crossings` instead,
-  which also completes starts. The raw system is not checked or completed.
-- **Unfixed state starts**: independent starts are overridable defaults. Coupled linear
-  groups receive consistent guesses in declaration order, and a user `u0` can select
-  another state in the group. For coupled groups, a parameter-only
-  `remake(prob; p = [p => v])` keeps the prior initial point as its guess; pass `u0`
-  or rebuild with `ODEProblem(sys, [p => v], tspan)` to reevaluate starts. Independent
-  starts follow parameter-only `remake`. Numerically singular linear constraints are
-  checked at the declared parameter values: inconsistent constraints raise an error,
-  and consistent redundant constraints use start defaults for the free coordinates.
-  Nonlinear algebraic equations may read states
-  with unfixed starts. Nonlinear coupled groups receive consistent guesses when
-  substituting independent starts makes the remaining constraints linear. Otherwise,
-  they use declaration-order start defaults
-  for independent initial coordinates and nonlinear iteration guesses for the remaining
-  coordinates, as in the baseline behavior. A user `u0` on a sibling can overdetermine
-  that fallback initialization and return `InitialFailure`.
+  This exported hook also resolves constant-state array reinit targets. Keep the
+  returned system. The raw system is not checked.
+- **Unfixed state starts**: a start with `fixed = false` (the default) is passed to
+  ModelingToolkit as a guess. In some models the state initializes to 0 instead of
+  its start because upstream MTK ignores a guess-only state when the compiled system
+  keeps a parameter. Set `fixed = true` or provide an initial equation as a workaround.
 - **Time events**: the instants at which an if-condition comparing `time` with a number or
   an expression of parameters switches (`if time < startTime then ...`) are stored as
   `tstops` on the system. ModelingToolkit passes them to every problem built from it, so
