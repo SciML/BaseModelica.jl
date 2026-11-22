@@ -248,10 +248,10 @@ prob = ODEProblem(compiled, [], (0.0, 1.0))
 This hook also resolves retained-array reinit targets for constant states. Keep its
 returned system; it can be called again safely.
 
-A state start with `fixed = false` (the default) is passed to ModelingToolkit as a guess.
-In some models it initializes to 0 instead of its start: upstream MTK ignores a
-guess-only state when the compiled system keeps a parameter. Set `fixed = true` or
-provide an initial equation to specify the initial value.
+Starts with `fixed = false` (the default) are only guesses. When initialization is
+underdetermined, upstream MTK may ignore them. A state may start at 0 or another
+consistent value, or initialization may throw `IncompleteInitializationError`.
+Set `fixed = true` or add an initial equation to specify the initial value.
 
 By default `parse_basemodelica` returns a system already compiled with `mtkcompile`.
 Pass `simplify = false` to get the unsimplified `System`, for example to use the Dyad

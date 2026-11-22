@@ -10,10 +10,10 @@
   and pass the interval as `saveat` to `solve` instead. The README and docs show this path.
 - If-equations can read derivatives defined by other equations, including in only
   one branch. The Julia parser accepts a negative left side after `else`.
-- Known upstream initialization limitation: a state with a start but no `fixed = true`
-  can initialize to 0 instead of its start. Starts with `fixed = false` are passed as
-  guesses; MTK can ignore a guess-only state when the compiled system keeps a parameter.
-  Set `fixed = true` or provide an initial equation as a workaround.
+- Known upstream initialization limitation: starts with `fixed = false` are only guesses.
+  When initialization is underdetermined, MTK may ignore them. A state may start at 0
+  or another consistent value, or initialization may throw `IncompleteInitializationError`.
+  Set `fixed = true` or add an initial equation to specify the initial value.
 - The exported `check_algebraic_crossings(compiled)` hook finalizes retained-array
   reinit targets after manual compilation. Keep the returned system.
 - Whole-array reads in `when` bodies and relation-Boolean definitions participate in

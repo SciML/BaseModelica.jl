@@ -119,10 +119,11 @@ How declarations map to ModelingToolkit, and what `remake` can change afterwards
   compiling the returned system yourself (including with `DyadInterface.simplify_model`).
   This exported hook also resolves constant-state array reinit targets. Keep the
   returned system. The raw system is not checked.
-- **Unfixed state starts**: a start with `fixed = false` (the default) is passed to
-  ModelingToolkit as a guess. In some models the state initializes to 0 instead of
-  its start because upstream MTK ignores a guess-only state when the compiled system
-  keeps a parameter. Set `fixed = true` or provide an initial equation as a workaround.
+- **Unfixed state starts**: starts with `fixed = false` (the default) are only guesses.
+  When initialization is underdetermined, upstream MTK may ignore them. A state may
+  start at 0 or another consistent value, or initialization may throw
+  `IncompleteInitializationError`. Set `fixed = true` or add an initial equation
+  to specify the initial value.
 - **Time events**: the instants at which an if-condition comparing `time` with a number or
   an expression of parameters switches (`if time < startTime then ...`) are stored as
   `tstops` on the system. ModelingToolkit passes them to every problem built from it, so
