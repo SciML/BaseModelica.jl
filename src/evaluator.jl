@@ -997,7 +997,8 @@ function eval_AST(
     # When free parameters are present, ALL initial equations must go into initialization_eqs
     # so they collectively constrain the initialization system that solves for the free params.
     # With no free parameters, a first unconstrained assignment can use a default.
-    # Existing fixed starts and earlier initial assignments must remain constraints.
+    # With an existing default, retain the initial equation as a constraint.
+    # MTK may still resolve a conflicting fixed start without reporting it.
     # Derivative LHS like der(x) always go to initialization_eqs (can't be setdefault).
     initialization_eqs = Equation[]
     has_free_params = !isempty(free_parameter_names)
