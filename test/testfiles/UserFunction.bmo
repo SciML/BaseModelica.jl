@@ -1,0 +1,38 @@
+//! base 0.1.0
+package 'UserFunction'
+  type 'Mode' = enumeration('slow', 'fast');
+
+  function 'decayRate'
+    input Real 'x';
+    input Real 'k' = 2.0;
+    output Real 'y';
+    Real 'tmp';
+  algorithm
+    'tmp' := 'k' * 'x';
+    if 'x' > 0.5 then
+      'y' := 'tmp';
+    else
+      'y' := 0.5 * 'tmp';
+    end if;
+  end 'decayRate';
+
+  function 'polySum'
+    input Real 'x';
+    output Real 'y' = 0.0;
+  algorithm
+    for 'i' in 1:3 loop
+      'y' := 'y' + 'x' ^ 'i';
+    end for;
+  end 'polySum';
+
+  model 'UserFunction'
+    parameter 'Mode' 'mode' = 'Mode'.'fast';
+    Real 'x'(fixed = true, start = 1.0);
+    Real 'z';
+    Real 'w';
+  equation
+    der('x') = -'decayRate'('x');
+    'z' = 'polySum'('x');
+    'w' = sum({1.0, 2.0, 3.0}) * 'x';
+  end 'UserFunction';
+end 'UserFunction';

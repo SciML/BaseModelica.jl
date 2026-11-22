@@ -1,0 +1,29 @@
+//! base 0.1.0
+package 'RelationBoolean'
+  model 'RelationBoolean' "Booleans defined by relations, with start values that contradict them"
+    Real 'x'(fixed = true, start = 1.0);
+    Boolean 'off'(start = true) "x(0) = 1, so off is false at t = 0";
+    Real 'y';
+    Real 'v' "Source voltage: -0.5 at t = 0";
+    Real 's'(start = 0.0) "Ideal diode: position on the characteristic";
+    Real 'i' "Ideal diode current";
+    Boolean 'blocking'(start = false) "s(0) < 0, so the diode is blocking at t = 0";
+    Boolean 'heating'(start = false) "Hysteresis: on below 1.5, off above 2.5";
+    Boolean 'late' = time >= 1.2 "Declaration equation";
+    Boolean 'lateCopy';
+  equation
+    der('x') = 1.0;
+    'off' = 'x' < 0.0;
+    'y' = if 'off' then 1.0 else 2.0;
+    'v' = 'x' - 1.5;
+    'blocking' = 's' < 0.0;
+    'v' = 's' * (if 'blocking' then 1.0 else 0.1);
+    'i' = 's' * (if 'blocking' then 0.1 else 1.0);
+    'heating' = pre('heating') and 'x' < 2.5 or 'x' < 1.5;
+    'late' = 'lateCopy';
+    when time > 2.0 then
+      reinit('x', -1.0) "x jumps below 0 without crossing it";
+    end when;
+    annotation(experiment(StartTime = 0, StopTime = 2.8, Tolerance = 1e-06, Interval = 0.01));
+  end 'RelationBoolean';
+end 'RelationBoolean';

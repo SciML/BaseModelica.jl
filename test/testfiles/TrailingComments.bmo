@@ -1,0 +1,14 @@
+//! base 0.1.0
+package 'TrailingComments'
+  /* A block comment
+     spanning lines */
+  model 'TrailingComments'
+    parameter Real 'k' = 2.0; // decay rate
+    Real 'x'(fixed = true, start = 1.0); // state
+    Real 'y'; /* output */
+  equation
+    der('x') = -'k' * 'x'; // first-order decay
+    'y' = 2.0 * 'x'; // scaled output
+    // a comment on its own line
+  end 'TrailingComments';
+end 'TrailingComments';

@@ -1,0 +1,10 @@
+//! base 0.1.0
+package 'UnaryMinusLeading'
+  model 'UnaryMinusLeading'
+    Real 'x'(fixed = true, start = 1.0);
+    Real 'v'(fixed = true, start = 0.0);
+  equation
+    der('x') = 'v';
+    der('v') = -'x' - 0.1 * 'v';
+  end 'UnaryMinusLeading';
+end 'UnaryMinusLeading';

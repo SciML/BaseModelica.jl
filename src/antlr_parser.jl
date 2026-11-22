@@ -9,6 +9,33 @@ const antlr4 = Ref{Py}()
 const BaseModelicaLexer = Ref{Py}()
 const BaseModelicaParser = Ref{Py}()
 const BaseModelicaVisitor = Ref{Py}()
+const CollectingErrorListener = Ref{Py}()
+
+# ANTLR's default ConsoleErrorListener prints syntax errors to stderr and lets the parser
+# recover, which yields a parse tree with missing pieces. This listener records every
+# lexer/parser error instead so `parse_with_antlr` can throw.
+const COLLECTING_ERROR_LISTENER_SRC = """
+from antlr4.error.ErrorListener import ErrorListener
+
+class CollectingErrorListener(ErrorListener):
+    def __init__(self):
+        super().__init__()
+        self.errors = []
+
+    def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
+        self.errors.append((line, column, msg))
+"""
+
+"""
+    BaseModelicaParseError(msg)
+
+Thrown by the `:antlr` backend when the input contains syntax errors.
+"""
+struct BaseModelicaParseError <: Exception
+    msg::String
+end
+
+Base.showerror(io::IO, e::BaseModelicaParseError) = print(io, "BaseModelicaParseError: ", e.msg)
 
 """
     init_antlr_parser()
@@ -67,6 +94,10 @@ function init_antlr_parser()
         BaseModelicaParser[] = pyimport("BaseModelicaParser").BaseModelicaParser
         BaseModelicaVisitor[] = pyimport("BaseModelicaVisitor").BaseModelicaVisitor
 
+        listener_scope = pydict()
+        pyexec(COLLECTING_ERROR_LISTENER_SRC, listener_scope)
+        CollectingErrorListener[] = listener_scope["CollectingErrorListener"]
+
         @info "ANTLR parser initialized successfully"
         ANTLR_INITIALIZED[] = true
 
@@ -106,6 +137,14 @@ parse_tree = parse_with_antlr(source)  # Automatically initializes parser on fir
 ```
 """
 function parse_with_antlr(input::String)
+    # Python holds its interpreter lock on the main thread; calling it from another thread
+    # crashes the process.
+    Threads.threadid() == 1 || throw(
+        ArgumentError(
+            "the ANTLR parser calls Python and must run on the main thread (thread 1); " *
+                "use `parser = :julia` to parse BaseModelica files on other threads"
+        )
+    )
     # Lazy initialization - automatically initialize on first use
     if !ANTLR_INITIALIZED[]
         init_antlr_parser()
@@ -115,24 +154,55 @@ function parse_with_antlr(input::String)
         # Create an input stream from the string
         input_stream = antlr4[].InputStream(input)
 
+        # A single listener collects errors from both the lexer and the parser, replacing
+        # the default listeners that only print to stderr.
+        listener = CollectingErrorListener[]()
+
         # Create lexer
         lexer = BaseModelicaLexer[](input_stream)
+        lexer.removeErrorListeners()
+        lexer.addErrorListener(listener)
 
         # Create token stream
         token_stream = antlr4[].CommonTokenStream(lexer)
 
         # Create parser
         parser = BaseModelicaParser[](token_stream)
+        parser.removeErrorListeners()
+        parser.addErrorListener(listener)
 
         # Parse starting from the root rule (baseModelica)
         parse_tree = parser.baseModelica()
 
+        errors = [
+            (pyconvert(Int, err[0]), pyconvert(Int, err[1]), pyconvert(String, err[2]))
+                for err in listener.errors
+        ]
+        isempty(errors) || throw(BaseModelicaParseError(format_antlr_errors(input, errors)))
+
         return parse_tree
 
     catch e
+        e isa BaseModelicaParseError && rethrow(e)
         @error "Parsing failed" exception = e
         rethrow(e)
     end
+end
+
+# Build an error message listing every syntax error, with source context for the first.
+function format_antlr_errors(source::String, errors)
+    lines = split(source, '\n')
+    line, column, _ = first(errors)
+    # ANTLR columns are 0-based; convert (line, column) to a character offset for context.
+    position = sum(length.(lines[1:(line - 1)]) .+ 1; init = 0) + column
+    listing = join(("  line $l, column $(c + 1): $m" for (l, c, m) in errors), '\n')
+    return """
+    Failed to parse BaseModelica: $(length(errors)) syntax error(s)
+    $listing
+
+    Error context:
+    $(format_error_context(source, position))
+    """
 end
 
 """
@@ -321,6 +391,24 @@ function visit_composition(visitor::ASTBuilderVisitor, ctx::Py)
         end
     end
 
+    # Algorithm sections, kept in order among the equations. ctx.statement() would merge
+    # the statements of all sections, so walk the children instead.
+    child_count = pyconvert(Int, ctx.getChildCount())
+    section = nothing
+    for i in 0:(child_count - 1)
+        child = ctx.getChild(i)
+        text = pyconvert(String, child.getText())
+        if text == "algorithm"
+            is_initial = i > 0 && pyconvert(String, ctx.getChild(i - 1).getText()) == "initial"
+            section = BaseModelicaAlgorithmSection([], is_initial)
+            push!(equations, section)
+        elseif text in ("equation", "initial", "external")
+            section = nothing
+        elseif !isnothing(section) && pyhasattr(child, "ifStatement")
+            push!(section.statements, visit_statement(visitor, child))
+        end
+    end
+
     # Get initial equations
     initial_eq_ctxs = ctx.initialEquation()
     if !is_null(initial_eq_ctxs)
@@ -424,9 +512,11 @@ end
 function visit_componentDeclaration(visitor::ASTBuilderVisitor, ctx::Py)
     # componentDeclaration: declaration comment
     decl = visit_declaration(visitor, ctx.declaration())
-    comment_text = visit_comment(visitor, ctx.comment())
+    # Keep a component's annotation: `annotation(Evaluate = true)` changes how the
+    # component is translated.
+    comment = visit_comment(visitor, ctx.comment(); keep_annotation = true)
 
-    return BaseModelicaComponentDeclaration(decl, comment_text)
+    return BaseModelicaComponentDeclaration(decl, comment)
 end
 
 function visit_declaration(visitor::ASTBuilderVisitor, ctx::Py)
@@ -603,8 +693,14 @@ function visit_equation(visitor::ASTBuilderVisitor, ctx::Py)
                 comment_text
             )
         else
-            # Just an expression (no '='), could be a function call
-            return nothing
+            # A bare function-call statement such as `reinit(x, e)` or `assert(...)`.
+            # Keep it with an empty right-hand side, like the :julia parser does, so the
+            # evaluator can lower it or reject it instead of it disappearing here.
+            comment_text = visit_comment(visitor, ctx.comment())
+            return BaseModelicaAnyEquation(
+                BaseModelicaSimpleEquation(simple_expr, nothing),
+                comment_text
+            )
         end
     end
 end
@@ -729,24 +825,84 @@ function visit_whenEquation(visitor::ASTBuilderVisitor, ctx::Py)
     whens = []
     thens = []
 
-    # Get all condition expressions
-    expr_ctxs = ctx.expression()
-    for expr_ctx in expr_ctxs
-        push!(whens, visit_expression(visitor, expr_ctx))
-    end
-
-    # All body equations go into a single branch (elsewhen not yet supported)
-    eq_ctxs = ctx.equation()
-    branch_equations = []
-    for eq_ctx in eq_ctxs
-        eq = visit_equation(visitor, eq_ctx)
-        if !isnothing(eq)
-            push!(branch_equations, eq)
+    # Walk the children in order: each 'when'/'elsewhen' keyword starts a branch whose
+    # condition is the next child, followed by that branch's equations.
+    child_count = pyconvert(Int, ctx.getChildCount())
+    i = 0
+    while i < child_count
+        child_text = pyconvert(String, ctx.getChild(i).getText())
+        if child_text == "when" || child_text == "elsewhen"
+            push!(whens, visit_expression(visitor, ctx.getChild(i + 1)))
+            push!(thens, [])
+            i += 2
+        elseif child_text == "end"
+            break  # 'end' 'when'
+        elseif child_text == "then" || child_text == ";"
+            i += 1
+        else
+            child = ctx.getChild(i)
+            if pyhasattr(child, "simpleExpression")
+                eq = visit_equation(visitor, child)
+                isnothing(eq) || push!(thens[end], eq)
+            end
+            i += 1
         end
     end
-    push!(thens, branch_equations)
 
     return BaseModelicaWhenEquation(whens, thens)
+end
+
+function visit_statements(visitor::ASTBuilderVisitor, ctx::Py)
+    stmt_ctxs = ctx.statement()
+    return is_null(stmt_ctxs) ? [] : [visit_statement(visitor, st) for st in stmt_ctxs]
+end
+
+function visit_statement(visitor::ASTBuilderVisitor, ctx::Py)
+    # statement: decoration? (componentReference (':=' expression | functionCallArgs)
+    #   | '(' outputExpressionList ')' ':=' componentReference functionCallArgs
+    #   | 'break' | 'return' | ifStatement | forStatement | whileStatement | whenStatement)
+    #   comment
+    if !is_null(ctx.ifStatement())
+        if_ctx = ctx.ifStatement()
+        conditions = []
+        branches = []
+        child_count = pyconvert(Int, if_ctx.getChildCount())
+        for i in 0:(child_count - 1)
+            child = if_ctx.getChild(i)
+            text = pyconvert(String, child.getText())
+            if text == "end"
+                break  # 'end' 'if'
+            elseif text == "if" || text == "elseif"
+                push!(conditions, visit_expression(visitor, if_ctx.getChild(i + 1)))
+                push!(branches, [])
+            elseif text == "else"
+                push!(branches, [])
+            elseif pyhasattr(child, "ifStatement") && !isempty(branches)
+                push!(branches[end], visit_statement(visitor, child))
+            end
+        end
+        return BaseModelicaIfStatement(conditions, branches)
+    elseif !is_null(ctx.forStatement())
+        for_ctx = ctx.forStatement()
+        return BaseModelicaForStatement(
+            visit_forIndex(visitor, for_ctx.forIndex()), visit_statements(visitor, for_ctx)
+        )
+    elseif !is_null(ctx.whileStatement())
+        return BaseModelicaUnsupportedStatement("while loop")
+    elseif !is_null(ctx.whenStatement())
+        return BaseModelicaUnsupportedStatement("when statement")
+    elseif !is_null(ctx.outputExpressionList())
+        return BaseModelicaUnsupportedStatement("multiple-output assignment")
+    elseif !is_null(ctx.componentReference())
+        target = visit_componentReference(visitor, ctx.componentReference())
+        if !is_null(ctx.expression())
+            return BaseModelicaAssignment(target, visit_expression(visitor, ctx.expression()))
+        end
+        args = visit_functionCallArgs(visitor, ctx.functionCallArgs())
+        return BaseModelicaFunctionCall(target.ref_list[1], args)
+    end
+    text = get_text(ctx)
+    return BaseModelicaUnsupportedStatement(startswith(text, "break") ? "break" : "return")
 end
 
 # Expression visitors
@@ -1054,34 +1210,56 @@ function visit_primary(visitor::ASTBuilderVisitor, ctx::Py)
 
         if !is_null(ctx.functionCallArgs())
             args = visit_functionCallArgs(visitor, ctx.functionCallArgs())
-            # Extract function name from component reference
-            func_name = comp_ref.ref_list[1]  # Simplified - assumes simple name
-            return BaseModelicaFunctionCall(func_name, args)
+            # Keep the full (possibly dotted) name, as the :julia parser does
+            return BaseModelicaFunctionCall(comp_ref, args)
         else
             return comp_ref
         end
     elseif !is_null(ctx.outputExpressionList())
         expr_list = visit_outputExpressionList(visitor, ctx.outputExpressionList())
         if length(expr_list) == 1
-            return expr_list[1]
+            # `(expr)[subscripts]`: Base Modelica allows subscripting a parenthesized expression
+            is_null(ctx.arraySubscripts()) && return expr_list[1]
+            return BaseModelicaArrayReference(
+                expr_list[1], visit_arraySubscripts(visitor, ctx.arraySubscripts())
+            )
         else
             # Tuple
             return expr_list
         end
+    elseif !is_null(ctx.arrayArguments())
+        # '{' arrayArguments '}'
+        args_ctx = ctx.arrayArguments()
+        elements = [visit_expression(visitor, e) for e in args_ctx.expression()]
+        if !is_null(args_ctx.forIndex())
+            return BaseModelicaArrayComprehension(
+                only(elements), visit_forIndex(visitor, args_ctx.forIndex())
+            )
+        end
+        return BaseModelicaArrayConstructor(elements)
     else
-        # Array or other constructs
-        return BaseModelicaNumber(0.0)  # Placeholder
+        # '[' expressionList (';' expressionList)* ']'
+        return BaseModelicaMatrixConstructor(
+            [
+                [visit_expression(visitor, e) for e in row.expression()]
+                    for row in ctx.expressionList()
+            ]
+        )
     end
 end
 
 function visit_componentReference(visitor::ASTBuilderVisitor, ctx::Py)
     # componentReference: '.'? IDENT arraySubscripts? ('.' IDENT arraySubscripts?)*
+    # Like the :julia parser, the subscripts of a part follow its identifier in `ref_list`:
+    # `'x'[1]` is [BaseModelicaIdentifier("x"), BaseModelicaArraySubscripts([1])].
     ref_list = []
-
-    idents = ctx.IDENT()
-    for ident_ctx in idents
-        # Create BaseModelicaIdentifier objects, not raw strings
-        push!(ref_list, BaseModelicaIdentifier(get_text(ident_ctx)))
+    for i in 0:(pyconvert(Int, ctx.getChildCount()) - 1)
+        child = ctx.getChild(i)
+        if pyhasattr(child, "subscript")
+            push!(ref_list, visit_arraySubscripts(visitor, child))
+        elseif get_text(child) != "."
+            push!(ref_list, BaseModelicaIdentifier(get_text(child)))
+        end
     end
 
     return BaseModelicaComponentReference(ref_list)
@@ -1107,6 +1285,14 @@ function visit_functionArguments(visitor::ASTBuilderVisitor, ctx::Py)
     expr_ctx = ctx.expression()
     if !is_null(expr_ctx)
         push!(args, visit_expression(visitor, expr_ctx))
+    end
+
+    # `f(expr for i in range)` is `f({expr for i in range})`
+    if !is_null(ctx.forIndex())
+        comprehension = BaseModelicaArrayComprehension(
+            only(args), visit_forIndex(visitor, ctx.forIndex())
+        )
+        return BaseModelicaFunctionArgs(Any[comprehension])
     end
 
     # Collect remaining arguments from functionArgumentsNonFirst (recursive grammar)
@@ -1152,17 +1338,14 @@ function visit_outputExpressionList(visitor::ASTBuilderVisitor, ctx::Py)
 end
 
 # Comment visitors
-function visit_comment(visitor::ASTBuilderVisitor, ctx::Py)
+# Returns the string comment, or the annotation when there is one and `keep_annotation`.
+function visit_comment(visitor::ASTBuilderVisitor, ctx::Py; keep_annotation = false)
     # comment: stringComment annotationComment?
     string_comment = visit_stringComment(visitor, ctx.stringComment())
 
-    # Check if there's an annotationComment
     annotation_ctx = ctx.annotationComment()
-    if !is_null(annotation_ctx)
-        # Parse and store the annotation
-        annotation = visit_annotationComment(visitor, annotation_ctx)
-        # For now, just return the string comment
-        # The annotation is parsed but not yet integrated into the return value
+    if keep_annotation && !is_null(annotation_ctx)
+        return visit_annotationComment(visitor, annotation_ctx)
     end
 
     return string_comment
@@ -1244,6 +1427,11 @@ function parse_file_antlr(file_path::String)
     end
 
     source = read(file_path, String)
-    parse_tree = parse_with_antlr(source)
+    parse_tree = try
+        parse_with_antlr(source)
+    catch e
+        e isa BaseModelicaParseError || rethrow(e)
+        throw(BaseModelicaParseError("Error in file: $file_path\n" * e.msg))
+    end
     return antlr_tree_to_ast(parse_tree)
 end

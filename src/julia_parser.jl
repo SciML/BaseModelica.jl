@@ -69,13 +69,21 @@ function create_term(input_list)
 end
 
 function create_arithmetic_expression(input_list)
-    # Handle unary minus case - if first element is a minus operator
-    if length(input_list) >= 2 && input_list[1] isa BMSubtract
-        return BaseModelicaUnaryMinus(input_list[2])
+    # A leading add operator is unary: it applies to the first term only, and the
+    # remaining `op term` pairs are then folded left onto it as usual.
+    start = 1
+    left_el = input_list[1]
+    if length(input_list) >= 2 && input_list[1] isa Union{BMAdd, BMElementWiseAdd}
+        left_el = input_list[2]
+        start = 2
+    elseif length(input_list) >= 2 &&
+            input_list[1] isa Union{BMSubtract, BMElementWiseSubtract}
+        left_el = BaseModelicaUnaryMinus(input_list[2])
+        start = 2
     end
 
-    left_el = input_list[1]
-    for (i, element) in enumerate(input_list)
+    for i in start:length(input_list)
+        element = input_list[i]
         left_el = @match element begin
             ::BMAdd => BaseModelicaSum(left_el, input_list[i + 1]) #make a sum between the previous item and next item
             ::BMElementWiseAdd => BaseModelicaElementWiseSum(left_el, input_list[i + 1])
@@ -201,13 +209,20 @@ function BaseModelicaString(input_list::Array{<:Any})
 end
 
 function BaseModelicaWhenEquation(input_list)
+    # input_list: BMWhen, condition, BMThen, equations..., [BMWhen, condition, BMThen, ...]
     whens = []
     thens = []
-    for (i, element) in enumerate(input_list)
-        @match element begin
-            ::BMWhen => push!(whens, input_list[i + 1])
-            ::BMThen => push!(thens, input_list[i + 1])
-            _ => nothing
+    expect_condition = false
+    for element in input_list
+        if element isa BMWhen
+            expect_condition = true
+        elseif element isa BMThen
+            push!(thens, [])
+        elseif expect_condition
+            push!(whens, element)
+            expect_condition = false
+        else
+            push!(thens[end], element)
         end
     end
     return BaseModelicaWhenEquation(whens, thens)
@@ -264,6 +279,56 @@ function BaseModelicaForEquation(input_list)
     return BaseModelicaForEquation(index, equations)
 end
 
+function build_if_statement(input_list)
+    conditions = []
+    branches = []
+    expect_condition = false
+    for el in input_list
+        if el isa BMIf
+            expect_condition = true
+        elseif el isa BMThen  # marks the else branch
+            push!(branches, [])
+        elseif expect_condition
+            push!(conditions, el)
+            push!(branches, [])
+            expect_condition = false
+        else
+            push!(branches[end], el)
+        end
+    end
+    return BaseModelicaIfStatement(conditions, branches)
+end
+
+function build_algorithm_section(input_list)
+    initial = !isempty(input_list) && input_list[1] == "initial"
+    statements = [x for x in input_list if !(x isa AbstractString)]
+    return BaseModelicaAlgorithmSection(statements, initial)
+end
+
+function build_array_constructor(input_list)
+    if any(x -> x isa BaseModelicaForIndex, input_list)
+        expr, index = input_list
+        return BaseModelicaArrayComprehension(expr, index)
+    end
+    return BaseModelicaArrayConstructor(collect(input_list))
+end
+
+# `f(expr for i in range)` is `f({expr for i in range})`
+function build_function_args(input_list)
+    if length(input_list) == 2 && input_list[2] isa BaseModelicaForIndex
+        return BaseModelicaFunctionArgs(Any[BaseModelicaArrayComprehension(input_list...)])
+    end
+    return BaseModelicaFunctionArgs(input_list)
+end
+
+# The parse results of `(expr)`, `(expr)[subscripts]` or the tuple `(a, b)`
+function build_parenthesized(input_list)
+    if length(input_list) == 2 && input_list[2] isa BaseModelicaArraySubscripts
+        return Any[BaseModelicaArrayReference(input_list...)]
+    end
+    return input_list
+end
+
 function BaseModelicaComposition(input_list)
     equations = []
     initial_equations = []
@@ -278,7 +343,7 @@ function BaseModelicaComposition(input_list)
             push!(parameter_equations, input)
         elseif input isa BaseModelicaInitialEquation
             push!(initial_equations, input)
-        elseif input isa BaseModelicaAnyEquation
+        elseif input isa BaseModelicaAnyEquation || input isa BaseModelicaAlgorithmSection
             push!(equations, input)
         elseif input isa BaseModelicaAnnotation
             annotation = input
@@ -310,7 +375,10 @@ function component_reference_or_function_call(input_list)
 end
 
 list2string(x) = isempty(x) ? x : reduce(*, x)
-spc = Drop(Star(Space()))
+# Whitespace and comments between tokens. Comments must be skipped here: a comment the
+# grammar cannot consume makes the parse fail, and with NoCache the parser then
+# backtracks through every alternative, which takes minutes on larger models.
+spc = Drop(Star(Space() | p"//[^\r\n]*" | p"/[*]([^*]|[*]+[^*/])*[*]+/"))
 # Base Modelica grammar
 @with_names begin
     NL = p"\r\n" | p"\n" | p"\r"
@@ -338,7 +406,8 @@ spc = Drop(Star(Space()))
 
     #component clauses
     name = Not(Lookahead(e"end")) + Not(Lookahead(E"equation")) +
-        Not(Lookahead(E"initial equation")) + (IDENT + Star(e"." + IDENT)) |> list2string # Not(Lookahead(foo)) tells it that names can't be foo
+        Not(Lookahead(E"initial equation")) + Not(Lookahead(E"algorithm")) +
+        Not(Lookahead(E"initial algorithm")) + (IDENT + Star(e"." + IDENT)) |> list2string # Not(Lookahead(foo)) tells it that names can't be foo
     type_specifier = E"."[0:1] + name |>
         function (input)
         n = last(input)  # name result, possibly after "."
@@ -414,11 +483,16 @@ spc = Drop(Star(Space()))
         function_partial_application +
             (E"," + function_arguments_non_first)[0:1]
     ) |
-        named_arguments |> BaseModelicaFunctionArgs
+        named_arguments |> build_function_args
     function_call_args = E"(" + function_arguments[0:1] + E")"
     output_expression_list = Delayed()
     expression_list = Delayed()
-    array_arguments = expression + (Star(E"," + expression) | E"for" + for_index)
+    # `|` and `+` have the same precedence in Julia, so the `for` alternative needs its own
+    # parentheses (without them every array constructor required a for-index).
+    # One row of a matrix constructor, kept together as a single list
+    matrix_row = expression_list |> (row -> collect(Any, row))
+    array_arguments = expression + spc +
+        (Star(E"," + expression + spc) | (E"for" + spc + for_index))
     primary = UNSIGNED_NUMBER | STRING | (e"false" > BaseModelicaBool) | (e"true" > BaseModelicaBool) |
         (
         ((e"der" | e"initial" | e"pure") > BaseModelicaIdentifier) + function_call_args |>
@@ -428,28 +502,29 @@ spc = Drop(Star(Space()))
         (component_reference + function_call_args[0:1]) |>
             component_reference_or_function_call
     ) |
-        (E"(" + spc + output_expression_list + spc + E")" + array_subscripts[0:1]) |
-        (
-        e"[" + spc + expression_list + spc + Star(E";" + spc + expression_list) +
-            spc + e"]"
+        ParserCombinator.Transform(
+        E"(" + spc + output_expression_list + spc + E")" + array_subscripts[0:1],
+        build_parenthesized
     ) |
-        (e"{" + spc + array_arguments + spc + e"}") |
+        (
+        E"[" + spc + matrix_row + spc + Star(E";" + spc + matrix_row) +
+            spc + E"]" |> BaseModelicaMatrixConstructor
+    ) |
+        (E"{" + spc + array_arguments + spc + E"}" |> build_array_constructor) |
         E"end"
     factor = primary + spc + ((e"^" | e".^") + spc + primary)[0:1] |> create_factor
     term = factor + spc + Star(mul_operator + spc + factor) |> create_term
     arithmetic_expression = add_operator[0:1] + spc + term + spc +
         Star(add_operator + spc + term) |> create_arithmetic_expression
 
-    subscript = (E":" > BMColon) | expression
+    subscript = (spc + E":" + spc > BMColon) | expression
     array_subscripts.matcher = E"[" + subscript + Star(E"," + subscript) + E"]" |>
         BaseModelicaArraySubscripts
     annotation_comment = E"annotation" + class_modification |>
         (args -> BaseModelicaAnnotation(wrap_annotation_content(args)))
-    comment.matcher = (string_comment + annotation_comment[0:1]) |>
-        (
-        x -> length(x) == 1 ? x[1] :
-            BaseModelicaString(join([string(elem) for elem in x], " "))
-    )
+    # A comment is its annotation if it has one (`annotation(Evaluate = true)` on a component
+    # changes how it is translated), and its string comment otherwise.
+    comment.matcher = (string_comment + annotation_comment[0:1]) |> (x -> x[end])
 
     enumeration_literal = IDENT + comment
     enum_list = enumeration_literal + Star(E"," + spc + enumeration_literal)
@@ -472,6 +547,7 @@ spc = Drop(Star(Space()))
     equation = Delayed()
     initial_equation = Delayed()
     statement = Delayed()
+    statement_block = Star(spc + statement + spc + E";") + spc
     base_partition = Delayed()
     composition = Star(decoration[0:1] + generic_element + E";" + spc) + spc +
         Star(
@@ -483,7 +559,10 @@ spc = Drop(Star(Space()))
             e"initial equation" + spc +
                 Star(spc + (initial_equation | annotation_comment) + E";" + spc)
         ) |
-            (e"initial"[0:1] + e"algorithm" + Star(statement + E";"))
+            (
+            spc + e"initial"[0:1] + spc + E"algorithm" + statement_block |>
+                build_algorithm_section
+        )
     ) +
         (decoration[0:1] + E"external" + language_specification[0:1] + external_function_call[0:1] + annotation_comment[0:1] + E";")[0:1] +
         Star(base_partition) + (annotation_comment + E";")[0:1] |>
@@ -510,7 +589,8 @@ spc = Drop(Star(Space()))
         )
     )
     class_prefixes = e"type" | e"record" |
-        ((e"pure constant")[0:1] | ((e"impure")[0:1]) + e"function")
+        ((e"pure" | e"impure")[0:1] + spc + e"constant"[0:1] + spc + e"function" |>
+            (x -> join(x, " ")))
     der_class_specifier = IDENT + E"=" + E" "[0:1] + E"der" + E" " + E"(" + type_specifier +
         E"," + IDENT + Star(E"," + IDENT) + E")" + comment
     class_specifier = long_class_specifier | short_class_specifier | der_class_specifier
@@ -530,7 +610,7 @@ spc = Drop(Star(Space()))
     #equations
 
     relation = arithmetic_expression + spc +
-        (relational_operator + arithmetic_expression)[0:1]
+        (relational_operator + spc + arithmetic_expression)[0:1]
     logical_factor = (e"not"[0:1] |> (x -> !isempty(x) ? BMNOT() : nothing)) + spc +
         relation |> create_relation
     logical_term = logical_factor + spc + Star((E"and" > BMAND) + spc + logical_factor) |>
@@ -593,13 +673,11 @@ spc = Drop(Star(Space()))
         Star(spc + equation + E";") + spc +
         E"end for" |> BaseModelicaForEquation
 
-    for_statement = E"for" + for_index + E"loop" + NL +
-        Star(statement + E";") + NL +
-        E"end for"
+    for_statement = E"for" + spc + for_index + spc + E"loop" + statement_block +
+        E"end" + spc + E"for" |> (x -> BaseModelicaForStatement(x[1], x[2:end]))
 
-    while_statement = E"while" + expression + E"loop" +
-        Star(statement + E";") + NL +
-        E"end while"
+    while_statement = E"while" + expression + spc + E"loop" + statement_block +
+        E"end" + spc + E"while" |> (_ -> BaseModelicaUnsupportedStatement("while loop"))
 
     when_equation = (E"when" > BMWhen) + spc + expression + spc + (E"then" > BMThen) + spc +
         Star(equation + E";" + spc) + spc +
@@ -610,35 +688,35 @@ spc = Drop(Star(Space()))
     ) + spc +
         E"end when" |> BaseModelicaWhenEquation
 
-    when_statement = E"when" + expression + E"then" + spc +
-        Star(statement + E";") + spc +
-        Star(
-        E"elsewhen" + expression + E"then" + NL +
-            Star(statement + E";")
-    ) + NL +
-        E"end when"
+    when_statement = E"when" + expression + spc + E"then" + statement_block +
+        Star(E"elsewhen" + expression + spc + E"then" + statement_block) +
+        E"end" + spc + E"when" |> (_ -> BaseModelicaUnsupportedStatement("when statement"))
 
-    if_statement = E"if" + expression + E"then" + NL +
-        Star(statement + E";") + NL +
-        Star(
-        E"elseif" + expression + E"then" + NL +
-            Star(statement + E";")
-    ) +
-        (E"else" + NL + Star(statement + E";"))[0:1] + NL +
-        E"end if"
+    if_statement = (E"if" > BMIf) + expression + spc + E"then" + statement_block +
+        Star((E"elseif" > BMIf) + expression + spc + E"then" + statement_block) +
+        ((E"else" > BMThen) + statement_block)[0:1] +
+        E"end" + spc + E"if" |> build_if_statement
 
-    statement.matcher = decoration[0:1] +
+    assignment_statement = component_reference + spc + E":=" + expression |>
+        (x -> BaseModelicaAssignment(x[1], x[2]))
+    call_statement = component_reference + function_call_args |>
+        (x -> BaseModelicaFunctionCall(x[1].ref_list[1], length(x) > 1 ? x[2] : BaseModelicaFunctionArgs([])))
+    multiple_output_statement = E"(" + output_expression_list + E")" + spc + E":=" + spc +
+        component_reference + function_call_args |>
+        (_ -> BaseModelicaUnsupportedStatement("multiple-output assignment"))
+
+    statement.matcher = Drop(decoration[0:1]) +
         (
-        component_reference + (E":=" + expression | function_call_args) |
-            E"(" + output_expression_list + E")" + E":=" +
-            component_reference + function_call_args |
-            E"break" |
-            E"return" |
-            if_statement |
+        if_statement |
             for_statement |
             while_statement |
-            when_statement
-    ) + comment
+            when_statement |
+            (E"break" |> (_ -> BaseModelicaUnsupportedStatement("break"))) |
+            (E"return" |> (_ -> BaseModelicaUnsupportedStatement("return"))) |
+            multiple_output_statement |
+            assignment_statement |
+            call_statement
+    ) + Drop(comment)
 
     equation.matcher = decoration[0:1] +
         (
