@@ -16,7 +16,17 @@ end
                     continue
                 end
                 sys = parse_basemodelica(path; parser, arrays)
-                sol = solve(ODEProblem(sys, [], (0.0, 1.0)), Rodas5P();
+                # These derivative-lowering fixtures deliberately keep unfixed starts.
+                # Supply initial values explicitly so their trajectories do not depend
+                # on MTK completing guess-only initialization.
+                u0 = if startswith(file, "A3f")
+                    [sys.v => 1.0, sys.w => 2.0]
+                elseif startswith(file, "A6c")
+                    [derivative_input_member(sys, "x[$i]") => 1.0 for i in 1:2]
+                else
+                    []
+                end
+                sol = solve(ODEProblem(sys, u0, (0.0, 1.0)), Rodas5P();
                     reltol = 1e-10, abstol = 1e-12)
                 @test sol.retcode == ReturnCode.Success
                 expected = if startswith(file, "A3f")
