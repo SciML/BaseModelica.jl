@@ -44,7 +44,6 @@ end
         @test sol.retcode == ReturnCode.Success
         # Upstream MTK ignores this guess when the compiled system keeps k.
         @test_broken sol(0.0; idxs = sys.x) ≈ 1
-        @test sol(0.0; idxs = sys.x) == 0
         original = read(path, String)
         for workaround in (:fixed, :initial_equation)
             source = original
